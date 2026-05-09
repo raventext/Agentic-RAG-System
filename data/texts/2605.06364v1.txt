@@ -1,0 +1,1251 @@
+Flow Matching with Arbitrary Auxiliary Paths
+Xin Peng1
+Ang Gao1∗
+1School of Physical Science and Technology,
+Beijing University of Posts and Telecommunications, Beijing, China
+anggao@bupt.edu.cn
+Abstract
+We introduce a new generative modeling framework, Flow Matching with Arbi-
+trary Auxiliary Paths (AuxPath-FM), which generalizes conditional flow match-
+ing by incorporating an auxiliary variable drawn from an arbitrary distribution
+into the probability path. Unlike prior methods that restrict auxiliary components
+to Gaussian noise, AuxPath-FM allows the variable η to follow any distribution,
+producing trajectories of the form Xt = a(t)X1+b(t)X0+c(t)η. We theoretically
+demonstrate that this construction preserves the continuity equation and maintains a
+training objective consistent with the marginal formulation. This flexibility enables
+the design of diverse probability paths using various priors, including Gaussian,
+Uniform, Laplace, and discrete Rademacher distributions, each offering unique
+geometric properties for generative flows. Furthermore, our framework allows for
+specialized tasks such as label-guided generation by encoding structured semantic
+information into the auxiliary distribution. Overall, AuxPath-FM provides a princi-
+pled and general foundation for probability path design, offering both theoretical
+generality and practical flexibility for diverse generative modeling tasks.
+Introduction
+Continuous-time generative models, such as score-based diffusion models [38, 19] and flow matching
+frameworks [27, 29, 43], have emerged as powerful tools for modeling complex data distributions
+by learning dynamics that transport a simple base distribution to a target distribution. In conditional
+generative modeling, incorporating label or side information is crucial for controllable sample
+generation. However, most existing approaches introduce such information only through conditioning
+neural networks [18, 12], rather than modifying the underlying probability paths. While recent
+advances have expanded flow matching to multi-scale representations [47], physical systems with
+hard constraints [44], and complex temporal forecasting [33], these models still primarily rely on
+network-side conditioning. Furthermore, recent theoretical analysis suggests that flow matching
+is naturally adaptive to the intrinsic manifold structure of data [25], yet the influence of the path’s
+stochastic component remains under-explored in the context of trajectory-level control.
+Meanwhile, prior path-based formulations, including stochastic interpolants [1] and Schrödinger
+Bridge methods [5, 42, 21], typically rely on Gaussian noise or Brownian dynamics for stochastic
+interpolation, which limits the flexibility of designing probability paths for structured guidance.
+Although recent research has introduced discrete state-space flows via edit operations [15, 30] and
+geometric flows on statistical manifolds [10], these methods often remain specialized to particular
+data types. Modern alignment techniques, such as policy gradient methods for flow matching [28],
+further highlight the need for more expressive generative trajectories that can be steered via diverse
+signals.
+∗Corresponding author
+Preprint.
+arXiv:2605.06364v1 [cs.LG] 7 May 2026
+
+Baseline (
+= 0)
+Gaussian (
+(0, I))
+Uniform (
+[
+1, 1])
+Laplace (
+Laplace(0, 1))
+Rademacher (
+{
+1, 1})
+Label-Guided (
+= F (Y))
+Figure 1: Generative trajectories of AuxPath-FM with diverse auxiliary distributions. The
+figure illustrates the interpolation paths Xt = a(t)X1 + b(t)X0 + c(t)η between two data samples
+X0 and X1. By varying the distribution of the auxiliary variable η, we observe unique geometric
+properties: (a) Baseline (η = 0), (b) Gaussian η ∼N(0, I), (c) Uniform η ∼U([−1, 1]d), (d)
+Laplace η ∼Laplace(0, 1), (e) Rademacher η ∈{−1, 1}d, and (f) Label-Guided η = Fϕ(Y ). Note
+how discrete and heavy-tailed priors impart distinct structural biases to the flow.
+In this work, we introduce Flow Matching with Arbitrary Auxiliary Paths (AuxPath-FM), a
+general framework that extends flow matching by incorporating an auxiliary random variable into the
+probability path. Specifically, we construct trajectories of the form
+Xt = a(t)X1 + b(t)X0 + c(t)η,
+(1)
+where X0 ∼p0, X1 ∼p1, and η is an auxiliary random variable drawn from an arbitrary distribu-
+tion. Unlike prior interpolation schemes that restrict auxiliary terms to Gaussian noise [1, 5], our
+formulation allows flexible auxiliary designs such as condition-dependent sources [22] or structured
+transition kernels [37], enabling the auxiliary variable to directly encode structured signals in the
+generative trajectory.
+We show that this construction preserves the continuity equation and yields a flow matching objective
+consistent with the marginal formulation [27, 1]. A particularly important instance arises when η
+encodes semantic information such as class labels, enabling label-guided generation through the
+probability path itself. In contrast to conventional conditioning approaches and classifier-free guid-
+ance [18, 12], which operate through network-level modulation, our method embeds guidance directly
+into the trajectory design, leading to principled control of the generative dynamics. Overall, AuxPath-
+FM generalizes existing path-based frameworks such as stochastic interpolants and Schrödinger
+Bridge methods [1, 5, 42], while retaining the standard flow matching training objective, thereby
+providing a unified and flexible perspective for structured continuous-time generative modeling.
+Related Work
+Diffusion and Flow Matching.
+Continuous-time generative models have achieved remarkable
+success in modeling complex data distributions [38, 19, 23]. Score-based diffusion models learn the
+gradient of the log-density and simulate reverse-time stochastic differential equations to transform
+noise into data samples [38]. More recently, flow matching (FM) provides an alternative framework
+that directly learns the velocity field of a deterministic probability flow connecting a base distribution
+and a data distribution [27, 29]. Instead of simulating stochastic processes, FM trains a neural
+network to match the velocity of a predefined probability path, enabling efficient training and flexible
+trajectory design [27, 43]. Recent theoretical advances have further established that flow matching is
+naturally adaptive to manifold structures [25], and generalizations such as Transition Matching [37]
+have unified flow models with discrete-time Markovian transitions to improve sampling efficiency
+and quality.
+Schrödinger Bridges and Stochastic Interpolants.
+Several works study generative modeling
+through stochastic interpolation between distributions [5, 42, 21, 13]. Schrödinger Bridge methods for-
+mulate generative modeling as an entropy-regularized optimal transport problem, producing stochastic
+trajectories between endpoints [5, 42, 4]. More recently, stochastic interpolants provide a unifying
+framework connecting diffusion and flow-based methods [1, 45]. In many such formulations, inter-
+polation paths typically introduce auxiliary noise variables that follow Gaussian distributions [1, 5].
+However, recent extensions have begun to explore flow matching on non-Euclidean geometries, such
+as Riemannian manifolds [8] and periodic lattices for material discovery [31], where the geometry of
+the space dictates the design of the interpolation path beyond simple Euclidean Gaussianity.
+Alternative Forward Transformations and Non-Gaussian Paths.
+Some works explore relaxing
+the standard Gaussian noise assumption. For example, Cold Diffusion replaces Gaussian noise with
+deterministic image transformations [3]. Other works investigate generalizing diffusion beyond
+Gaussian perturbations via structured noise models [38, 23]. Notably, recent developments in discrete
+state-spaces have introduced Dirichlet Flow Matching [39] and Discrete Flow Matching [14, 7],
+which utilize probability paths on simplices or categorical spaces to handle discrete sequential data.
+These studies suggest that generative modeling can be viewed as learning to reverse a sequence
+of transformations. Our work further generalizes this perspective by allowing the auxiliary path
+components to follow any arbitrary distribution, providing a unified view of both continuous and
+discrete-inspired priors.
+Conditional Generative Modeling and Guidance.
+Conditional generative models incorporate
+side information such as class labels or attributes to enable controllable synthesis [32, 12, 18]. A
+common strategy conditions the neural network on label embeddings while keeping the probability
+path unchanged [32, 12]. Classifier-free guidance further improves results by combining conditional
+and unconditional models during sampling [18]. Recent methods extend this to complex scientific do-
+mains, such as sequence-conditioned protein structure generation in FoldFlow-2 [20] and contrastive
+flow matching to enhance condition separation [40]. While some approaches explore augmenting
+flows with auxiliary variables to reduce training variance [6], most current techniques primarily
+introduce conditioning through network inputs rather than modifying the geometric structure of the
+probability paths themselves.
+Our Contribution.
+In contrast to existing approaches, we introduce Flow Matching with Arbi-
+trary Auxiliary Paths (AuxPath-FM), which generalizes probability path design in flow matching
+by allowing the auxiliary component of the path to follow an arbitrary distribution. This perspective
+unifies several existing interpolation schemes as special cases while enabling auxiliary variables, such
+as label-induced distributions, to directly shape the generative trajectory. As a result, our framework
+provides a principled mechanism for controllable generation while preserving the efficiency and
+simplicity of the flow matching objective.
+Background
+Flow Matching.
+Flow Matching provides a simple and scalable framework for training continuous-
+time generative models [27, 29]. Instead of learning the score function of a stochastic diffusion
+process [38, 19], it directly parameterizes a velocity field that transports samples from a base
+distribution p0(x) to a target data distribution p1(x) along a predefined probability path pt(x) for
+t ∈[0, 1].
+Let X0 ∼p0 and X1 ∼p1. A common choice of interpolation is the linear path Xt = (1−t)X0+tX1,
+whose time derivative is ˙Xt = X1 −X0. The objective of Flow Matching is to learn a velocity field
+vθ(x, t) that matches this conditional velocity:
+LF M = Et,X0,X1
+
+∥vθ(Xt, t) −(X1 −X0)∥2
+.
+(2)
+After training, generation is performed by solving the ordinary differential equation (ODE)
+dXt
+dt
+= vθ(Xt, t),
+(3)
+which transports samples from p0 to p1.
+Conditional Flow Matching.
+Flow Matching can be extended to conditional generative modeling
+by introducing an auxiliary variable Y . (e.g., class labels or side information) [43]. The velocity field
+is conditioned as vθ(x, t, Y ), while the interpolation path typically remains Xt = (1 −t)X0 + tX1,
+where X0 ∼p0 and X1 ∼p1(·|Y ).
+The resulting objective becomes
+LCF M = Et,X0,X1,Y
+
+∥vθ(Xt, t, Y ) −(X1 −X0)∥2
+.
+(4)
+Although conditioning is incorporated through the network, the probability path itself is independent
+of Y . Thus, side information influences the learned dynamics only implicitly via the parameterization
+of vθ, rather than through the path design.
+Stochastic Interpolants and Schrödinger Bridges.
+Recent works extend deterministic interpola-
+tion by introducing stochasticity along the path [1, 5, 42]. A general stochastic interpolant can be
+written as
+Xt = (1 −t)X0 + tX1 + σ(t)Z,
+(5)
+where X0 ∼p0, X1 ∼p1, and Z ∼N(0, I).
+Such formulations arise in stochastic interpolant models, diffusion models, and Schrödinger bridge
+methods [38, 5, 42]. The additive Gaussian term σ(t)Z injects noise, enabling more flexible transport
+between distributions while preserving tractable training objectives.
+However, existing approaches typically restrict the auxiliary noise to be Gaussian. This constraint
+limits the expressiveness of the interpolation path and prevents incorporating more structured auxiliary
+signals that could better guide the generative dynamics.
+Method
+In this section, we introduce Flow Matching with Arbitrary Auxiliary Paths (AuxPath-FM),
+a general framework that extends conditional flow matching by incorporating auxiliary variables
+drawn from arbitrary distributions into probability paths. Unlike conventional approaches that inject
+auxiliary signals only through network inputs, our formulation allows these signals to directly shape
+the generative trajectory.
+Flow Matching with Arbitrary Auxiliary Paths
+In this section, we introduce Flow Matching with Arbitrary Auxiliary Paths (AuxPath-FM),
+a general framework that extends conditional flow matching by incorporating auxiliary variables
+drawn from arbitrary distributions into probability paths. Unlike conventional approaches that inject
+auxiliary signals only through network inputs, our formulation allows these signals to directly shape
+the generative trajectory.
+5.1
+Auxiliary Probability Paths
+Standard flow matching constructs paths that interpolate between base samples X0 ∼p0 and data
+samples X1 ∼p1. To enhance path flexibility, we introduce an auxiliary random variable η ∼pη
+drawn from a general distribution, and define
+Xt = a(t)X1 + b(t)X0 + c(t)η,
+(6)
+where a(t), b(t), c(t) are time-dependent scalar functions.
+To ensure correct boundary behavior, the coefficients satisfy a(0) = 0, b(0) = 1, c(0) = 0 and
+a(1) = 1, b(1) = 0, c(1) = 0, such that the path transports samples from p0 to p1. This formulation
+enables the trajectory to incorporate structured signals beyond standard noise.
+Conditional probability paths.
+Conditioned on (X0, η), the trajectory induces a conditional
+probability path pt(x | x0, η) together with a conditional vector field ut(x | x0, η) that governs the
+dynamics of Xt. This provides a family of simple paths indexed by (x0, η).
+Marginal probability path.
+The overall probability path is obtained by marginalizing over the
+joint distribution of (X0, η):
+pt(x) =
+ZZ
+pt(x | x0, η) p0(x0) pη(η) dx0 dη.
+(7)
+Marginal vector field.
+Analogously, we define the marginal velocity field by aggregating condi-
+tional vector fields:
+ut(x) =
+RR
+pt(x | x0, η) ut(x | x0, η) p0(x0) pη(η) dx0 dη
+pt(x)
+.
+(8)
+Theorem 1 (Consistency of Marginal Flow). Let ut(x | x0, η) be conditional vector fields that
+generate conditional probability paths pt(x | x0, η) satisfying the continuity equation. Then the
+marginal vector field ut(x) defined above generates the marginal probability path pt(x), i.e.,
+∂tpt(x) = −∇x ·
+ pt(x) ut(x)
+
+.
+(9)
+The detailed proof follows from standard properties of conditional continuity equations and marginal-
+ization of probability flows. We defer the complete derivation to Appendix A.
+Implication.
+Theorem 1 shows that the global flow can be decomposed into a mixture of simpler
+conditional flows. This provides a principled justification for designing complex probability paths via
+auxiliary variables.
+Choice of auxiliary distribution.
+Importantly, the auxiliary distribution pη is not restricted to
+a specific form. For instance, η can be drawn from Gaussian distributions, bounded distributions,
+heavy-tailed distributions, or even discrete distributions. This flexibility allows the probability path to
+incorporate diverse structural priors.
+Algorithm 1 AuxPath-FM: Training
+# v_theta: velocity model
+# a(t), b(t), c(t): path coefficients
+# eta ~ p_eta (arbitrary distribution)
+x0, x1 = sample_batch()
+eta = sample_eta()
+t = sample_uniform()
+X_t = a(t)* x1 + b(t)* x0 + c(t)* eta
+v_t = dot_a(t)* x1 + dot_b(t)* x0 +
+dot_c(t)* eta
+loss = metric(v_theta(X_t,t) - v_t)
+Algorithm 2 AuxPath-FM: Sampling
+x = randn(x_shape)
+for t in schedule:
+x = x + v_theta(x,t) * dt
+Different choices of pη correspond to different
+mixtures of conditional flows, thereby inducing
+distinct geometric properties of the overall tra-
+jectory. We empirically investigate the impact
+of different choices of pη in Sec. 5.6.
+5.2
+Velocity Field and Training Objective
+Let vθ(x, t) denote the neural network parame-
+terizing the velocity field. Under the auxiliary
+probability path defined in Sec. 5.1, the trajec-
+tory admits the time derivative
+˙Xt = ˙a(t)X1 + ˙b(t)X0 + ˙c(t)η.
+(10)
+From marginal to conditional objectives.
+In
+principle, one may define a flow matching ob-
+jective on the marginal probability path pt(x):
+LFM = Et,x∼pt
+
+∥vθ(x, t) −ut(x)∥2
+, (11)
+where ut(x) is the marginal vector field defined
+in Sec. 5.1.
+However, both pt(x) and ut(x) involve in-
+tractable integrals over (X0, η), making it im-
+practical to directly compute unbiased estimates of this objective.
+AuxPath Conditional Flow Matching.
+To address this issue, we instead optimize a conditional
+objective defined on the tractable conditional paths:
+LAuxPath = Et,X0,X1,η
+h
+∥vθ(Xt, t) −˙Xt∥2i
+,
+(12)
+where Xt = a(t)X1 + b(t)X0 + c(t)η.
+Algorithm 3 AuxPath-FM (Cond.): Training
+# Stage 1: train semantic model
+x1, y = sample_data()
+pred = F_phi(y)
+loss_F = metric(pred - x1)
+# Stage 2: train flow model
+x0, x1, y = sample_batch()
+eta = F_phi(y)
+t = sample_uniform()
+X_t = a(t)* x1 + b(t)* x0 + c(t)* eta
+v_t = dot_a(t)* x1 + dot_b(t)* x0
+loss = metric(v_theta(X_t,t) - v_t)
+Algorithm 4 AuxPath-FM (Cond.): Sampling
+x = randn(x_shape)
+eta = F_phi(y)
+for t in schedule:
+v = v_theta(x, t) + dot_c(t)* eta
+x = x + v * dt
+Algorithm 5 AuxPath-FM: CFG Sampling
+x = randn(x_shape)
+eta_c = F_phi(y)
+eta_u = F_phi(empty)
+eta_cfg = eta_u + w * (eta_c - eta_u)
+for t in schedule:
+# trajectory- level velocity
+v = v_theta(x, t) + dot_c(t) *
+eta_cfg
+x = x + v * dt
+This objective corresponds to matching the con-
+ditional vector field ut(x | X0, η), which can
+be computed analytically for each sample. As a
+result, LAuxPath admits efficient and unbiased
+Monte Carlo estimation.
+Equivalence to marginal flow matching.
+Al-
+though LAuxPath is defined on conditional paths,
+it is in fact equivalent to the marginal flow match-
+ing objective in expectation.
+Theorem
+(Loss
+Equivalence).
+Assume
+pt(x) > 0 for all x and t ∈[0, 1]. Then, up
+to a constant independent of θ,
+LFM(θ) = LAuxPath(θ) + C,
+(13)
+and consequently,
+∇θLFM(θ) = ∇θLAuxPath(θ).
+(14)
+Implication.
+Theorem 2 shows that optimiz-
+ing the conditional objective yields the same
+optimal solution as the intractable marginal ob-
+jective.
+Therefore, we can learn a velocity
+field that generates the marginal probability path
+pt(x)-and in particular approximates the data
+distribution at t = 1-without explicitly com-
+puting either pt(x) or ut(x).
+5.3
+Semantic Auxiliary
+Variables for Conditional Generation
+A natural extension of AuxPath-FM is to con-
+sider auxiliary variables that encode semantic
+information, enabling conditional generation. In
+this setting, we define η = Fϕ(Y ), where Y de-
+notes a class label and Fϕ is a lightweight neural
+network.
+To provide meaningful guidance, we employ
+prototype learning, training Fϕ to approximate the class-wise centroid:
+Fϕ(Y ) ≈E[X1 | Y ].
+(15)
+This is implemented by minimizing
+LF = EX1,Y
+h
+∥Fϕ(Y ) −X1∥2i
+.
+(16)
+This encourages Fϕ(Y ) to capture the average structure of each class, effectively guiding trajectories
+toward class-specific regions of the data distribution.
+Within the AuxPath-FM framework, this corresponds to instantiating the auxiliary variable η in the
+probability path with a label-dependent representation. The resulting trajectories are therefore biased
+toward semantically consistent regions throughout the flow, rather than only at the endpoint.
+Notably, since Fϕ is significantly smaller than the main velocity network, this additional objective
+introduces negligible computational overhead. More generally, the auxiliary variable η can encode
+diverse forms of structured information beyond labels, making the framework broadly applicable to
+conditional and guided generative modeling.
+5.4
+Trajectory-Level Classifier-Free Guidance
+AuxPath-FM admits a trajectory-level formulation of classifier-free guidance (CFG) [18]. Specifically,
+the conditional and unconditional velocity fields take the form
+v(x, t, y) = vθ(x, t) + ˙c(t)Fϕ(y),
+v(x, t, ∅) = vθ(x, t) + ˙c(t)Fϕ(∅).
+(17)
+Applying standard CFG yields
+vcfg(x, t) = vθ(x, t) + ˙c(t)
+h
+Fϕ(∅) + w
+ Fϕ(y) −Fϕ(∅)
+i
+.
+(18)
+This formulation decouples guidance from the backbone model: unlike conventional CFG, which
+requires two evaluations of vθ, our approach reuses a single evaluation and applies guidance through
+the lightweight module Fϕ. Full derivation and discussion are provided in Appendix D.
+5.5
+Toy Experiment: Visualizing Trajectory-Level Guidance
+w = 1.0
+w = 7.0
+Class Separation
+Figure 2: Trajectory-level guidance. Com-
+parison between w = 1.0 and w = 7.0.
+Higher guidance leads to clear trajectory sep-
+aration.
+We illustrate trajectory-level CFG in a 2D toy set-
+ting with a bimodal Gaussian dataset (two clusters
+on a ring). The flow model is trained with AuxPath-
+FM, and guidance is applied at sampling using Algo-
+rithm 5.
+As shown in Fig. 2, increasing the guidance scale to
+w = 7 leads to clear separation of trajectories across
+modes. This confirms that CFG can be effectively
+applied at the trajectory level, where the auxiliary
+term acts as a global drift without requiring repeated
+evaluations of the backbone model.
+5.6
+Toy Experiment: Ring-64 Dataset
+We evaluate AuxPath-FM on a ring-64 dataset with 64 modes on a unit circle, requiring finer
+multi-modal modeling than ring-8 and providing a stricter test for auxiliary design.
+All methods share the same velocity network vθ(Xt, t, Y ) and differ only in the auxiliary variable
+η. CFM uses Xt = (1 −t)X0 + tX1, while AuxPath-FM adds t(1 −t)η, with X0 ∼N(0, I) and
+X1 ∼p1. We consider Gaussian, Uniform, Laplace, Rademacher, and label-guided η = F(Y ),
+where Fϕ(Y ) ≈E[X | Y ].
+We report mode accuracy (Acc), i.e., correct assignment to the nearest mode, and distance error
+(Error), i.e., average distance to mode centers. As shown in Fig. 3, all variants preserve correct
+transport, while Table 1 shows that label-guided η achieves the best performance, with higher Acc
+and lower Error, indicating improved controllable multi-modal generation.
+cfm
+gaussian
+uniform
+laplace
+rademacher
+label
+Figure 3: Generated trajectories on the ring-64
+dataset using different auxiliary distributions η.
+Table 1:
+Evaluation metrics on the ring-64
+dataset. Higher accuracy and lower error indi-
+cate better performance.
+Auxiliary Type
+Acc (%) ↑Error ↓
+CFM (baseline)
+57.20
+0.3398
+Gaussian
+45.60
+0.3956
+Uniform
+49.80
+0.3586
+Laplace
+47.20
+0.4228
+Rademacher
+51.00
+0.3911
+Label-guided (Ours)
+60.60
+0.2955
+Table 2: Results on MNIST and CIFAR-10. Acc is reported using pretrained classifiers.
+MNIST
+CIFAR-10
+Method
+Acc(%) ↑
+FID ↓
+sFID ↓
+IS ↑
+Acc(%) ↑
+FID ↓
+sFID ↓
+IS ↑
+CFM
+95.5
+5.90
+0.006
+2.099
+82.24
+4.71
+0.0032
+9.18
+CFM + numeric η
+98.1
+7.33
+0.007
+2.096
+83.61
+4.54
+0.0030
+9.19
+CFM + learned η
+97.1
+7.57
+0.008
+2.112
+87.28
+3.68
+0.0017
+9.20
+numeric η
+94.3
+10.04
+0.009
+2.097
+79.18
+5.73
+0.0038
+8.89
+learned η
+90.6
+13.82
+0.015
+2.128
+77.03
+5.90
+0.0043
+8.93
+Experiments
+We evaluate AuxPath-FM on multiple datasets to validate its effectiveness in conditional generation
+and the flexibility of auxiliary path design. All experiments are conducted on a single NVIDIA RTX
+4090 GPU.
+6.1
+Experimental Setup
+CFM
+CFM + numeric η
+CFM + learned η
+numeric η
+learned η
+Figure 4: Qualitative comparison of conditional
+generation on MNIST. We compare generated
+samples across different model variants: standard
+CFM (baseline), path-guided models with fixed
+numeric auxiliary variables (η = numeric), and
+AuxPath-FM using learned label prototypes (η =
+Fϕ(Y )).
+Datasets.
+We consider three datasets:MNIST
+[26], CIFAR-10 [24], and ImageNet-1k [11] are
+used to evaluate conditional generation accuracy,
+while ImageNet-1k is used to test scalability and
+distribution-agnostic auxiliary paths.
+Evaluation Metrics.
+We report the following
+metrics: (i) Classification Accuracy (Acc), com-
+puted using pretrained classifiers to evaluate
+conditional generation quality. For MNIST, we
+adopt a CNN classifier [2] achieving 99.1% ac-
+curacy; for CIFAR-10, we use a ResNet-56 clas-
+sifier [16] with 92% accuracy. These classifiers
+are used to assess whether generated samples
+match the intended labels. (ii) Fréchet Incep-
+tion Distance (FID) [17], Spatial FID (sFID)
+[41], and Inception Score (IS) [36] for genera-
+tive quality evaluation. All metrics are computed
+using 50k generated samples following standard evaluation protocols.
+6.2
+Conditional Generation Performance (MNIST and CIFAR-10)
+Experimental setup.
+For low-resolution datasets, we adopt different backbones for each setting: a
+standard U-Net [35, 19] for CIFAR-10, and LightningDiT [46] for MNIST. For a fair comparison,
+all methods (including CFM and its variants) are trained for 400K steps under identical settings.
+Our conditional AuxPath-FM follows the two-stage training procedure in Algorithm 3 and performs
+sampling using Algorithm 4. Importantly, the learned velocity model vθ is trained to match the
+baseline flow field without the auxiliary component, while the auxiliary variable η = Fϕ(Y ) is
+incorporated only through the probability path during training and reintroduced at inference time to
+construct the full dynamics via vθ(x, t) + ˙c(t)η. Qualitative results on MNIST are shown in Fig. 4,
+comparing standard CFM (pure conditional guidance), auxiliary path guidance alone (via η), and
+their combination (CFM + η), where η is instantiated either as numeric values (fixed numeric filling)
+or learned semantic prototypes.
+Results.
+As shown in Fig. 4 and Table 2, both standard conditional guidance (CFM) and auxiliary
+path guidance (via η) can independently achieve conditional generation, while auxiliary guidance
+alone (numeric η) yields slightly lower accuracy. When combined (CFM + η), the two mechanisms
+provide complementary effects and consistently improve semantic accuracy, demonstrating that
+auxiliary path guidance enhances standard conditional generation. Among different instantiations of
+η, learned semantic prototypes further improve consistency and fidelity compared to numeric ones.
+On MNIST, this results in the highest classification accuracy with competitive FID and sFID, and on
+CIFAR-10, consistent improvements are observed across all metrics, especially in FID and sFID.
+6.3
+Conditional Flow Matching with Different Auxiliary Distributions
+Table 3: Results on CIFAR-10 and ImageNet-
+1k.
+CIFAR-10
+ImageNet-1k
+Method
+FID ↓sFID ↓IS ↑
+FID ↓
+CFM
+4.71
+0.0032 9.18
+21.13
+Gaussian
+4.38
+0.0029 9.21
+24.19
+Uniform
+4.40
+0.0028 9.17
+23.48
+Laplace
+4.49
+0.0031 9.19
+24.71
+Rademacher
+4.46
+0.0031 9.24
+24.23
+Label-guided
+4.59
+0.0024 9.32
+23.45
+Setup.
+To assess scalability to high-resolution man-
+ifolds (256 × 256), we adopt a Diffusion Trans-
+former (DiT-B/2) [34]. Following prior work, the
+flow model is initialized from a pre-trained condi-
+tional flow matching (CFM) checkpoint [9] (origi-
+nally trained for ∼10M steps) and further optimized
+for only 300K steps, corresponding to roughly 3% of
+the original training budget. All methods share the
+same architecture and training protocol, and differ
+only in the choice of auxiliary variable η. AuxPath-
+FM is trained using Algorithm 1 and sampled using
+Algorithm 2. Importantly, η is used only as an aux-
+iliary component during training, while the learned
+velocity field vθ preserves the underlying CFM dynamics and is directly used at inference time.
+Results.
+Table 3 reports FID across datasets. We observe that under various choices of auxiliary
+distributions (Gaussian, Uniform, Laplace, and Rademacher), the model consistently maintains
+stable generative performance, indicating that incorporating η does not disrupt the conditional flow
+matching process. These results show that different auxiliary distributions can be flexibly integrated
+into CFM while retaining its ability to generate high-quality samples, demonstrating the robustness
+of the proposed framework.
+6.4
+Effect of CFG Scale
+Table 4: Effect of CFG scale on CIFAR-10 and
+ImageNet-1k.
+CIFAR-10
+ImageNet-1k
+w
+FID ↓sFID ↓IS ↑Acc (%) ↑
+FID ↓
+1.0
+4.14
+0.0026 9.24
+83.68
+22.49
+1.2
+3.85
+0.0024 9.27
+84.47
+21.47
+1.5
+4.10
+0.0022 9.27
+85.39
+20.43
+2.0
+6.36
+0.0029 9.34
+85.82
+19.81
+We analyze the effect of guidance scale w under
+trajectory-level CFG induced by the combination
+of CFM and auxiliary distributions. The model
+is trained using Algorithm 3 and sampled using
+Algorithm 5.
+As summarized in Table 4, trajectory-level CFG
+derived from auxiliary paths exhibits behavior con-
+sistent with standard classifier-free guidance: in-
+creasing w improves semantic alignment while
+maintaining competitive generative quality. No-
+tably, this formulation preserves the effectiveness
+of CFG without requiring multiple evaluations of the backbone model, reducing the computational
+cost by approximately half.
+At the same time, the underlying properties of CFG are retained, with w controlling the trade-off
+between fidelity and semantic consistency in a similar manner to conventional approaches. Additional
+experimental results and analysis are provided in Appendix E.
+Conclusion
+This work establishes AuxPath-FM as a versatile generative modeling framework that accommodates
+arbitrary auxiliary distributions within the probability path. By encoding structured semantic informa-
+tion into these auxiliary components, the training objective achieves higher precision during velocity
+field parameterizing. Notably, this formulation enables trajectory-level classifier-free guidance (CFG)
+using only a single backbone evaluation, halving the inference cost compared to standard methods.
+Extensive experiments on MNIST, CIFAR-10, and ImageNet-1k validate that semantic-auxiliary
+CFG maintains superior generative quality while significantly enhancing computational efficiency.
+References
+[1] Michael S Albergo, Nicholas M Boffi, and Eric Vanden-Eijnden. Stochastic interpolants: A unifying
+framework for flows and diffusions. arXiv preprint arXiv:2303.08797, 2023.
+[2] Sanghyeon An, Minjun Lee, Sanglee Park, Heerin Yang, and Jungmin So. An ensemble of simple
+convolutional neural network models for mnist digit recognition, 2020. URL 
+2008.10400.
+[3] Arpit Bansal, Eitan Borgnia, Hong-Min Chu, Jie S. Li, Hamid Kazemi, Furong Huang, Micah Goldblum,
+Jonas Geiping, and Tom Goldstein. Cold diffusion: Inverting arbitrary image transforms without noise. In
+Neural Information Processing Systems (NeurIPS), 2023. URL 
+XH3ArccntI.
+[4] Jean-David Benamou, Guillaume Carlier, Marco Cuturi, Lorenzo Nenna, and Gabriel Peyré. Iterative
+bregman projections for regularized transportation problems. SIAM Journal on Scientific Computing, 2015.
+[5] Valentin De Bortoli, James Thornton, Jeremy Heng, and Arnaud Doucet. Diffusion schrödinger bridge
+with applications to score-based generative modeling. In A. Beygelzimer, Y. Dauphin, P. Liang, and
+J. Wortman Vaughan, editors, Neural Information Processing Systems (NeurIPS), 2021. URL https:
+//openreview.net/forum?id=9BnCwiXB0ty.
+[6] Valentin De Bortoli, Guan-Horng Liu, Tianrong Chen, Evangelos A. Theodorou, and Weilie Nie. Aug-
+mented bridge matching. arXiv preprint arXiv:2311.06978, 2023.
+[7] Andrew Campbell, Jason Yim, Regina Barzilay, Tom Rainforth, and Tommi Jaakkola. Generative flows
+on discrete state-spaces: Enabling multimodal flows with applications to protein co-design. In Interna-
+tional Conference on Machine Learning (ICML), 2024. URL 
+kQwSbv0BR4.
+[8] Ricky T. Q. Chen and Yaron Lipman. Flow matching on general geometries. In International Conference
+on Learning Representations (ICLR), 2024.
+[9] Quan Dao, Hao Phung, Binh Nguyen, and Anh Tran. Flow matching in latent space. arXiv, 2023. URL
+
+[10] Oscar Davis, Samuel Kessler, Mircea Petrache, Ismail Ilkan Ceylan, Michael M. Bronstein, and Joey Bose.
+Fisher flow matching for generative modeling over discrete data. In International Conference on Learning
+Representations (ICLR), 2024. URL 
+[11] Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei. Imagenet: A large-scale hierarchical
+image database. In 2009 IEEE Conference on Computer Vision and Pattern Recognition, pages 248-255,
+2009. doi: 10.1109/CVPR.2009.5206848.
+[12] Prafulla Dhariwal and Alexander Nichol. Diffusion models beat gans on image synthesis. Neural
+Information Processing Systems (NeurIPS), 34, 2021.
+[13] Charlie Frogner, Chiyuan Zhang, Hossein Mobahi, Mauricio Araya-Polo, and Tomaso Poggio. Learning
+with a wasserstein loss. Neural Information Processing Systems (NeurIPS), 2015.
+[14] Itai Gat, Tal Remez, Neta Shaul, Felix Kreuk, Ricky T. Q. Chen, Gabriel Synnaeve, Yossi Adi, and Yaron
+Lipman. Discrete flow matching. In Neural Information Processing Systems (NeurIPS), 2024. URL
+
+[15] Marton Havasi, Brian Karrer, Itai Gat, and Ricky T. Q. Chen. Edit flows: Variable length discrete flow
+matching with sequence-level edit operations. In Neural Information Processing Systems (NeurIPS), 2026.
+URL 
+[16] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition.
+In IEEE Conference on Computer Vision and Pattern Recognition (CVPR), 2016.
+[17] Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter. Gans
+trained by a two time-scale update rule converge to a local nash equilibrium. In Neural Information
+Processing Systems (NeurIPS), NIPS’17, page 6629-6640, Red Hook, NY, USA, 2017. Curran Associates
+Inc. ISBN 9781510860964.
+[18] Jonathan Ho and Tim Salimans. Classifier-free diffusion guidance. arXiv preprint arXiv:2207.12598,
+2022.
+[19] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. Neural Information
+Processing Systems (NeurIPS), 2020.
+[20] Guillaume Huguet, James Vuckovic, Kilian FATRAS, Eric Thibodeau-Laufer, Pablo Lemos, Riashat
+Islam, Cheng-Hao Liu, Jarrid Rector-Brooks, Tara Akhound-Sadegh, Michael M. Bronstein, Alexander
+Tong, and Joey Bose. Sequence-augmented SE(3)-flow matching for conditional protein generation. In
+The Thirty-eighth Annual Conference on Neural Information Processing Systems, 2024. URL https:
+//openreview.net/forum?id=paYwtPBpyZ.
+[21] Ishaan Kharbanda, Xuan Ouyang, Rahul Choudhary, Hanbaek Lyu, and Yudi Li. Multi-marginal f-
+divergence schrödinger bridges: Towards a unifying framework for generation and distillation. In Interna-
+tional Conference on Learning Representations (ICLR), 2025. URL 
+id=7WrMAQ1XDq.
+[22] Junwan Kim, Jiho Park, Seonghu Jeon, and Seungryong Kim. Better source, better flow: Learning
+condition-dependent source distribution for flow matching. arXiv preprint arXiv:2602.05951, 2026.
+[23] Diederik P Kingma, Tim Salimans, Ben Poole, and Jonathan Ho. On density estimation with diffusion
+models. In A. Beygelzimer, Y. Dauphin, P. Liang, and J. Wortman Vaughan, editors, Neural Information
+Processing Systems (NeurIPS), 2021. URL 
+[24] Alex Krizhevsky and Geoffrey Hinton. Learning multiple layers of features from tiny images. Technical
+Report 0, University of Toronto, Toronto, Ontario, 2009. URL 
+learning-features-2009-TR.pdf.
+[25] Shivam Kumar, Yixin Wang, and Lizhen Lin. Flow matching is adaptive to manifold structures. arXiv
+preprint arXiv:2602.22486, 2026.
+[26] Y. Lecun, L. Bottou, Y. Bengio, and P. Haffner. Gradient-based learning applied to document recognition.
+Proceedings of the IEEE, 86(11):2278-2324, 1998. doi: 10.1109/5.726791.
+[27] Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. Flow matching
+for generative modeling. In International Conference on Learning Representations (ICLR), 2023.
+[28] Jie Liu, Gongye Liu, Jiajun Liang, Yangguang Li, Jiaheng Liu, Xintao Wang, Pengfei Wan, Di ZHANG,
+and Wanli Ouyang. Flow-GRPO: Training flow matching models via online RL. In The Thirty-ninth
+Annual Conference on Neural Information Processing Systems, 2026. URL 
+forum?id=oCBKGw5HNf.
+[29] Xingchao Liu, Chengyue Gong, and qiang liu. Flow straight and fast: Learning to generate and transfer
+data with rectified flow. In International Conference on Learning Representations (ICLR), 2023. URL
+
+[30] David Lüdke, Marten Lienen, Marcel Kollovieh, and Stephan Günnemann. Edit-based flow matching for
+temporal point processes. In International Conference on Learning Representations (ICLR), 2026. URL
+
+[31] Benjamin Kurt Miller, Ricky T. Q. Chen, Anuroop Sriram, and Brandon M Wood. FlowMM: Generating
+materials with Riemannian flow matching. In International Conference on Machine Learning (ICML),
+2024.
+[32] Mehdi Mirza and Simon Osindero.
+Conditional generative adversarial nets.
+In arXiv preprint
+arXiv:1411.1784, 2014.
+[33] Seyed Mohamad Moghadas and Adrian Munteanu. Spectflow: Long-term forecasting using flow matching
+with 89k parameters. In NeurIPS 2025 Workshop on Structured Probabilistic Inference & Generative
+Modeling, 2025. URL 
+[34] William Peebles and Saining Xie. Scalable diffusion models with transformers. In IEEE Conference on
+Computer Vision and Pattern Recognition (CVPR), 2023.
+[35] Olaf Ronneberger, Philipp Fischer, and Thomas Brox. U-net: Convolutional networks for biomedical
+image segmentation. In Nassir Navab, Joachim Hornegger, William M. Wells, and Alejandro F. Frangi,
+editors, Medical Image Computing and Computer-Assisted Intervention - MICCAI 2015, pages 234-241,
+Cham, 2015. Springer International Publishing. ISBN 978-3-319-24574-4.
+[36] Tim Salimans, Ian Goodfellow, Wojciech Zaremba, Vicki Cheung, Alec Radford, and Xi Chen. Improved
+techniques for training gans. In Neural Information Processing Systems (NeurIPS), NIPS’16, page
+2234-2242, Red Hook, NY, USA, 2016. Curran Associates Inc. ISBN 9781510838819.
+[37] Neta Shaul, Uriel Singer, Itai Gat, and Yaron Lipman. Transition matching: Scalable and flexible generative
+modeling. In Neural Information Processing Systems (NeurIPS), 2026. URL 
+net/forum?id=An0ePypuOJ.
+[38] Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole.
+Score-based generative modeling through stochastic differential equations. In International Conference on
+Learning Representations (ICLR), 2021.
+[39] Hannes Stark, Bowen Jing, Chenyu Wang, Gabriele Corso, Bonnie Berger, Regina Barzilay, and Tommi
+Jaakkola. Dirichlet flow matching with applications to DNA sequence design. In International Conference
+on Machine Learning (ICML), 2024. URL 
+[40] George Stoica, Vivek Ramanujan, Xiang Fan, Ali Farhadi, Ranjay Krishna, and Judy Hoffman. Contrastive
+flow matching. In IEEE International Conference on Computer Vision (ICCV), 2025.
+[41] Christian Szegedy, Vincent Vanhoucke, Sergey Ioffe, Jon Shlens, and Zbigniew Wojna. Rethinking
+the inception architecture for computer vision. In IEEE Conference on Computer Vision and Pattern
+Recognition (CVPR), pages 2818-2826, 2016. doi: 10.1109/CVPR.2016.308.
+[42] Sophia Tang, Yinuo Zhang, Alexander Tong, and Pranam Chatterjee. Branched schrödinger bridge
+matching. In International Conference on Learning Representations (ICLR), 2026. URL https://
+openreview.net/forum?id=ctq8BfUXWz.
+[43] Alexander Tong, Nikolay Malkin, Guillaume Huguet, Yanlei Zhang, Jarrid Rector-Brooks, Kilian FATRAS,
+Guy Wolf, and Yoshua Bengio. Improving and generalizing flow-based generative models with minibatch
+optimal transport. In ICML Workshop on New Frontiers in Learning, Control, and Dynamical Systems,
+2023. URL 
+[44] Utkarsh Utkarsh, Pengfei Cai, Alan Edelman, Rafael Gomez-Bombarelli, and Christopher Vincent Rack-
+auckas. Physics-constrained flow matching: Sampling generative models with hard constraints. In
+Neural Information Processing Systems (NeurIPS), 2026. URL 
+cf4etwjY7n.
+[45] Hao Wu, Jonas Köhler, and Frank Noé. Stochastic normalizing flows. Neural Information Processing
+Systems (NeurIPS), 2020.
+[46] Jingfeng Yao, Bin Yang, and Xinggang Wang. Reconstruction vs. generation: Taming optimization
+dilemma in latent diffusion models. In IEEE Conference on Computer Vision and Pattern Recognition
+(CVPR), pages 15703-15712, 2025.
+[47] Zelin Zhao, Petr Molodyk, Haotian Xue, and Yongxin Chen. Lapflow: Laplacian multi-scale flow matching
+for generative modeling. In International Conference on Learning Representations (ICLR), 2026. URL
+
+A
+Proof of AuxPath-FM Consistency
+We present an AuxPath formulation of AuxPath-FM that introduces an auxiliary variable into the
+probability path. Let X1 ∼pdata denote data samples, X0 ∼pinit denote base samples, and η ∼pη
+denote an auxiliary variable drawn from an arbitrary distribution. The probability path is defined as
+Xt = a(t)X1 + b(t)X0 + c(t)η,
+(19)
+where a(t), b(t), c(t) satisfy boundary conditions a(0) = 0, a(1) = 1, b(0) = 1, b(1) = 0, and
+c(0) = c(1) = 0.
+A.1
+Continuity Equation
+We provide a full derivation of the continuity equation under the AuxPath-FM formulation.
+A.1.1
+Conditional dynamics
+Conditioned on (X0, η), the trajectory induces a conditional density pt(x | x0, η) governed by the
+continuity equation:
+∂tpt(x | x0, η) = −∇x · (pt(x | x0, η) ut(x | x0, η)) ,
+(20)
+where ut(x | x0, η) denotes the conditional velocity field induced by the path Xt = a(t)X1 +
+b(t)X0 + c(t)η.
+A.1.2
+Marginal distribution
+The marginal density is obtained by integrating over the joint distribution of (X0, η):
+pt(x) =
+ZZ
+pt(x | x0, η) pinit(x0) pη(η) dx0 dη.
+(21)
+We define the corresponding marginal velocity field as
+ut(x) =
+RR
+pt(x | x0, η) ut(x | x0, η) pinit(x0) pη(η) dx0 dη
+pt(x)
+.
+(22)
+A.1.3
+Proof of the continuity equation
+Proof. We start by differentiating the marginal density:
+∂tpt(x) = ∂t
+ZZ
+pt(x | x0, η) pinit(x0) pη(η) dx0 dη
+=
+ZZ
+∂tpt(x | x0, η) pinit(x0) pη(η) dx0 dη.
+Substituting the conditional continuity equation (20), we obtain:
+∂tpt(x) =
+ZZ
+−∇x · (pt(x | x0, η) ut(x | x0, η)) pinit(x0) pη(η) dx0 dη
+= −∇x ·
+ZZ
+pt(x | x0, η) ut(x | x0, η) pinit(x0) pη(η) dx0 dη
+
+.
+Using the definition of the marginal velocity field (22), we rewrite:
+ZZ
+pt(x | x0, η) ut(x | x0, η) pinit(x0) pη(η) dx0 dη = pt(x) ut(x).
+Substituting back yields:
+∂tpt(x) = −∇x ·
+ pt(x) ut(x)
+
+,
+which completes the proof.
+B
+AuxPath Flow Matching Loss Functions
+B.1
+Definitions
+We define two equivalent training objectives under AuxPath-FM:
+• AuxPath Conditional Flow Matching (AuxPath):
+LAuxPath(θ) = E t∼U[0,1]
+X0∼pinit
+X1∼pdata
+η∼pη
+vθ(Xt, t) −
+
+˙a(t)X1 + ˙b(t)X0 + ˙c(t)η
+
+,
+(23)
+where Xt = a(t)X1 + b(t)X0 + c(t)η.
+• AuxPath Flow Matching (AuxPath-FM):
+LAuxPath(θ) = Et∼U[0,1], x∼pt
+vθ(x, t) −utarget
+t
+(x)
+2 .
+(24)
+B.2
+Loss Function Equivalence Theorem
+We define the conditional flow matching loss as LAuxPath(θ) = Et,X1,X0,η[∥vθ(Xt, t) −˙Xt∥2] and
+the marginal flow matching loss as LAuxPath-Marginal(θ) = Et,x∼pt[∥vθ(x, t) −ut(x)∥2].
+Theorem 3. The conditional objective is equivalent to the marginal objective up to a constant C
+independent of θ:
+LAuxPath-Marginal(θ) = LAuxPath(θ) + C.
+(25)
+Proof. We start from the marginal objective:
+LAuxPath-Marginal(θ) = Et,x∼pt
+
+∥vθ(x, t) −ut(x)∥2
+.
+(26)
+Expanding the squared norm:
+LAuxPath-Marginal(θ) = Et,x
+h
+∥vθ(x, t)∥2 −2 vθ(x, t)T ut(x) + ∥ut(x)∥2i
+.
+(27)
+Using the definition
+ut(x) = E[ ˙Xt | x],
+(28)
+we apply the law of total expectation:
+Et,x
+
+vθ(x, t)T ut(x)
+
+= Et,x
+h
+vθ(x, t)T E[ ˙Xt | x]
+i
+(29)
+= Et,Xt
+
+vθ(Xt, t)T ˙Xt
+
+.
+(30)
+Similarly,
+Et,x∥ut(x)∥2 = Et,Xt
+h
+∥E[ ˙Xt | Xt]∥2i
+,
+(31)
+which is independent of θ.
+Therefore,
+LAuxPath-Marginal(θ) = Et,Xt
+h
+∥vθ(Xt, t)∥2 −2 vθ(Xt, t)T ˙Xt
+i
++ C1.
+(32)
+On the other hand, expanding the conditional objective:
+LAuxPath(θ) = Et,Xt
+h
+∥vθ(Xt, t)∥2 −2 vθ(Xt, t)T ˙Xt + ∥˙Xt∥2i
+.
+(33)
+Comparing the two expressions, we obtain:
+LAuxPath-Marginal(θ) = LAuxPath(θ) + C,
+(34)
+where C = C1 −E[∥˙Xt∥2] is independent of θ.
+C
+Compositional and Degenerate Auxiliary Variables
+C.1
+Compositional Auxiliary Distributions
+The auxiliary variable η can be constructed as a mixture:
+η ∼
+X
+k
+πkp(k)
+η ,
+X
+k
+πk = 1.
+(35)
+This remains within the AuxPath-FM class and induces valid probability paths.
+C.2
+Deterministic Auxiliary Variables
+We further consider the case where η is a deterministic function of endpoints:
+η = F(X0).
+(36)
+The path becomes
+Xt = a(t)X1 + b(t)X0 + c(t)F(X0).
+(37)
+Conditioned on X0, the dynamics reduce to
+∂tpt(x|x0) = −∇x · (pt(x|x0)ut(x|x0)).
+(38)
+The marginal distribution becomes
+pt(x) =
+Z
+pt(x|x0)pinit(x0)dx0,
+(39)
+with velocity field
+ut(x) =
+pt(x)
+Z
+pt(x|x0)ut(x|x0)pinit(x0)dx0.
+(40)
+Thus the formulation reduces to standard flow matching.
+D
+Trajectory-Level Classifier-Free Guidance
+AuxPath-FM naturally induces a trajectory-level formulation of classifier-free guidance (CFG) [18]
+by encoding semantic information directly into the auxiliary variable η.
+Auxiliary variable parameterization.
+We consider a structured auxiliary variable of the form
+η = Fϕ(y),
+(41)
+where y denotes the condition (e.g., class label), and Fϕ is a lightweight neural network mapping
+labels to feature vectors.
+Under the auxiliary probability path
+Xt = a(t)X1 + b(t)X0 + c(t)η,
+(42)
+the time derivative becomes
+˙Xt = ˙a(t)X1 + ˙b(t)X0 + ˙c(t)η.
+(43)
+Induced conditional velocity field.
+From the flow matching objective, the learned velocity field
+can be decomposed as
+v(x, t, y) ≈vθ(x, t) + ˙c(t)Fϕ(y),
+(44)
+where vθ(x, t) captures the base transport dynamics, and ˙c(t)Fϕ(y) acts as a condition-dependent
+drift term induced by the auxiliary path.
+Similarly, the unconditional velocity field is obtained by replacing y with the null condition ∅:
+v(x, t, ∅) ≈vθ(x, t) + ˙c(t)Fϕ(∅).
+(45)
+Training of Fϕ.
+We train Fϕ to learn semantic prototypes corresponding to class-wise centers.
+Specifically, we minimize
+LF = EX1,y
+
+∥Fϕ(y) −X1∥2
+,
+(46)
+which encourages
+Fϕ(y) ≈E[X1 | y].
+(47)
+For the unconditional embedding, we define
+Fϕ(∅) ≈E[X1],
+(48)
+which corresponds to the global data centroid.
+Trajectory-level CFG.
+Applying standard classifier-free guidance yields
+vcfg(x, t) = v(x, t, ∅) + w
+ v(x, t, y) −v(x, t, ∅)
+
+= vθ(x, t) + ˙c(t)
+h
+Fϕ(∅) + w
+ Fϕ(y) −Fϕ(∅)
+i
+.
+(49)
+Interpretation.
+The guidance term corresponds to a linear interpolation in the auxiliary space:
+ηcfg = Fϕ(∅) + w
+ Fϕ(y) −Fϕ(∅)
+
+,
+(50)
+which shifts the trajectory from the global centroid toward the class-specific centroid.
+Efficiency.
+Unlike standard CFG, which requires two evaluations of vθ(x, t), the above formulation
+reuses a single evaluation of vθ and applies guidance only through the lightweight module Fϕ,
+requiring only two evaluations of Fϕ.
+Implication.
+This shows that classifier-free guidance can be interpreted as a trajectory-level pertur-
+bation in the auxiliary space, providing a more efficient and principled alternative to conventional
+CFG.
+D.1
+Compatibility with Dual CFG Scales
+We further study the compatibility between trajectory-level CFG and standard classifier-free guidance
+(CFG) under different guidance scales. All experiments use a DiT-B/2 backbone [34].
+We consider two independent guidance strengths: the trajectory-level scale waux and the standard
+CFG scale wCFG, both selected from {1.0, 1.2}, yielding 2 × 2 configurations.
+A key difference lies in computation cost. Standard CFG requires two backbone evaluations
+per sampling step (conditional and unconditional forward passes), while trajectory-level CFG
+modifies the velocity via a lightweight auxiliary term and keeps the backbone evaluation single-pass.
+Accordingly, we report:
+• Pass: number of backbone evaluations per denoising step (1 for single-pass, 2 for standard
+CFG);
+• GFLOPs: total computational cost per image generation (50 sampling steps).
+Results on ImageNet-1k (256 × 256) are reported in Table 5. We observe stable behavior across all
+configurations.
+Overall, trajectory-level CFG remains fully compatible with standard CFG, while consistently
+reducing inference cost due to the single-pass backbone evaluation.
+E
+From Unconditional to Conditional Generation via Auxiliary Paths
+A key advantage of AuxPath-FM is that it enables converting a pre-trained unconditional flow model
+into a conditional generator with minimal additional cost.
+Table 5: Joint evaluation of trajectory-level CFG and standard CFG on ImageNet-1k using DiT-B/2.
+Pass denotes backbone evaluations per step. GFLOPs are measured per image generation (50 steps).
+waux wCFG Pass
+GFLOPs
+FID ↓
+1.0
+1.0
+2301.6028 22.49
+1.0
+1.2
+2303.0808 12.75
+1.2
+1.0
+4601.7198 21.47
+1.2
+1.2
+4603.1978 11.87
+Method.
+Given a pre-trained velocity model vθ(x, t) trained on unconditional data, we introduce a
+lightweight semantic module Fϕ(y) and fine-tune the model using the conditional AuxPath formula-
+tion (Algorithm 3). Importantly, the velocity model is trained to match the baseline flow field, while
+the auxiliary term η = Fϕ(y) is incorporated only through the probability path. At inference time,
+conditional generation is achieved by augmenting the dynamics as
+v(x, t, y) = vθ(x, t) + ˙c(t)Fϕ(y),
+(51)
+without modifying the original model architecture.
+Results.
+We evaluate this strategy by initializing from a pre-trained unconditional model and
+fine-tuning with the auxiliary module. Results in Table 6 show that AuxPath-FM effectively enables
+conditional generation with strong performance, demonstrating that the auxiliary path provides a
+simple yet effective mechanism for upgrading existing models.
+Table 6: Unconditional-to-conditional fine-tuning results.
+Method
+Acc(%) ↑
+FID ↓
+sFID ↓
+IS ↑
+Unconditional
+N/A
+3.72
+0.0017
+9.06
++ numeric η
+79.18
+5.73
+0.0038
+8.89
++ learned η
+77.03
+5.90
+0.0043
+8.93
+Discussion.
+These results highlight that AuxPath-FM provides a lightweight and effective mech-
+anism for transforming unconditional generative models into conditional ones, without requiring
+architectural changes or retraining from scratch.
+F
+Additional Qualitative Results
+In this section, we present additional qualitative results to visualize the generation process of AuxPath-
+FM under different guidance strengths. These results complement the quantitative evaluations in the
+main text by illustrating how semantic auxiliary guidance influences the entire sampling trajectory.
+G
+Anonymous Code Release and Reproducibility
+To facilitate reproducibility and enable further research, we provide an anonymous code release of
+AuxPath Flow Matching at:
+
+Code scope.
+The current anonymous repository includes the core implementation of the proposed
+AuxPath framework, with a particular focus on auxiliary variable modeling and flexible path con-
+struction via different choices of terminal noise η. The released code covers the training logic used in
+ImageNet-1000 experiments (see train_imagenet256_DIT_AFM.py).
+H
+Statement on the Use of Large Language Models
+During the preparation of this manuscript, large language models (LLMs) were used in a limited
+manner solely for language editing purposes, such as improving clarity, grammar, and academic style.
+y=0
+Step 0
+Step 5
+Step 10
+Step 16
+Step 21
+Step 27
+Step 32
+Step 38
+Step 43
+Step 49
+y=1
+y=2
+y=3
+y=4
+y=5
+y=6
+y=7
+y=8
+y=9
+(a) Trajectory with w = 1.0
+y=0
+Step 0
+Step 5
+Step 10
+Step 16
+Step 21
+Step 27
+Step 32
+Step 38
+Step 43
+Step 49
+y=1
+y=2
+y=3
+y=4
+y=5
+y=6
+y=7
+y=8
+y=9
+(b) Trajectory with w = 2.0
+Figure 5: Generation trajectories of AuxPath-FM with trajectory-level CFG on CIFAR-10.
+Each row shows the evolution of a sample along the probability path from the initial state (t = 0) to
+the final generated image (t = 1). Unlike methods that apply guidance through repeated network
+evaluations, AuxPath-FM incorporates classifier-free guidance directly into the trajectory via auxiliary
+variables. Increasing the guidance scale from w = 1.0 to w = 2.0 results in more semantically
+aligned samples, while preserving smooth and coherent transitions along the path. This demonstrates
+that trajectory-level guidance effectively steers generation throughout the entire flow using only a
+single backbone evaluation.
+Step 0
+Step 12
+Step 24
+Step 36
+Step 49
+(a) w = 1.0
+Step 0
+Step 12
+Step 24
+Step 36
+Step 49
+(b) w = 1.5
+Figure 6: Trajectory-level CFG on ImageNet-1k with AuxPath-FM. Each row shows the evolution
+of a sample along the probability path from t = 0 to t = 1. Increasing the guidance scale from
+w = 1.0 to w = 1.5 yields more semantically aligned samples while preserving smooth trajectory
+transitions. Guidance is applied directly along the path via auxiliary variables, enabling effective
+control with a single backbone evaluation.
+All aspects of the research conception, methodological development, experimental design, analysis
+of results, and the scientific conclusions presented in this paper were carried out independently by the
+authors.

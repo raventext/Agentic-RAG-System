@@ -1,0 +1,1257 @@
+SPATIALEPIBENCH: Benchmarking Spatial
+Information and Epidemic Priors in Forecasting
+Ruiqi Lyu∗,1
+Alistair Turcan∗,1
+Bryan Wilder1
+1Carnegie Mellon University
+{ruiqil, aturcan, bwilder}@cs.cmu.edu
+∗Equal contribution.
+Abstract
+Accurate epidemic forecasting is crucial for public health response, resource alloca-
+tion, and outbreak intervention, but remains difficult with sparse, noisy, and highly
+non-stationary data. Because epidemics unfold across interacting regions, spa-
+tiotemporal methods are natural candidates for improving forecasts. Despite grow-
+ing interest in spatial information, no standardized benchmark exists, and current
+evaluations often use simple chronological train-test splits that do not reflect real-
+time forecasting practice. We address this gap with SPATIALEPIBENCH, a challeng-
+ing benchmark for spatiotemporal epidemic forecasting in realistic public-health
+settings. SPATIALEPIBENCH includes 11 epidemic datasets with standardized
+rolling evaluations and outbreak-specific metrics. We evaluate adjacency-informed
+forecasting models with widely used epidemic priors that adapt general models
+to epidemiology, but find that most methods underperform a simple last-value
+baseline from 1 day to 1 month ahead, even during outbreaks and with these priors.
+We identify three major failure modes: (1) poor outbreak anticipation, (2) difficulty
+handling sparsity and noise, and (3) limited utility of common geographic adja-
+cency for epidemiological spatial information. We release benchmark data, code,
+and instructions at  to
+support development of operationally useful epidemic forecasting models.
+Introduction
+Epidemic forecasting is essential for public health planning, guiding resource allocation and preventive
+interventions before outbreaks occur [1, 2]. Yet surveillance data are sparse, noisy, and non-stationary,
+shaped by reporting artifacts, behavioral shifts, policy changes, pathogen evolution, and seasonality
+[3, 4], making them difficult to forecast. Spatiotemporal models exploit dependencies across related
+or interacting regions and have performed well in traffic and energy forecasting [5-7]. They are
+therefore natural candidates for epidemic forecasting, where outbreaks may spread across related
+populations and signals from other regions may provide early warnings. A growing literature
+adapts these models to epidemiology by adding epidemic priors or architectural components that
+capture infectious-disease mechanisms and epidemic-specific patterns [8]. However, spatiotemporal
+epidemic forecasting still lacks an independent standardized benchmark. Existing evaluations are
+heterogeneous, narrow, and often misaligned with practice, omitting common rolling evaluations and
+operationally critical outbreak forecasts (Table 1). Without unified, practically relevant evaluation, it
+remains difficult to determine whether spatial information and epidemic priors genuinely improve
+forecasting utility.
+To address this gap, we propose SPATIALEPIBENCH, a hybrid benchmark for jointly studying
+epidemic priors and spatial information in epidemic forecasting. SPATIALEPIBENCH provides a
+standardized retraining and rolling evaluation procedure for 9 daily and 2 weekly spatiotemporal
+epidemic datasets, comparing against 3 univariate baselines across multiple horizons, modalities, and
+Preprint.
+arXiv:2605.06530v1 [cs.AI] 7 May 2026
+
+9 metrics, with emphasis on outbreak periods. It also includes 4 model-agnostic epidemic priors
+applicable to any deep learning model, enabling tests of whether domain-specific structure improves
+general architectures without bespoke redesign. To our knowledge, SPATIALEPIBENCH is the most
+comprehensive spatiotemporal epidemic forecasting benchmark to date and the first to jointly study
+spatial information and epidemic adaptation of general forecasters.
+In this work, we show that when using a common geographic adjacency as input, many spatiotemporal
+forecasting methods underperform simply predicting the last observed value. This holds from 1 day
+to 1 month ahead, even during outbreaks, when such a baseline should fail. A systematic search over
+epidemic priors shows that some methods improve when epidemic patterns are explicitly modeled,
+but adjacency informed methods still do not outperform simpler univariate ones. We diagnose
+three sources of underperformance: existing methods under-predict outbreaks, struggle with zeros
+and outliers, and commonly used geographic adjacency may provide weak epidemiological spatial
+information.
+Our contributions are as follows:
+1. We present a large, standardized benchmark of 11 spatiotemporal epidemic forecasting tasks,
+with unified data handling, training protocols, and evaluation procedures, including a special
+focus on outbreak periods.
+2. We evaluate 11 spatiotemporal forecasting methods with geographic adjacency against 3
+univariate baselines, finding that many models often fail to translate this spatial structure
+into strong performance, even with the added help of epidemic priors.
+3. We do a deep dive into why models fail, finding outbreaks are often underpredicted or missed
+entirely, sparsity and outliers substantially hinder performance, and geographic adjacency
+does not generally provide useful information for forecasting.
+Type
+Benchmark/
+Method
+Epi
+datasets
+Spatio-
+temporal
+Rolling
+evals
+Outbreak
+focused
+Evaluates
+priors
+Metrics
+Benchmark Dey et al [9]
+✗
+✓
+✗
+✗
+Panja et al [10]
+✗
+✓
+✗
+✗
+IDOBE [11]
+✗
+✓
+✓
+✗
+Method
+Cola-GNN [12]
+✓
+✗
+✗
+✗
+EARTH [13]
+✓
+✗
+✓
+✗
+EpiGNN [14]
+✓
+✗
+✗
+✗
+EpiColaGNN [15]
+✓
+✗
+✗
+✗
+This paper
+SPATIALEPIBENCH
+✓
+✓
+✓
+✓
+Table 1: SPATIALEPIBENCH characteristics versus a representative set of related benchmarks.
+Related work
+Epidemic forecasting
+Accurate forecasts of cases, deaths, hospitalizations, and other operational
+targets are central to public health planning and intervention [16]. Mechanistic models, including
+compartmental ODE systems such as SIR [17], are interpretable but often rely on simplified as-
+sumptions that are difficult to reconcile with real-world dynamics [18]. Statistical and machine
+learning methods such as ARIMA [19] and DLinear [20] have shown strong univariate time-series
+performance, including in epidemiology [9, 10]. Epidemic forecasting remains difficult because
+surveillance data are sparse, noisy, and non-stationary, with reporting artifacts, seasonality, behavioral
+shifts, holidays, and policy changes creating unstable predictive patterns [3, 4]. These challenges have
+motivated epidemiology-specific forecasting methods and benchmarks [9, 10], as well as large collab-
+orative efforts such as the CDC-associated COVID-19 Forecast Hub, which aggregated forecasts from
+110 models [21]. Benchmarks such as IDOBE [11] now measure univariate outbreak forecasting
+in realistic settings. Because epidemics spread and interact regions, recent work also develops
+spatiotemporal models for cross-region dependencies. However, compared to univariate epidemic
+forecasting, evaluation of spatial epidemic forecasting remains limited and less standardized.
+Spatiotemporal forecasting methods
+A large literature models spatiotemporal forecasting with
+graph structure or other spatial priors. Representative methods include diffusion- and recurrence-
+based models such as DCRNN [6] and AGCRN [5]; graph-convolutional architectures such as
+STGCN [22], GraphWaveNet [23], and STNorm [24]; graph-learning methods such as MTGNN
+[7] and GTS [25]; and spectral approaches such as StemGNN [26]. Most were developed for
+non-epidemic tasks, especially traffic forecasting, and sometimes broader multivariate forecasting
+[27]. Recent epidemiology-specific models, including EpiGNN [14], Cola-GNN [12], EpiCola-GNN
+[15], and EARTH [13], adapt similar machinery to regional infectious-disease forecasting. They
+typically add epidemic-specific components, such as mechanistic structure or auxiliary regularization,
+and use geographic adjacency as spatial input, sometimes learning a richer network on top. Other
+epidemiological models, such as CausalGNN [28], STAN [29], STOEP [30], and mechanistic
+approaches [31], can use auxiliary inputs including population statistics, mobility networks, and
+multiple data streams. We focus on forecasting one stream from historical data and geographic
+adjacency alone, since richer inputs such as mobility are not always publicly available across regions
+and times, e.g., SafeGraph mobility data are no longer updated after 2022, while adjacency remains
+popular because epidemics are expected to spread among nearby populations [32]. It remains unclear
+whether general spatiotemporal forecasters can be adapted to epidemics through modular changes or
+require more fundamental redesign. Overall, spatiotemporal epidemic forecasting evaluations remain
+heterogeneous, with no widely adopted benchmark centered on operational settings epidemiologists
+care about, such as retraining, rolling evaluation, and outbreak-focused assessment [21].
+SPATIALEPIBENCH
+3.1
+Evaluation overview
+Problem formulation
+We consider spatiotemporal forecasting over a set of n = |V | spatial units
+connected by a graph G = (V, E) with an associated adjacency matrix A ∈Rn×n, where Aij
+encodes the specified relation from region j to region i under the chosen graph convention, and
+each node corresponds to a geographic region (e.g., a U.S. state). In this paper, the adjacencies are
+defined by geographic neighbors, although SPATIALEPIBENCH allows the specification of other
+networks, such as mobility or contact networks [33]. At each time t, we observe a node-level signal
+xt ∈Rn, where xt,i denotes the observed value for region i. Given a lookback window of length
+L, the input at forecast origin t is X(t) =
+
+
+(xt−L+1)⊤
+· · ·
+(xt)⊤
+
+∈RL×n. For each forecast horizon h,
+measured in dataset-native time steps, the prediction target is y(t,h) = xt+h ∈Rn. The goal is to
+learn a forecasting model fθh that maps historical spatiotemporal observations, and optionally graph
+or temporal covariates, to future node-level outcomes ˆy(t,h) = fθh(X(t), A). For point forecasting at
+horizon h, the base model minimizes L(h)
+base(θh) =
+|Dh|
+P
+t∈Dh ℓ
+ fθh(X(t), A), y(t,h)
+, where Dh
+is the set of forecast origins used for training at horizon h, and ℓis the node-level point-forecasting
+loss aggregated over nodes.
+Datasets overview
+Our Delphi group collects, cleans, and maintains EpiData, a large epidemic
+data repository widely used for public health surveillance across multiple years and modalities [34].
+We prepare 11 datasets for epidemic forecasting benchmarks: 7 COVID-19 datasets from EpiData,
+including 3 insurance-claims datasets Delphi has produced with national-scale health-system partners
+(DVCli, CHNGinpatient, CHNGoutpatient, each documented in EpiData), 3 COVID-19 datasets
+from JHU CSSE [35], and 1 influenza dataset from ILINet [36] (Table 2). Datasets were selected for
+long observation periods, geographic coverage, and operationally useful forecasting targets. Although
+much prior forecasting work focused on influenza [36], COVID-19 expanded available data sources
+and modalities for measuring disease activity. To evaluate outbreak-specific performance, we use
+LRTrend’s outbreak annotation method [33] to identify significantly rising intervals in each region
+and recompute metrics within them. These annotations stratify evaluation only and are not model
+inputs. See Appendix A for dataset and LRTrend details.
+Evaluation metrics
+We use nine point-forecasting metrics, excluding probabilistic metrics such
+as WIS and CRPS because most benchmarked methods produce only point estimates, though
+Dataset
+Frequency
+Country
+Modality
+Observation period
+ILINet [36]
+weekly
+U.S.
+surveillance rate
+2010-present
+NCHSdeaths [34]
+weekly
+U.S.
+deaths
+2020-present
+CANpositivity [34]
+daily
+U.S.
+test positivity
+2020-2021
+CHNGinpatient [34]
+daily
+U.S.
+inpatient hospitalizations
+2020-2024
+CHNGoutpatient [34]
+daily
+U.S.
+outpatient visits
+2020-2024
+CPRadmissions[34]
+daily
+U.S.
+hospital admissions
+2020-2023
+DVcli [34]
+daily
+U.S.
+doctor visits
+2020-present
+HHShosp [34]
+daily
+U.S.
+hospitalizations
+2021-2024
+JHUCase [35]
+daily
+U.S.
+cases
+2020-2023
+CAcase [35]
+daily
+Canada
+cases
+2020-2021
+AUcase [35]
+daily
+Australia
+cases
+2020-2021
+Table 2: Summary of datasets used in our benchmark. Time is shown at year granularity.
+SPATIALEPIBENCH can incorporate them as ML methods increasingly report probabilistic forecasts.
+The standard point metrics are MSE, MAE, RMSE, medAE, and medSE. The filtered point metrics
+are MSE filtered, MAE filtered, and RMSE filtered, which exclude zeros and outliers that may
+be operationally insignificant, arising from delayed or batched reporting, holiday/weekend effects,
+retrospective corrections, changing case definitions or surveillance practices, testing or ascertainment
+disruptions, privacy suppression of small counts, or true low-incidence periods. We also report win
+rate, the fraction of predictions more accurate than predicting the last observed value. Our primary
+evaluation uses RMSE, RMSE filtered, and win rate; all metrics appear in the Appendix.
+Rolling evaluations
+We evaluate each method with a standardized rolling-origin retraining protocol
+that mirrors practical public-health forecasting and epidemiological benchmarks: forecasts use only
+data available at the forecast origin and are evaluated prospectively as new observations accrue
+[1, 11, 21, 37]. For horizon h, all methods use the same input construction: a 12-observation
+lookback window directly predicts the target at lead h. We measure h in native time steps, weeks
+for weekly datasets and days for daily datasets, evaluating h ∈{1, . . . , 4} for weekly data and
+h ∈{1, . . . , 28} for daily data, consistent with short-term infectious-disease forecasting and CDC-
+associated evaluations [21]. Starting from the earliest forecastable time point, models are retrained
+from scratch every 8 time steps using the most recent 100 observations available at that origin.
+Each retraining window is split chronologically into 80% training and 20% validation for model
+fitting and selection. The fitted model is evaluated on the next 8 forecast origins, after which
+the training origin advances and the process repeats. We apply this protocol identically across
+methods for fair comparison under a common rolling-update setting. This differs from common
+spatiotemporal epidemiology evaluations that use a single chronological train/validation/test split,
+whereas forecasting hubs and outbreak benchmarks emphasize repeated prospective or expanding-
+window evaluation over short operational horizons [11, 12, 14, 21, 37].
+3.2
+Epidemic priors
+We consider four model-agnostic epidemic priors, or patches, applicable to any base spatiotemporal
+forecaster fθh. To our knowledge, this is the first systematic integration and evaluation of such patches
+for spatiotemporal epidemic forecasting. Rather than introducing a new architecture, these patches test
+whether lightweight epidemiological and temporal inductive biases improve existing spatiotemporal
+models. The base model takes X(t) and outputs a point forecast ˆy(t,h) = fθh(X(t), A) ∈Rn for
+target y(t,h) ∈Rn. We write ˜y(t,h) for patched forecasts that directly modify predictions and r(t,h)
+for auxiliary forecasts used only for regularization.
+3.2.1
+Calendar covariates (TID).
+The tid patch adds temporal covariates: day-of-week for daily forecasts and week-of-year for weekly
+forecasts. These features are common in forecasting [38] and can capture epidemic reporting artifacts,
+day-of-week effects, and seasonality [33, 39]. Let st+h be the categorical time indicator for the
+forecast target at lead h. We embed st+h and pass it through a small MLP to produce a node-level
+additive correction δϕ(st+h) ∈Rn. The patched forecast is ˜y(t,h)
+TID = ˆy(t,h) + δϕ(st+h). This model-
+agnostic correction applies after any node-level forecaster’s forward pass. Other parameterizations,
+such as multiplicative corrections, are possible; they performed similarly, so we report the additive
+variant. On log-transformed targets, the additive correction becomes multiplicative on the original
+scale; analogous monotone adjustments apply to other variance-stabilizing transformations.
+3.2.2
+Filtered loss
+The filter patch modifies the training loss by masking zeros and outliers that may be uninformative
+for operational use yet omnipresent in epidemic data [4]. Such values can arise from reporting delays,
+batching, retrospective corrections, surveillance changes, low-incidence periods, or other data-quality
+artifacts rather than forecast-relevant dynamics. It excludes zero-valued targets and those outside
+an interquartile-range filter with threshold c (default c = 1.5, for a roughly normal distribution, this
+would correspond to about 0.7% of observations excluded). This patch leaves the model architecture
+unchanged and only affects the optimization objective.
+3.2.3
+Epi-aware regularization
+This patch adds an auxiliary regularization term to the base forecasting objective, introducing
+mechanistic epidemic structure [17, 29] without changing the base architecture. The epidemic
+component is a jointly trained auxiliary branch, not a detached post-hoc model. For each horizon h, the
+base forecaster outputs ˆy(t,h) = fθh(X(t), A). Let r(t,h) := r(t,h)
+θh,ϕh ∈Rn be the auxiliary structured-
+module output, with ϕh denoting epidemiological-branch parameters. The patched objective is
+L(h)(θ, ϕ) =
+|Dh|
+P
+t∈Dh
+
+ℓ
+ ˆy(t,h), y(t,h)
++ λepiℓepi
+ r(t,h), y(t,h)
+, where λepi ≥0 controls
+regularization strength.
+We consider three variants of this patch.
+Variant 1: SIR incidence. In this variant, each node is associated with latent susceptible, infectious,
+and removed states S(τ), I(τ), R(τ) ∈Rn, where τ indexes steps within the auxiliary rollout. This
+variant is inspired by EINNs [40]. Let p ∈Rn denote the regional population vector. To allow spatial
+coupling, we define a nonnegative row-stochastic graph mixing operator P from A, for example
+through row normalization, and compute I(τ)
+mix = PI(τ).
+Given node-level transmission and recovery rates β(t), γ(t) ∈Rn
++, held fixed over the auxiliary
+rollout for a given (t, h), and time step ∆t, the auxiliary incidence at rollout step τ is z(τ) =
+∆tβ(t) ⊙S(τ)
+p
+⊙I(τ)
+mix, where ⊙denotes elementwise multiplication. The latent states are updated by
+a forward Euler step:
+S(τ+1) = S(τ) −z(τ), I(τ+1) = I(τ) + z(τ) −∆tγ(t) ⊙I(τ), R(τ+1) = R(τ) + ∆tγ(t) ⊙I(τ).
+The rates β(t) and γ(t) are learned, sample-dependent quantities predicted from the same lookback
+window used by the base forecaster via a neural head. The auxiliary regularizer output r(t,h) is the
+incidence forecast produced by this rollout at horizon h; under the convention that z(τ) represents
+incidence over the interval from t + τ to t + τ + 1, we set r(t,h) = z(h−1).
+Variant 2: SIR percent. This variant uses the same latent rollout, but returns a population-normalized
+version of the auxiliary incidence forecast r(t,h) = s z(h−1)
+p
+, where division is elementwise and s is a
+user-defined scaling constant, such as 100 for percent or 105 for per-100k units. When the auxiliary
+loss is computed against the correspondingly normalized target, this variant changes the regularization
+from a count-based penalty to a rate-based penalty and therefore is not simply absorbed by λepi.
+Variant 3: NGM propagation. This variant replaces the nonlinear latent rollout with a structured
+linear propagation rule [41] following the epidemiology-aware deep learning formulation of Liu et al.
+[15]. For each fixed forecast horizon h, a neural epidemiological head predicts nonnegative, sample-
+dependent transmission and recovery parameters β(t,h), γ(t,h) ∈Rn
++ from the same lookback window
+used by the base forecaster. Using the graph-derived propagation matrix P, one representative form is
+K(t,h) = diag(β(t,h))
+ diag(γ(t,h)) −P
+−1, where K(t,h) ∈Rn×n is the auxiliary next-generation
+propagation matrix. Using column-vector convention, the auxiliary output is r(t,h) = K(t,h)xt. In
+our setting, this auxiliary propagation is used only as a regularizer and does not replace the base
+forecaster.
+3.2.4
+Epi-inspired neural network (EINN).
+The einn patch uses EINNs as an auxiliary transfer-learning prior for the base forecaster fθh [40].
+EINNs first learn latent epidemic dynamics from time alone using a PINN-style time module, then
+regularize a feature module, instantiated from the base forecasting architecture, to map observed
+histories X(t) into the same epidemic-state space. Thus, mechanistic structure constrains the learned
+representation without replacing the neural forecaster.
+We denote the combined ODE-residual and gradient-matching terms by L(h)
+dyn. The EINN output map
+produces an auxiliary forecast r(t,h) ∈Rn parameterized by ψh, which is trained both against the
+target and against the base prediction ˆy(t,h). The full objective is
+L(h)(θh, ψh) = L(h)
+base(θh) + λdynL(h)
+dyn(ψh)
++ λdata
+|Dh|
+X
+t∈Dh
+r(t,h) −y(t,h)
+2
++ λalign
+|Dh|
+X
+t∈Dh
+ˆy(t,h) −r(t,h)
+2 .
+Experimental results
+Benchmarked methods
+We benchmark 11 spatiotemporal methods and 3 univariate baselines.
+Spatiotemporal methods include general models-DCRNN [6], AGCRN [5], STGCN [22], Graph-
+WaveNet [23], MTGNN [7], GTS [25], StemGNN [26], and STNorm [24]-and epidemiology-
+specific models-EpiGNN [14], Cola-GNN [12], and EARTH [13]; EpiColaGNN [15] is equivalent
+to Cola-GNN with the NGM patch. Baselines include DLinear [20], a linear trend/seasonality decom-
+position model; ARIMA [19], fit separately to each series; and a naive persistence baseline predicting
+the latest observation. Hyperparameters are selected by grid search on the training/validation split
+from the first retraining window and fixed for all later rolling-origin evaluations. All methods access
+only historical data and geographic adjacency; runs time out after 24 hours. Patches apply to all but
+ARIMA and naive, which are not neural networks. See Appendix B for implementation details.
+Adjacency-informed models struggle to outperform univariate methods
+Figure 1 reports results
+across all regions, time periods, and horizons; Appendix C shows similar patterns for all other
+metrics. Surprisingly, every method beats the naive baseline less than 50% of the time, often far less.
+Prediction error is substantially higher than naive for almost all methods across datasets, with no clear
+winner over the baseline. Even for the same disease and time period, COVID-19, the same method
+can perform very differently across data modalities, e.g., DVcli versus JHUCase, motivating diverse
+forecasting targets. We examine horizon-specific performance in two representative datasets: smooth
+weekly US influenza (ILI2019) and noisy daily US COVID-19 doctor visits (DVcli). On ILI2019,
+all methods underperform naive at 1 week ahead, but some slightly outperform it at 4 weeks ahead.
+On DVcli, performance is much noisier, especially at 7-, 14-, and 28-day horizons, likely because
+weekday effects dominate the signal; no method clearly beats naive. Overall, both univariate and
+adjacency-informed forecasting methods leave substantial room for improvement.
+Adjacency-informed models struggle to predict outbreaks
+We repeat the overall analysis only
+during outbreak periods in each region (Figure 2, Appendix D), where adjacency information should
+be especially useful because neighboring states may provide early warning signals. Although
+predicting the last observation should intuitively fail while cases rapidly increase, almost no method
+outperforms naive. All but two methods perform significantly worse than naive during outbreaks,
+especially adjacency-informed methods, with up to 12% higher error. We conclude the unique
+challenge of forecasting outbreaks remains difficult for all methods benchmarked.
+Epidemic priors selectively improve performance
+We measure the improvement from all pro-
+posed patches for each method and dataset in Figure 3 and Appendix E. Calendar covariates (TID)
+and filtering zeros/outliers from training (Filter) can yield large method- and dataset-specific gains,
+lowering RMSE by > 20%, while NGM, SIR, and EINN often give more modest 5-15% improve-
+ments. However, no patch works universally, and naively adding a patch to a model more often hurts
+Figure 1: Main results (a) Win rate of each method versus naive baseline (higher is better), dashed
+line at 0.5 indicates winning 50% of the time. (b) Overall RMSE relative to baseline of each method
+(lower is better), dashed line at 1.0 indicates equal error to baseline. (c-d) RMSE of each method at
+multiple horizons in (c) DVcli and (d) ILI2019. 95% CI’s are calculated for each plot by bootstrapping
+across months and meta-analyzing across horizons for (a-b).
+Figure 2: Outbreak results (a) Overall RMSE relative to baseline of each method (lower is better),
+dashed line at 1.0 indicates equal error to baseline. (b) Additional RMSE relative to baseline in
+outbreak periods versus all periods for each method. 95% CI’s are calculated for each plot by
+bootstrapping across months and meta-analyzing across horizons for (a) and datasets for (b).
+performance. Treating patches as hyperparameters, we search for the best patch combination for each
+method and dataset, representing an optimistic setting where these choices are correct. Best-patched
+methods substantially close the gap to naive, lowering RMSE by an average of 9% and increasing win
+rates by 15%. Some best-patched methods now outperform naive, even in high-error settings such
+as JHUCase. Still, methods broadly underperform naive, and adjacency-informed methods do not
+beat univariate baselines. Repeating the analysis during outbreaks gives similar conclusions and the
+same underperformance, even when selecting epidemic priors specifically for outbreak performance
+(Appendix E).
+Why do models fail?
+We characterize failure modes not recovered by epidemic priors. Using
+each method’s best-patch configuration, we identify two main causes of loss (Figure 4, Appendix F).
+First, we measure average signed error in outbreak and non-outbreak periods to assess bias. All
+methods strongly underpredict during outbreaks, while slightly overpredicting outside outbreaks.
+A representative JHUCase example, a month-long COVID-19 outbreak around New Year’s Eve in
+Figure 3: Epidemic prior performance. (a) RMSE for each method-patch-dataset combination
+relative to the unpatched method. (b) RMSE relative to the naive baseline for each method with its
+best patch configuration; lower is better, and the dashed line at 1.0 marks equal error to baseline. 95%
+CIs are computed by bootstrapping across months and meta-analyzing across horizons.
+Missouri, shows several methods forecasting only small increases, while others detect the outbreak
+only near its end. Second, we evaluate RMSE filtered, which excludes zeros and outliers. Many
+methods improve by 10-25% after excluding these points versus just using RMSE. In JHUCase, the
+best-patch configuration on filtered points outperforms naive at nearly every horizon, though this is
+not true for every dataset (Appendix F), suggesting epidemic priors may help in some operationally
+relevant time points. However, adjacency-informed methods still do not significantly outperform
+univariate baselines overall.
+Figure 4: Failure modes. (a) Average signed error during outbreak and non-outbreak periods. (b)
+RMSE filtered versus RMSE, relative to the naive baseline. (c) Representative outbreak and method
+predictions at a 7-day horizon. (d) RMSE filtered for each method with its best patch at each horizon
+in JHUCase; lower is better. For all plots, 95% CIs are computed by bootstrapping across months; for
+(a-b), estimates are meta-analyzed across horizons and methods.
+Is geographic adjacency useful?
+Few adjacency-informed methods match univariate baselines, and
+most underperform, questioning the common use of geographic proximity for epidemic forecasting.
+We sought to use SPATIALEPIBENCH as a sandbox to build models which (1) outperform univariate
+baselines and (2) take strong advantage of adjacency information to do so. We run the agentic
+method-optimization framework TusoAI [42], initialized with a simple GNN and specific instruction
+to leverage geographic adjacency. TusoAI hill-climbs model code on ILI2019 and is tested on
+all 11 datasets, preventing overfitting to COVID-specific properties and requiring generalizable
+spatiotemporal techniques. After 24 hours, it produces a forecasting architecture with complex
+temporal and adjacency features, including multi-hop aggregation/smoothing and epidemiology-
+specific temporal features and embeddings. The model outperforms naive on 6 datasets, including 4
+where the best adjacency-informed benchmark method did not beat univariate baselines (Figure 5,
+Appendix G). However, removing all spatial modeling tricks from TusoAI’s model shows adjacency
+modeling was not critical and often reduced performance. Despite exploring over 250 ways to
+model geographic adjacency, gains only came from non-spatial modeling. Consistent with statistical
+epidemiology findings, we conclude that geographic adjacency may be a poor proxy for cross-region
+dependencies and can hinder performance [33, 43].
+Figure 5: Learning a new adjacency-informed model (a) RMSE relative to baseline of each method
+with its best possible patch configuration (lower is better), dashed line at 1.0 indicates equal error to
+baseline. Best graph-based refers to the top spatial model in a dataset. (b) Optimization trajectory of
+TusoAI. The 3 discoveries with largest validation performance gain are annotated with a summary of
+the resulting code change.
+Discussion
+We present SPATIALEPIBENCH, a comprehensive, operationally relevant benchmark for spatiotem-
+poral epidemic forecasting. Across methods, we identify key improvement areas, including outbreak
+prediction and spatial-structure integration, and diagnose common failure modes. Several limitations
+suggest future work. First, we omit probabilistic metrics such as CRPS and WIS because most
+benchmarked models produce point forecasts, but these can be added as probabilistic spatiotemporal
+models mature. Second, we do not study auxiliary features or richer spatial networks, since such data
+may be unavailable across all time points, diseases, and countries; however, our codebase supports
+multiple features and arbitrary networks for future evaluation. Third, we focus mainly on ILI and
+COVID-19, historically the primary forecasting targets, but additional diseases can be added under
+the same evaluation setup as more data become available. Fourth, we evaluate a similar number
+of methods as related epidemic forecasting work [11] to test whether geographic adjacency helps
+beyond univariate methods; stronger univariate baselines can be incorporated as forecasting methods
+improve.
+References
+[1] Estee Y. Cramer et. al. Evaluation of individual and ensemble probabilistic forecasts of covid-19
+mortality in the united states. Proceedings of the National Academy of Sciences, 119(15):
+e2113561119, 2022. doi: 10.1073/pnas.2113561119. URL 
+abs/10.1073/pnas.2113561119.
+[2] Caitlin Rivers, Jean-Paul Chretien, Steven Riley, Julie A Pavlin, Alexandra Woodward, David
+Brett-Major, Irina Maljkovic Berry, Lindsay Morton, Richard G Jarman, Matthew Biggerstaff,
+et al. Using "outbreak science" to strengthen the use of models during epidemics. Nature
+communications, 10(1):3102, 2019.
+[3] Kris V Parag, Christl A Donnelly, and Alexander E Zarebski. Quantifying the information in
+noisy epidemic curves. Nature Computational Science, 2(9):584-594, 2022.
+[4] Alexander Rodriguez, Harshavardhan Kamarthi, Pulak Agarwal, Javen Ho, Mira Patel, Suchet
+Sapre, and B Aditya Prakash. Machine learning for data-centric epidemic forecasting. Nature
+Machine Intelligence, 6(10):1122-1131, 2024.
+[5] Lei Bai, Lina Yao, Can Li, Xianzhi Wang, and Can Wang. Adaptive graph convolutional
+recurrent network for traffic forecasting. Advances in neural information processing systems,
+33:17804-17815, 2020.
+[6] Yaguang Li, Rose Yu, Cyrus Shahabi, and Yan Liu. Diffusion convolutional recurrent neural
+network: Data-driven traffic forecasting. arXiv preprint arXiv:1707.01926, 2017.
+[7] Zonghan Wu, Shirui Pan, Guodong Long, Jing Jiang, Xiaojun Chang, and Chengqi Zhang.
+Connecting the dots: Multivariate time series forecasting with graph neural networks. In
+Proceedings of the 26th ACM SIGKDD international conference on knowledge discovery &
+data mining, pages 753-763, 2020.
+[8] Zewen Liu, Guancheng Wan, B. Aditya Prakash, Max S.Y. Lau, and Wei Jin. A review of graph
+neural networks in epidemic modeling. In Proceedings of the 30th ACM SIGKDD Conference on
+Knowledge Discovery and Data Mining, KDD ’24, page 6577-6587, New York, NY, USA, 2024.
+Association for Computing Machinery. ISBN 9798400704901. doi: 10.1145/3637528.3671455.
+URL 
+[9] Mrinmoy Dey, Aprameyo Chakrabartty, Dhruv Sarkar, and Tanujit Chakraborty. Do we really
+need foundation models for multi-step-ahead epidemic forecasting? In NeurIPS Workshop on
+Time Series in the Age of Large Models, 2024.
+[10] Madhurima Panja, Ojas Modak, Grace Younes, and Tanujit Chakraborty. Zero-shot forecasting
+of epidemics. In Recent Advances in Time Series Foundation Models Have We Reached
+the’BERT Moment’?, 2025.
+[11] Aniruddha Adiga, Jingyuan Chou, Anshul Chiranth, Bryan Lewis, Ana I Bento, Shaun Truelove,
+Geoffrey Fox, Madhav Marathe, Harry Hochheiser, and Srini Venkatramanan. Idobe: Infectious
+disease outbreak forecasting benchmark ecosystem. arXiv preprint arXiv:2604.18521, 2026.
+[12] Songgaojun Deng, Shusen Wang, Huzefa Rangwala, Lijing Wang, and Yue Ning. Cola-gnn:
+Cross-location attention based graph neural networks for long-term ili prediction. In Proceedings
+of the 29th ACM international conference on information & knowledge management, pages
+245-254, 2020.
+[13] Guancheng Wan, Zewen Liu, Xiaojun Shan, Max SY Lau, B Aditya Prakash, and Wei Jin. Earth:
+Epidemiology-aware neural ode with continuous disease transmission graph. In Forty-second
+International Conference on Machine Learning, 2025.
+[14] Feng Xie, Zhong Zhang, Liang Li, Bin Zhou, and Yusong Tan. Epignn: Exploring spatial
+transmission with graph neural network for regional epidemic forecasting. In Joint European
+Conference on Machine Learning and Knowledge Discovery in Databases, pages 469-485.
+Springer, 2022.
+[15] Mutong Liu, Yang Liu, and Jiming Liu. Epidemiology-aware deep learning for infectious
+disease dynamics prediction. In Proceedings of the 32nd ACM International Conference on
+Information and Knowledge Management, pages 4084-4088, 2023.
+[16] Ezekiel J Emanuel, Govind Persad, Ross Upshur, Beatriz Thome, Michael Parker, Aaron
+Glickman, Cathy Zhang, Connor Boyle, Maxwell Smith, and James P Phillips. Fair allocation
+of scarce medical resources in the time of covid-19, 2020.
+[17] Herbert W Hethcote. The mathematics of infectious diseases. SIAM review, 42(4):599-653,
+2000.
+[18] Jonas Dehning, Johannes Zierenberg, F Paul Spitzner, Michael Wibral, Joao Pinheiro Neto,
+Michael Wilczek, and Viola Priesemann. Inferring change points in the spread of covid-19
+reveals the effectiveness of interventions. Science, 369(6500):eabb9789, 2020.
+[19] Taghreed Alghamdi, Khalid Elgazzar, Magdi Bayoumi, Taysseer Sharaf, and Sumit Shah.
+Forecasting traffic congestion using arima modeling. In 2019 15th international wireless
+communications & mobile computing conference (IWCMC), pages 1227-1232. IEEE, 2019.
+[20] Ailing Zeng, Muxi Chen, Lei Zhang, and Qiang Xu. Are transformers effective for time series
+forecasting? In Proceedings of the AAAI conference on artificial intelligence, volume 37, pages
+11121-11128, 2023.
+[21] Estee Y Cramer, Yuxin Huang, Yijin Wang, Evan L Ray, Matthew Cornell, Johannes Bracher,
+Andrea Brennen, Alvaro J Castro Rivadeneira, Aaron Gerding, Katie House, et al. The united
+states covid-19 forecast hub dataset. Scientific data, 9(1):462, 2022.
+[22] Sijie Yan, Yuanjun Xiong, and Dahua Lin. Spatial temporal graph convolutional networks
+for skeleton-based action recognition. In Proceedings of the AAAI conference on artificial
+intelligence, volume 32, 2018.
+[23] Zonghan Wu, Shirui Pan, Guodong Long, Jing Jiang, and Chengqi Zhang. Graph wavenet for
+deep spatial-temporal graph modeling. arXiv preprint arXiv:1906.00121, 2019.
+[24] Jinliang Deng, Xiusi Chen, Renhe Jiang, Xuan Song, and Ivor W Tsang. St-norm: Spatial and
+temporal normalization for multi-variate time series forecasting. In Proceedings of the 27th
+ACM SIGKDD conference on knowledge discovery & data mining, pages 269-278, 2021.
+[25] Chao Shang, Jie Chen, and Jinbo Bi. Discrete graph structure learning for forecasting multiple
+time series. arXiv preprint arXiv:2101.06861, 2021.
+[26] Defu Cao, Yujing Wang, Juanyong Duan, Ce Zhang, Xia Zhu, Congrui Huang, Yunhai Tong,
+Bixiong Xu, Jing Bai, Jie Tong, et al. Spectral temporal graph neural network for multivariate
+time-series forecasting. Advances in neural information processing systems, 33:17766-17778,
+2020.
+[27] Yubo Liang, Zezhi Shao, Fei Wang, Zhao Zhang, Tao Sun, and Yongjun Xu. Basicts: An
+open source fair multivariate time series prediction benchmark. In International symposium on
+benchmarking, measuring and optimization, pages 87-101. Springer, 2022.
+[28] Lijing Wang, Aniruddha Adiga, Jiangzhuo Chen, Adam Sadilek, Srinivasan Venkatramanan, and
+Madhav Marathe. Causalgnn: Causal-based graph neural networks for spatio-temporal epidemic
+forecasting. In Proceedings of the AAAI conference on artificial intelligence, volume 36, pages
+12191-12199, 2022.
+[29] Junyi Gao, Rakshith Sharma, Cheng Qian, Lucas M Glass, Jeffrey Spaeder, Justin Romberg,
+Jimeng Sun, and Cao Xiao. Stan: spatio-temporal attention network for pandemic prediction
+using real-world evidence. Journal of the American Medical Informatics Association, 28(4):
+733-743, 2021.
+[30] Sijie Ruan, Jinyu Li, Jia Wei, Zenghao Xu, Jie Bao, Junshi Xu, Junyang Qiu, Hanning Yuan,
+Xiaoxiao Wang, and Shuliang Wang. Prior knowledge-enhanced spatio-temporal epidemic
+forecasting. arXiv preprint arXiv:2602.22270, 2026.
+[31] Junyi Gao, Joerg Heintz, Christina Mack, Lucas Glass, Adam Cross, and Jimeng Sun. Evidence-
+driven spatiotemporal covid-19 hospitalization prediction with ising dynamics. Nature commu-
+nications, 14(1):3093, 2023.
+[32] Zewen Liu, Guancheng Wan, B Aditya Prakash, Max SY Lau, and Wei Jin. A review of graph
+neural networks in epidemic modeling. In Proceedings of the 30th ACM SIGKDD conference
+on knowledge discovery and data mining, pages 6577-6587, 2024.
+[33] Ruiqi Lyu, Alistair Turcan, and Bryan Wilder. Combining digital data streams and epidemic
+networks for real time outbreak detection. arXiv preprint arXiv:2511.07163, 2025.
+[34] David C Farrow, Logan C Brooks, Aaron Rumack, Ryan J Tibshirani, and Roni Rosenfeld.
+Delphi epidata api. The Lancet Infectious Diseases, 2015.
+[35] Ensheng Dong, Hongru Du, and Lauren Gardner. An interactive web-based dashboard to track
+covid-19 in real time. The Lancet infectious diseases, 20(5):533-534, 2020.
+[36] Centers for Disease Control, Prevention, et al. Us influenza surveillance: purpose and methods.
+National Center for Immunization and Respiratory Diseases (NCIRD)[cited 2024 Apr 29].
+ cdc. gov/flu/weekly/overview. htm, 2024.
+[37] Nicholas G Reich, Craig J McGowan, Teresa K Yamana, Abhinav Tushar, Evan L Ray, Dave
+Osthus, Sasikiran Kandula, Logan C Brooks, Willow Crawford-Crudell, Graham Casey Gibson,
+et al. Accuracy of real-time multi-model ensemble forecasts for seasonal influenza in the us.
+PLoS computational biology, 15(11):e1007486, 2019.
+[38] David Salinas, Valentin Flunkert, Jan Gasthaus, and Tim Januschowski. Deepar: Probabilistic
+forecasting with autoregressive recurrent networks. International journal of forecasting, 36(3):
+1181-1191, 2020.
+[39] Aaron Rumack. Modeling Epidemiological Time Series. PhD thesis, Carnegie Mellon University,
+2023.
+[40] Alexander Rodríguez, Jiaming Cui, Naren Ramakrishnan, Bijaya Adhikari, and B Aditya
+Prakash. Einns: epidemiologically-informed neural networks. In Proceedings of the AAAI
+conference on artificial intelligence, volume 37, pages 14453-14460, 2023.
+[41] Odo Diekmann, Johan Andre Peter Heesterbeek, and Michael G Roberts. The construction
+of next-generation matrices for compartmental epidemic models. Journal of the royal society
+interface, 7(47):873-885, 2010.
+[42] Alistair Turcan, Kexin Huang, Lei Li, and Martin Jinye Zhang. Tusoai: Agentic optimization
+for scientific methods. arXiv preprint arXiv:2509.23986, 2025.
+[43] Gabrielle Thivierge, Aaron Rumack, and F William Townes. Does spatial information improve
+forecasting of influenza-like illness? Epidemics, 51:100820, 2025.
+A
+Data overview
+Our benchmark aggregates public and semi-public epidemiological surveillance signals spanning
+syndromic surveillance, mortality, confirmed cases, testing, hospitalization, claims-based utilization,
+and outpatient symptom burden. Each dataset is treated as a spatiotemporal forecasting task with
+a common interface across locations and forecast dates. The collection is intended to test whether
+forecasting methods are robust across heterogeneous epidemic data streams, rather than optimized for
+a single surveillance source. Below we summarize the source, target variable, and key measurement
+considerations for each signal. Each dataset has outbreak regions, wherein counts are quickly
+increasing, annotated using LRTrend [33] run on the full time series in each region with all default
+parameters.
+ILI2019. Weekly influenza-like illness (ILI) surveillance from ILINet, as reported by the CDC
+Influenza Division. ILI is defined syndromically as outpatient visits involving fever plus
+cough or sore throat; it is not laboratory-confirmed influenza and may include other respira-
+tory pathogens with similar symptoms. We restrict this dataset to observations through the
+end of 2019 to avoid the major surveillance and behavioral disruptions introduced by the
+COVID-19 pandemic.
+NCHSdeaths. Weekly all-cause mortality based on provisional death certificate data received and
+coded by the National Center for Health Statistics (NCHS). Unlike reporting-stream death
+datasets such as USAFacts or JHU CSSE, NCHS deaths are assigned by date of occurrence
+rather than date of report. Recent observations are therefore subject to revision as additional
+certificates are received and processed.
+JHUcase. Confirmed COVID-19 cases in the United States from the Johns Hopkins University
+Center for Systems Science and Engineering (JHU CSSE). This signal reflects reported
+confirmed cases and is therefore affected by testing availability, reporting practices, and
+changes in ascertainment over time.
+HHShosp. COVID-19 hospital admissions from U.S. Department of Health and Human Services
+(HHS) hospital reporting. The target is the number of adult and pediatric hospital admissions
+with confirmed COVID-19 occurring each day. HHS hospital data are part of the public
+health surveillance stream and capture patient impact and hospital capacity, including
+confirmed and suspected COVID-19 and influenza-related admissions depending on the
+specific source definition.
+AUcase. Confirmed COVID-19 cases in Australia from JHU CSSE. This task provides an interna-
+tional case surveillance benchmark with reporting systems and epidemic dynamics distinct
+from the United States.
+CAcase. Confirmed COVID-19 cases in Canada from JHU CSSE. As with other confirmed case
+signals, observations reflect reported infections and are sensitive to testing policy, eligibility,
+and reporting delays.
+CANpositivity. COVID-19 test positivity from COVID Act Now (CAN), using data available
+through the CDC COVID-19 Integrated County View. The target is the proportion of PCR
+specimens with a positive result. This signal captures changes in testing and transmission
+jointly, and may differ from case-count targets when testing volume or test-seeking behavior
+changes.
+CHNGinpatient. Inpatient COVID-19 utilization based on de-identified Change Healthcare medical
+claims, processed by Delphi and smoothed using a trailing 7-day average. The target is the
+ratio of inpatient hospitalizations associated with confirmed COVID-19 or COVID-related
+symptoms. Claims-based signals provide complementary coverage to public health reporting
+streams but may reflect insurance, billing, and healthcare-utilization patterns.
+CHNGoutpatient. Outpatient COVID-19 utilization based on de-identified Change Healthcare
+claims, processed by Delphi and smoothed using a trailing 7-day average. The target is the
+ratio of outpatient doctor visits associated with confirmed COVID-19 or COVID-related
+symptoms. This signal captures ambulatory healthcare-seeking behavior and can respond
+differently from case, hospitalization, or mortality targets.
+CPRadmissions. Confirmed COVID-19 hospital admissions from the daily Community Profile
+Report (CPR) produced by the Data Strategy and Execution Workgroup of the White House
+COVID-19 Team, smoothed using a 7-day average. CPR combines public health surveillance
+information on cases, deaths, testing, admissions, healthcare resources, and vaccination.
+Relative to HHS and claims-based hospitalization sources, CPR provides daily county-
+level admissions while remaining part of the public health surveillance stream; state-level
+aggregates are intended to align with HHS but may differ in practice.
+DVcli. COVID-like illness (CLI) outpatient visit estimates from Delphi’s health system partners. The
+target is the estimated percentage of outpatient doctor visits primarily about COVID-related
+symptoms, smoothed in time using a Gaussian linear smoother. This syndromic signal is
+designed to capture symptom burden rather than laboratory-confirmed infection.
+These datasets differ substantially in observation process, reporting lag, revision behavior, smoothing,
+and sensitivity to changes in testing or healthcare utilization. This heterogeneity is deliberate: a fore-
+casting benchmark for epidemic response should evaluate performance across multiple surveillance
+mechanisms, including signals that are noisy, delayed, retrospectively revised, or only indirectly
+related to incidence.
+Table 3: Percentage of zeros and high outliers by dataset.
+Dataset
+% zeros
+% high outliers
+% zeros, outbreak
+% high outliers, outbreak
+ILI2019
+3.47
+6.44
+2.90
+6.23
+NCHSdeaths
+6.33
+9.53
+3.79
+10.02
+JHUcase
+13.82
+6.84
+13.78
+7.02
+HHShosp
+0.59
+6.03
+0.35
+6.64
+AUcase
+50.81
+7.18
+44.31
+5.97
+CAcase
+35.32
+3.48
+29.93
+3.45
+CANpositivity
+0.43
+2.22
+0.15
+2.31
+CHNGinpatient
+4.03
+6.99
+1.23
+4.26
+CHNGoutpatient
+0.64
+6.74
+0.40
+6.43
+CPRadmissions
+0.00
+5.16
+0.00
+3.03
+DVcli
+0.37
+10.03
+0.04
+8.63
+B
+Method implementations
+In the reported experiments, all trainable neural methods were trained for 100 epochs on machines with
+32 CPU cores and NVIDIA GeForce RTX 2080 Ti GPUs, with a 24-hour wall-clock timeout. ARIMA
+was fit separately for each node and retraining window using its specified univariate procedure, and
+naive persistence has no fitted parameters. Hyperparameters were selected by grid search using the
+training/validation split from the first retraining window. For EARTH, the pairwise DTW matrix was
+precomputed and cached before rolling evaluation. Under this protocol, GraphWaveNet exceeded
+the wall-clock limit for all horizons on DVcli, CHNGoutpatient, and CHNGinpatient; these runs are
+marked as timed out.
+For ease of use, the unified run_retrain.py workflow in our GitHub also supports CPU execution
+with default 50-epoch training for trainable neural methods. The hyperparameter configurations used
+in the scripts are listed below.
+• DCRNN [6]. Diffusion recurrent model over graph random walks. Hyperparameters: ‘max
+diffusion_step=2‘, ‘filter_type=dual_random_walk‘, ‘num_rnn_layers=2‘, ‘rnn_units=32‘,
+‘dropout=0.1‘.
+• AGCRN [5]. Adaptive graph convolutional recurrent network with learnable node embed-
+dings. Hyperparameters: ‘rnn_units=16‘, ‘nlayers=2‘, ‘embed_dim=8‘, ‘cheb_k=2‘.
+• STGCN [22]. Spatiotemporal graph convolution blocks for joint temporal/graph modeling.
+Hyperparameters: ‘nhids=16‘.
+• GraphWaveNet [23].
+Dilated temporal convolutions plus adaptive graph propaga-
+tion. Hyperparameters: ‘residual_channels=4‘, ‘dilation_channels=4‘, ‘skip_channels=32‘,
+‘end_channels=64‘, ‘kernel_size=2‘, ‘blocks=4‘, ‘nlayers=8‘.
+• MTGNN [7]. Multivariate time-series graph neural network with learned subgraph struc-
+ture. Hyperparameters: ‘gcn_depth=2‘, ‘dropout=0.2‘, ‘subgraph_size=3‘, ‘node_dim=8‘,
+‘dilation_exponential=1‘, ‘conv_channels=8‘, ‘residual_channels=4‘, ‘skip_channels=8‘,
+‘end_channels=32‘, ‘layers=3‘, ‘propalpha=0.05‘, ‘tanhalpha=3‘.
+• GTS [25].
+Graph structure learning with sequence modeling.
+Hyperparameters:
+‘rnn_units=32‘, ‘max_diffusion_step=2‘.
+• StemGNN [26].
+Spectral-temporal model using latent correlation and temporal de-
+composition.
+Hyperparameters:
+‘stack_cnt=2‘, ‘multi_layer=4‘, ‘dropout_rate=0.2‘,
+‘leaky_rate=0.2‘.
+• STNorm [24]. Spatiotemporal normalization architecture with stacked temporal blocks.
+Hyperparameters: ‘channels=8‘, ‘kernel_size=2‘, ‘blocks=8‘, ‘layers=2‘.
+• EpiGNN [14]. Epidemic-informed GNN using multi-component hidden states. Hyperpa-
+rameters: ‘k=5‘, ‘hidA=32‘, ‘hidR=4‘, ‘hidP=1‘, ‘n_layer=2‘, ‘dropout=0.2‘.
+• Cola-GNN [12]. Correlation-aware spatiotemporal GNN for regional forecasting. Hyperpa-
+rameters: ‘nhid=16‘, ‘n_layer=2‘.
+• EARTH [13]. DTW-informed graph forecasting model using pairwise temporal similarity.
+Hyperparameters: ‘n_hidden=16‘, ‘dropout=0.2‘, plus required ‘dtw_matrix‘ cache.
+• DLinear [20]. Decomposition-linear forecasting baseline with optional future time indica-
+tors. Hyperparameters: ‘emb_dim=4‘, ‘ti_hidden=(8,)‘, ‘num_timesteps_output=1‘.
+• ARIMA [19].
+Univariate ARIMA baseline per node/window.
+Implementation uses
+‘ARIMA(order=(1,0,0))‘ and forecasts to configured horizon.
+• Naive persistence. Repeat-last baseline that predicts the most recent observed value for the
+target step.
+• TusoAI [42]. We run TusoAI with a 20 USD budget and 24 hour time limit, using Claude
+4.5 Haiku and a min_improvement of 0.01. It is learning new model code on all horizons
+of ILI2019, increasing performance relative to naive. The initial mode is a straightforward
+GNN we developed that inputs the adjacency matrix and uses the TID patch to achieve
+roughly the same performance as naive. To ablate this model, we remove all the spatial
+modeling tricks learned. The final model developed and ablated version is available in the
+Github.
+C
+Supporting information for Figure 1
+Figure 6: Error of each method. 95% CI’s are calculated for each plot by bootstrapping across months
+and meta analyzing across horizons.
+Figure 7: Error of each method. 95% CI’s are calculated for each plot by bootstrapping across months
+and meta analyzing across horizons.
+Figure 8: Error of each method. 95% CI’s are calculated for each plot by bootstrapping across months
+and meta analyzing across horizons.
+Figure 9: Error of each method. 95% CI’s are calculated for each plot by bootstrapping across months
+and meta analyzing across horizons.
+Figure 10: Error of each method. 95% CI’s are calculated for each plot by bootstrapping across
+months and meta analyzing across horizons.
+Figure 11: Error of each method. 95% CI’s are calculated for each plot by bootstrapping across
+months and meta analyzing across horizons.
+Figure 12: Error of each method. 95% CI’s are calculated for each plot by bootstrapping across
+months and meta analyzing across horizons.
+Figure 13: Error of each method at multiple horizons in AUcase by each metric. 95% CI’s are
+calculated for each plot by bootstrapping across months.
+Figure 14: Error of each method at multiple horizons in AUcase by each metric. 95% CI’s are
+calculated for each plot by bootstrapping across months.
+Figure 15: Error of each method at multiple horizons in CAcase by each metric. 95% CI’s are
+calculated for each plot by bootstrapping across months.
+Figure 16: Error of each method at multiple horizons in CANPositivity by each metric. 95% CI’s are
+calculated for each plot by bootstrapping across months.
+Figure 17: Error of each method at multiple horizons in CHNGinpatient by each metric. 95% CI’s
+are calculated for each plot by bootstrapping across months.
+Figure 18: Error of each method at multiple horizons in CHNGoutpatient by each metric. 95% CI’s
+are calculated for each plot by bootstrapping across months.
+Figure 19: Error of each method at multiple horizons in CPRadmissions by each metric. 95% CI’s
+are calculated for each plot by bootstrapping across months.
+Figure 20: Error of each method at multiple horizons in DVcli by each metric. 95% CI’s are calculated
+for each plot by bootstrapping across months.
+Figure 21: Error of each method at multiple horizons in HHShosp by each metric. 95% CI’s are
+calculated for each plot by bootstrapping across months.
+Figure 22: Error of each method at multiple horizons in ILINet2019 by each metric. 95% CI’s are
+calculated for each plot by bootstrapping across months.
+Figure 23: Error of each method at multiple horizons in JHUcase by each metric. 95% CI’s are
+calculated for each plot by bootstrapping across months.
+D
+Supporting information for Figure 2
+Figure 24: Win rate of each method versus naive baseline (higher is better), dashed line at 0.5
+indicates winning 50% of the time.
+E
+Supporting information for Figure 3
+Figure 25: Win rate of each method versus naive baseline (higher is better), dashed line at 0.5
+indicates winning 50% of the time.
+Figure 26: Error of each method. 95% CI’s are calculated for each plot by bootstrapping across
+months and meta analyzing across horizons.
+F
+Supporting information for Figure 4
+Figure 27: Average error of each method in each dataset for non-outbreaks and outbreaks. Dashed
+red line indicates overall averge.
+Figure 28: Error of each method. 95% CI’s are calculated for each plot by bootstrapping across
+months and meta analyzing across horizons.
+G
+Supporting information for Figure 5
+Figure 29: Win rate of each method versus naive baseline (higher is better), dashed line at 0.5
+indicates winning 50% of the time.
+NeurIPS Paper Checklist
+The checklist is designed to encourage best practices for responsible machine learning research,
+addressing issues of reproducibility, transparency, research ethics, and societal impact. Do not remove
+the checklist: The papers not including the checklist will be desk rejected. The checklist should
+follow the references and follow the (optional) supplemental material. The checklist does NOT count
+towards the page limit.
+Please read the checklist guidelines carefully for information on how to answer these questions. For
+each question in the checklist:
+• You should answer [Yes], [No], or [N/A].
+• [N/A] means either that the question is Not Applicable for that particular paper or the
+relevant information is Not Available.
+• Please provide a short (1-2 sentence) justification right after your answer (even for [N/A]).
+The checklist answers are an integral part of your paper submission. They are visible to the
+reviewers, area chairs, senior area chairs, and ethics reviewers. You will also be asked to include it
+(after eventual revisions) with the final version of your paper, and its final version will be published
+with the paper.
+The reviewers of your paper will be asked to use the checklist as one of the factors in their evaluation.
+While [Yes] is generally preferable to [No], it is perfectly acceptable to answer [No] provided a
+proper justification is given (e.g., error bars are not reported because it would be too computationally
+expensive" or "we were unable to find the license for the dataset we used"). In general, answering
+[No] or [N/A] is not grounds for rejection. While the questions are phrased in a binary way, we
+acknowledge that the true answer is often more nuanced, so please just use your best judgment and
+write a justification to elaborate. All supporting evidence can appear either in the main paper or the
+supplemental material, provided in appendix. If you answer [Yes] to a question, in the justification
+please point to the section(s) where related material for the question can be found.
+IMPORTANT, please:
+• Delete this instruction block, but keep the section heading "NeurIPS Paper Checklist",
+• Keep the checklist subsection headings, questions/answers and guidelines below.
+• Do not modify the questions and only use the provided macros for your answers.
+1. Claims
+Question: Do the main claims made in the abstract and introduction accurately reflect the
+paper’s contributions and scope?
+Answer: [Yes]
+Justification: Each conclusion refers to a corresponding results subsection where we do
+detailed analysis. The benchmark code is indeed released and ready to use.
+Guidelines:
+• The answer [N/A] means that the abstract and introduction do not include the claims
+made in the paper.
+• The abstract and/or introduction should clearly state the claims made, including the
+contributions made in the paper and important assumptions and limitations. A [No] or
+[N/A] answer to this question will not be perceived well by the reviewers.
+• The claims made should match theoretical and experimental results, and reflect how
+much the results can be expected to generalize to other settings.
+• It is fine to include aspirational goals as motivation as long as it is clear that these goals
+are not attained by the paper.
+2. Limitations
+Question: Does the paper discuss the limitations of the work performed by the authors?
+Answer: [Yes]
+Justification: We have an explicit discussion section where we talk about limitations.
+Guidelines:
+• The answer [N/A] means that the paper has no limitation while the answer [No] means
+that the paper has limitations, but those are not discussed in the paper.
+• The authors are encouraged to create a separate "Limitations" section in their paper.
+• The paper should point out any strong assumptions and how robust the results are to
+violations of these assumptions (e.g., independence assumptions, noiseless settings,
+model well-specification, asymptotic approximations only holding locally). The authors
+should reflect on how these assumptions might be violated in practice and what the
+implications would be.
+• The authors should reflect on the scope of the claims made, e.g., if the approach was
+only tested on a few datasets or with a few runs. In general, empirical results often
+depend on implicit assumptions, which should be articulated.
+• The authors should reflect on the factors that influence the performance of the approach.
+For example, a facial recognition algorithm may perform poorly when image resolution
+is low or images are taken in low lighting. Or a speech-to-text system might not be
+used reliably to provide closed captions for online lectures because it fails to handle
+technical jargon.
+• The authors should discuss the computational efficiency of the proposed algorithms
+and how they scale with dataset size.
+• If applicable, the authors should discuss possible limitations of their approach to
+address problems of privacy and fairness.
+• While the authors might fear that complete honesty about limitations might be used by
+reviewers as grounds for rejection, a worse outcome might be that reviewers discover
+limitations that aren’t acknowledged in the paper. The authors should use their best
+judgment and recognize that individual actions in favor of transparency play an impor-
+tant role in developing norms that preserve the integrity of the community. Reviewers
+will be specifically instructed to not penalize honesty concerning limitations.
+3. Theory assumptions and proofs
+Question: For each theoretical result, does the paper provide the full set of assumptions and
+a complete (and correct) proof?
+Answer: [N/A]
+Justification: We have no theoretical results to report.
+Guidelines:
+• The answer [N/A] means that the paper does not include theoretical results.
+• All the theorems, formulas, and proofs in the paper should be numbered and cross-
+referenced.
+• All assumptions should be clearly stated or referenced in the statement of any theorems.
+• The proofs can either appear in the main paper or the supplemental material, but if
+they appear in the supplemental material, the authors are encouraged to provide a short
+proof sketch to provide intuition.
+• Inversely, any informal proof provided in the core of the paper should be complemented
+by formal proofs provided in appendix or supplemental material.
+• Theorems and Lemmas that the proof relies upon should be properly referenced.
+4. Experimental result reproducibility
+Question: Does the paper fully disclose all the information needed to reproduce the main ex-
+perimental results of the paper to the extent that it affects the main claims and/or conclusions
+of the paper (regardless of whether the code and data are provided or not)?
+Answer: [Yes]
+Justification: Yes, our benchmark is fully downloadable and reproducible, and all analysis
+scripts are uploaded. We document and cite all method and data as well.
+Guidelines:
+• The answer [N/A] means that the paper does not include experiments.
+• If the paper includes experiments, a [No] answer to this question will not be perceived
+well by the reviewers: Making the paper reproducible is important, regardless of
+whether the code and data are provided or not.
+• If the contribution is a dataset and/or model, the authors should describe the steps taken
+to make their results reproducible or verifiable.
+• Depending on the contribution, reproducibility can be accomplished in various ways.
+For example, if the contribution is a novel architecture, describing the architecture fully
+might suffice, or if the contribution is a specific model and empirical evaluation, it may
+be necessary to either make it possible for others to replicate the model with the same
+dataset, or provide access to the model. In general. releasing code and data is often
+one good way to accomplish this, but reproducibility can also be provided via detailed
+instructions for how to replicate the results, access to a hosted model (e.g., in the case
+of a large language model), releasing of a model checkpoint, or other means that are
+appropriate to the research performed.
+• While NeurIPS does not require releasing code, the conference does require all submis-
+sions to provide some reasonable avenue for reproducibility, which may depend on the
+nature of the contribution. For example
+(a) If the contribution is primarily a new algorithm, the paper should make it clear how
+to reproduce that algorithm.
+(b) If the contribution is primarily a new model architecture, the paper should describe
+the architecture clearly and fully.
+(c) If the contribution is a new model (e.g., a large language model), then there should
+either be a way to access this model for reproducing the results or a way to reproduce
+the model (e.g., with an open-source dataset or instructions for how to construct
+the dataset).
+(d) We recognize that reproducibility may be tricky in some cases, in which case
+authors are welcome to describe the particular way they provide for reproducibility.
+In the case of closed-source models, it may be that access to the model is limited in
+some way (e.g., to registered users), but it should be possible for other researchers
+to have some path to reproducing or verifying the results.
+5. Open access to data and code
+Question: Does the paper provide open access to the data and code, with sufficient instruc-
+tions to faithfully reproduce the main experimental results, as described in supplemental
+material?
+Answer: [Yes]
+Justification: Yes, that is a central contribution of our paper.
+Guidelines:
+• The answer [N/A] means that paper does not include experiments requiring code.
+• Please see the NeurIPS code and data submission guidelines (
+public/guides/CodeSubmissionPolicy) for more details.
+• While we encourage the release of code and data, we understand that this might not
+be possible, so [No] is an acceptable answer. Papers cannot be rejected simply for not
+including code, unless this is central to the contribution (e.g., for a new open-source
+benchmark).
+• The instructions should contain the exact command and environment needed to run to
+reproduce the results. See the NeurIPS code and data submission guidelines (https:
+//neurips.cc/public/guides/CodeSubmissionPolicy) for more details.
+• The authors should provide instructions on data access and preparation, including how
+to access the raw data, preprocessed data, intermediate data, and generated data, etc.
+• The authors should provide scripts to reproduce all experimental results for the new
+proposed method and baselines. If only a subset of experiments are reproducible, they
+should state which ones are omitted from the script and why.
+• At submission time, to preserve anonymity, the authors should release anonymized
+versions (if applicable).
+• Providing as much information as possible in supplemental material (appended to the
+paper) is recommended, but including URLs to data and code is permitted.
+6. Experimental setting/details
+Question: Does the paper specify all the training and test details (e.g., data splits, hyperpa-
+rameters, how they were chosen, type of optimizer) necessary to understand the results?
+Answer: [Yes]
+Justification: Yes, these are reported both in the code and supplementary material.
+Guidelines:
+• The answer [N/A] means that the paper does not include experiments.
+• The experimental setting should be presented in the core of the paper to a level of detail
+that is necessary to appreciate the results and make sense of them.
+• The full details can be provided either with the code, in appendix, or as supplemental
+material.
+7. Experiment statistical significance
+Question: Does the paper report error bars suitably and correctly defined or other appropriate
+information about the statistical significance of the experiments?
+Answer: [Yes]
+Justification: Yes, all plots are supported by appropriate and documented confidence inter-
+vals.
+Guidelines:
+• The answer [N/A] means that the paper does not include experiments.
+• The authors should answer [Yes] if the results are accompanied by error bars, confidence
+intervals, or statistical significance tests, at least for the experiments that support the
+main claims of the paper.
+• The factors of variability that the error bars are capturing should be clearly stated (for
+example, train/test split, initialization, random drawing of some parameter, or overall
+run with given experimental conditions).
+• The method for calculating the error bars should be explained (closed form formula,
+call to a library function, bootstrap, etc.)
+• The assumptions made should be given (e.g., Normally distributed errors).
+• It should be clear whether the error bar is the standard deviation or the standard error
+of the mean.
+• It is OK to report 1-sigma error bars, but one should state it. The authors should
+preferably report a 2-sigma error bar than state that they have a 96% CI, if the hypothesis
+of Normality of errors is not verified.
+• For asymmetric distributions, the authors should be careful not to show in tables or
+figures symmetric error bars that would yield results that are out of range (e.g., negative
+error rates).
+• If error bars are reported in tables or plots, the authors should explain in the text how
+they were calculated and reference the corresponding figures or tables in the text.
+8. Experiments compute resources
+Question: For each experiment, does the paper provide sufficient information on the com-
+puter resources (type of compute workers, memory, time of execution) needed to reproduce
+the experiments?
+Answer: [Yes]
+Justification: Yes, we document this in the Appendix.
+Guidelines:
+• The answer [N/A] means that the paper does not include experiments.
+• The paper should indicate the type of compute workers CPU or GPU, internal cluster,
+or cloud provider, including relevant memory and storage.
+• The paper should provide the amount of compute required for each of the individual
+experimental runs as well as estimate the total compute.
+• The paper should disclose whether the full research project required more compute
+than the experiments reported in the paper (e.g., preliminary or failed experiments that
+didn’t make it into the paper).
+9. Code of ethics
+Question: Does the research conducted in the paper conform, in every respect, with the
+NeurIPS Code of Ethics 
+Answer: [Yes]
+Justification: We do not violate any ethical code with this work.
+Guidelines:
+• The answer [N/A] means that the authors have not reviewed the NeurIPS Code of
+Ethics.
+• If the authors answer [No], they should explain the special circumstances that require a
+deviation from the Code of Ethics.
+• The authors should make sure to preserve anonymity (e.g., if there is a special consid-
+eration due to laws or regulations in their jurisdiction).
+10. Broader impacts
+Question: Does the paper discuss both potential positive societal impacts and negative
+societal impacts of the work performed?
+Answer: [Yes]
+Justification: Yes, throughout the abstract, intro, and discussion we motivate why this task is
+necessary and how our work will mak epidemic forecasting more reliable.
+Guidelines:
+• The answer [N/A] means that there is no societal impact of the work performed.
+• If the authors answer [N/A] or [No], they should explain why their work has no societal
+impact or why the paper does not address societal impact.
+• Examples of negative societal impacts include potential malicious or unintended uses
+(e.g., disinformation, generating fake profiles, surveillance), fairness considerations
+(e.g., deployment of technologies that could make decisions that unfairly impact specific
+groups), privacy considerations, and security considerations.
+• The conference expects that many papers will be foundational research and not tied
+to particular applications, let alone deployments. However, if there is a direct path to
+any negative applications, the authors should point it out. For example, it is legitimate
+to point out that an improvement in the quality of generative models could be used to
+generate Deepfakes for disinformation. On the other hand, it is not needed to point out
+that a generic algorithm for optimizing neural networks could enable people to train
+models that generate Deepfakes faster.
+• The authors should consider possible harms that could arise when the technology is
+being used as intended and functioning correctly, harms that could arise when the
+technology is being used as intended but gives incorrect results, and harms following
+from (intentional or unintentional) misuse of the technology.
+• If there are negative societal impacts, the authors could also discuss possible mitigation
+strategies (e.g., gated release of models, providing defenses in addition to attacks,
+mechanisms for monitoring misuse, mechanisms to monitor how a system learns from
+feedback over time, improving the efficiency and accessibility of ML).
+11. Safeguards
+Question: Does the paper describe safeguards that have been put in place for responsible
+release of data or models that have a high risk for misuse (e.g., pre-trained language models,
+image generators, or scraped datasets)?
+Answer: [N/A]
+Justification: We have no such potential for misuse.
+Guidelines:
+• The answer [N/A] means that the paper poses no such risks.
+• Released models that have a high risk for misuse or dual-use should be released with
+necessary safeguards to allow for controlled use of the model, for example by requiring
+that users adhere to usage guidelines or restrictions to access the model or implementing
+safety filters.
+• Datasets that have been scraped from the Internet could pose safety risks. The authors
+should describe how they avoided releasing unsafe images.
+• We recognize that providing effective safeguards is challenging, and many papers do
+not require this, but we encourage authors to take this into account and make a best
+faith effort.
+12. Licenses for existing assets
+Question: Are the creators or original owners of assets (e.g., code, data, models), used in
+the paper, properly credited and are the license and terms of use explicitly mentioned and
+properly respected?
+Answer: [Yes]
+Justification: All data providers and model creators are appropriately cited.
+Guidelines:
+• The answer [N/A] means that the paper does not use existing assets.
+• The authors should cite the original paper that produced the code package or dataset.
+• The authors should state which version of the asset is used and, if possible, include a
+URL.
+• The name of the license (e.g., CC-BY 4.0) should be included for each asset.
+• For scraped data from a particular source (e.g., website), the copyright and terms of
+service of that source should be provided.
+• If assets are released, the license, copyright information, and terms of use in the
+package should be provided. For popular datasets, paperswithcode.com/datasets
+has curated licenses for some datasets. Their licensing guide can help determine the
+license of a dataset.
+• For existing datasets that are re-packaged, both the original license and the license of
+the derived asset (if it has changed) should be provided.
+• If this information is not available online, the authors are encouraged to reach out to
+the asset’s creators.
+13. New assets
+Question: Are new assets introduced in the paper well documented and is the documentation
+provided alongside the assets?
+Answer: [Yes]
+Justification: Yes, we document all datasets and how they were gathered and preprocessed.
+Guidelines:
+• The answer [N/A] means that the paper does not release new assets.
+• Researchers should communicate the details of the dataset/code/model as part of their
+submissions via structured templates. This includes details about training, license,
+limitations, etc.
+• The paper should discuss whether and how consent was obtained from people whose
+asset is used.
+• At submission time, remember to anonymize your assets (if applicable). You can either
+create an anonymized URL or include an anonymized zip file.
+14. Crowdsourcing and research with human subjects
+Question: For crowdsourcing experiments and research with human subjects, does the paper
+include the full text of instructions given to participants and screenshots, if applicable, as
+well as details about compensation (if any)?
+Answer: [N/A]
+Justification: We do not do crowdsourcing.
+Guidelines:
+• The answer [N/A] means that the paper does not involve crowdsourcing nor research
+with human subjects.
+• Including this information in the supplemental material is fine, but if the main contribu-
+tion of the paper involves human subjects, then as much detail as possible should be
+included in the main paper.
+• According to the NeurIPS Code of Ethics, workers involved in data collection, curation,
+or other labor should be paid at least the minimum wage in the country of the data
+collector.
+15. Institutional review board (IRB) approvals or equivalent for research with human
+subjects
+Question: Does the paper describe potential risks incurred by study participants, whether
+such risks were disclosed to the subjects, and whether Institutional Review Board (IRB)
+approvals (or an equivalent approval/review based on the requirements of your country or
+institution) were obtained?
+Answer: [N/A]
+Justification: No IRB approval was needed.
+Guidelines:
+• The answer [N/A] means that the paper does not involve crowdsourcing nor research
+with human subjects.
+• Depending on the country in which research is conducted, IRB approval (or equivalent)
+may be required for any human subjects research. If you obtained IRB approval, you
+should clearly state this in the paper.
+• We recognize that the procedures for this may vary significantly between institutions
+and locations, and we expect authors to adhere to the NeurIPS Code of Ethics and the
+guidelines for their institution.
+• For initial submissions, do not include any information that would break anonymity (if
+applicable), such as the institution conducting the review.
+16. Declaration of LLM usage
+Question: Does the paper describe the usage of LLMs if it is an important, original, or
+non-standard component of the core methods in this research? Note that if the LLM is used
+only for writing, editing, or formatting purposes and does not impact the core methodology,
+scientific rigor, or originality of the research, declaration is not required.
+Answer: [Yes]
+Justification: Yes, we run agentic framework TusoAI in a subsection and report how it is
+used in the Appendix.
+Guidelines:
+• The answer [N/A] means that the core method development in this research does not
+involve LLMs as any important, original, or non-standard components.
+• Please refer to our LLM policy in the NeurIPS handbook for what should or should not
+be described.

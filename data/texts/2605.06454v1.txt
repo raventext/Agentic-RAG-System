@@ -1,0 +1,2689 @@
+ORTHOBO: Orthogonal Bayesian Hyperparameter
+Optimization
+Maresa Schröder∗
+LMU Munich
+Munich Center for Machine Learning
+maresa.schroeder@lmu.de
+Pascal Janetzky∗
+Bosch Center for Artificial Intelligence
+Munich Center for Machine Learning
+pascal.janetzky@bosch.com
+Michael Klar
+Bosch Center for Artificial Intelligence
+michael.klar@bosch.com
+Stefan Feuerriegel
+LMU Munich
+Munich Center for Machine Learning
+feuerriegel@lmu.de
+Abstract
+Bayesian optimization is widely used for hyperparameter optimization when model
+evaluations are expensive; however, noisy acquisition estimates can lead to un-
+stable decisions. We identify acquisition estimation noise as a failure mode that
+was previously overlooked: even when the surrogate model and acquisition target
+are correctly specified, finite-sample Monte Carlo error can perturb acquisition
+values. This can, in turn, flip candidate rankings and lead to suboptimal BO de-
+cisions. As a remedy, we aim at variance reduction and propose an orthogonal
+acquisition estimator that subtracts an optimally weighted score-function con-
+trol variate, which yields an acquisition residual orthogonal to posterior score
+directions and which thus reduces Monte Carlo variance. We further introduce
+ORTHOBO: a Bayesian optimization framework that combines our orthogonal
+acquisition estimator with ensemble surrogates and an outer log transformation.
+We show theoretically that our estimator preserves the target, leads to variance
+reduction, and improves pairwise ranking stability. We further verify the theoretical
+properties of ORTHOBO through numerical experiments where our framework
+reduces acquisition estimation variance, stabilizes candidate rankings, and achieves
+strong performance. We also demonstrate the downstream utility of ORTHOBO in
+hyperparameter optimization for neural network training and fine-tuning.
+Introduction
+Hyperparameter optimization (HPO) is a fundamental component of modern machine learning
+systems, and has been used across a wide range of domains, including biology [5, 49], chemistry [67],
+manufacturing [1], medicine [44], and physics [57]. Because evaluating hyperparameter candidates
+can require substantial computation, Bayesian optimization (BO) is frequently used to identify optimal
+hyperparameter configurations under limited evaluation budgets (e.g., [19, 53, 55, 59, 65]). BO fits
+a probabilistic surrogate model of the objective and selects new configurations by maximizing an
+acquisition function such as expected improvement (EI) [34].2
+In our work, we focus on a source of instability that is central to BO decisions but has received
+comparatively little attention: the estimation of the acquisition value itself. Acquisition functions
+∗Equal contribution
+2For a thorough introduction to BO, see, e.g., [23, 53].
+Preprint.
+arXiv:2605.06454v1 [cs.LG] 7 May 2026
+
+are often treated as deterministic once a surrogate model has been fitted. In many practical BO
+pipelines, however, the acquisition value is obtained by marginalizing over uncertain surrogate
+parameters, aggregating across surrogate models, or using Monte Carlo (MC) approximations (e.g.,
+[10, 30, 48, 55]). As a result, the quantity used to rank candidate configurations is itself a noisy
+estimate. This may hurt the performance of BO because BO acts on rankings: even small estimation
+errors can flip the order of two candidates with similar acquisition values and lead the BO algorithm
+to evaluate many suboptimal configurations (see Fig. 1).
+At a technical level, we treat the estimation of the acquisition function as a MC estimation problem
+[e.g., 10, 29, 30, 55] and propose a novel orthogonalized estimator of the acquisition value that
+serves as a variance-reduction technique, thus improving robustness to sampling errors and stabi-
+lizing acquisition rankings. Our notion of orthogonality stems from the orthogonal ML literature
+(e.g., [12, 20, 35, 39]) in that our estimator offers robustness due to variance reduction guaran-
+tees Note that our notion of robustness differs from that in existing ‘robust’ regression methods,
+which aim to protect the surrogate model against corrupted or heavy-tailed observations (e.g., [40]).
+A
+B
+Acquisition-driven
+candidate selection
+Noisy acquisition
+estimate
+Bayesian Optimization
+Surrogate model
+Acquisition function
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+1.2
+1.4
+1.6
+Candidate 1
+Candidate 2
+Sampling noise
+flips the ranking
+= true acquisition
+= noisy estimate
+Finite-sample acquisition noise
+can reverse the ranking even
+when the true preference is
+Candidate 1.
+Acquisition value
+BO identifies two promising candidates
+whose true acquisition values are
+very similar.
+True acquisition function
+Very small gap in
+true acquisition
+value
+Cand.
+Cand.
+Acquisition value
+Repeated
+sampling
+Figure 1: Failure mode in Bayesian HPO:
+estimation noise in the acquisition value can
+flip rankings and lead to suboptimal configu-
+rations.
+Example. Consider tuning a classification model
+on a large-scale image dataset, where each evalua-
+tion requires training on many images and assessing
+performance under an imbalanced class distribution.
+Two hyperparameter configurations may differ only
+slightly (e.g., a deeper network with stronger dropout
+versus a shallower network with weaker regulariza-
+tion). If estimates of the acquisition values are subject
+to noise, BO may spend a suboptimal configuration
+simply because it was ranked first due to sampling
+noise.
+Our contribution is complementary to existing work
+on robust BO. Prior methods have mainly focused
+on improving the surrogate model, for example
+by accounting for kernel misspecification, hyper-
+parameter uncertainty, unreliable posterior uncer-
+tainty, trust-region localization, or ensemble surro-
+gates [8, 11, 16, 38, 45, 48, 59]. Other work has
+improved the acquisition formula or its numerical
+optimization [2]. However, these approaches do not
+directly address the variance of the estimated acquisition values that drive BO decisions. In contrast,
+our method improves the statistical quality of the estimated acquisition values used for candidate
+selection through a novel variance reduction technique based on orthogonal scores.
+ORTHOBO: We build on our orthogonal acquisition estimator and introduce ORTHOBO, a BO
+framework for robust hyperparameter optimization. ORTHOBO uses our orthogonalized acquisi-
+tion estimation as a core component and combines it with ensemble surrogates [38, 48] and an
+outer log transformation [2]. Here, each component serves a distinct role: our orthogonalization
+stabilizes acquisition estimation, ensembling addresses structural misspecification and the outer log
+transformation improves numerical conditioning during acquisition maximization.
+Our ORTHOBO offers several theoretical guarantees. (i) Our proposed orthogonalized acquisition
+estimator is unbiased for the marginal EI target and achieves lower variance than the corresponding
+naïve MC estimator (→Theorem 4.1). (ii) We further show that the lower acquisition estimation
+variance improves the stability of pairwise acquisition rankings (→Proposition 4.3). Intuitively,
+this reduces the probability of falsely selecting a candidate based on MC noise, and leads thus to
+performance improvements in practice.
+Our main contributions are: (1) We propose a novel, orthogonalized estimator for hyperparameter
+acquisition, reducing estimation variance without changing the underlying acquisition target. (2) We
+develop ORTHOBO, a BO framework that explicitly targets acquisition estimation noise, structural
+surrogate misspecification, and numerical instabilities. (3) We provide theoretical guarantees for
+variance reduction and ranking stability, and demonstrate improved empirical performance on various
+HPO benchmarks. Importantly, ORTHOBO is broadly applicable to essentially all BO problems.
+2
+Related work3
+BO for hyperparameter tuning. BO is a standard approach for HPO (e.g., [19, 55, 65]), particularly
+when evaluations of the objective function are expensive. In practice, BO relies on a surrogate
+model to approximate the objective and guide the search. A common choice for the surrogate model
+are Gaussian processes (GPs) [27, 34, 55]; other alternatives include tree-based and density-based
+surrogates such as tree-structured Parzen estimators (TPE) [6, 7, 62]. Subsequent work has addressed
+scaling challenges through multi-fidelity methods, batch BO, and trust-region approaches (e.g.,
+[16, 17, 26, 63]). However, no method has explicitly studied or addressed acquisition estimation
+noise as a failure mode.
+Acquisition functions. Surrogate models are used by acquisition functions, which are heuristics to
+evaluate the utility of hyperparameter candidates before querying the (expensive) objective function
+[4]. The performance of the acquisition function thus directly influences the overall performance. In
+the literature, several types of acquisition functions or acquisition frameworks have been proposed
+[2, 3, 16, 42, 61, 64]. Prominent examples include, e.g., qLogEI [2], TuRBO [16], and UCB [64]. Our
+work is orthogonal to these works, as we focus on improving the estimation and not the acquisition
+function itself.4
+Robustness to surrogate misspecification. A central weakness of BO is that it relies on a surrogate
+model which might be misspecified. Prior work has studied BO under misspecified kernel classes [11],
+unknown hyperparameters [8, 27], unreliable posterior uncertainty [45], and a surrogate complexity-
+efficiency trade-off [10]. Several practical strategies have been developed to mitigate such failure
+modes [3, 16, 38, 40, 48] However, these approaches address structural surrogate misspecification
+and thus model uncertainty. In contrast, our method additionally targets estimation noise.
+Research gap. We identify acquisition estimation errors as a crucial failure mode in BO that has been
+previously overlooked. To address this, we propose an orthogonalized estimator aimed at variance
+reduction and that stabilizes acquisition-based decisions. To the best of our knowledge, this is the
+first work to explicitly formulate acquisition value estimation in BO as a variance reduction problem
+and to develop an orthogonalized estimator for improving acquisition-based decisions.
+Problem setting
+Setup. We consider the standard setup for HPO over a search space Λ ⊆Rd [3, 15]. For a
+hyperparameter configuration λ ∈Λ, let f(λ) denote the unknown performance of interest, such
+as, e.g., the validation loss or validation error after training a model with hyperparameters λ. The
+objective f is expensive to evaluate and can only be observed through noisy evaluations y = f(λ)+ϵ,
+where ϵ captures evaluation noise. At each iteration t = 1, . . . , T, the available data are Dt =
+{(λi, yi)}t
+i=1. We aim to sequentially choose hyperparameter configurations λ1, λ2, . . . , λT to
+identify a high-performing configuration within an evaluation budget T.
+Recap: BO. The central idea of BO is to maintain a probabilistic model of the unknown objective and
+to use it to guide future evaluations [24]. At iteration t = 1, . . . , T, BO fits a probabilistic surrogate
+model m to the current dataset and uses an acquisition function α to select the next evaluation point
+[3]. The surrogate provides two crucial quantities for decision-making: (i) a prediction of objective
+values in unexplored regions, and (ii) a measure of uncertainty about those predictions. BO then
+combines these two ingredients through α, which scores candidate points according to their potential
+utility for optimization. After selecting a new candidate point, the objective f is evaluated, and the
+new observation is added to the dataset D. The surrogate is then updated, and the process repeats. In
+this way, BO adaptively concentrates evaluations in regions that are both informative and promising.
+As a result, the performance of BO depends on two components: the quality of the surrogate model
+and the stability of the acquisition values used to rank candidate configurations.
+Surrogate model. Let m index a surrogate model, and θm denote its latent parameters. Conditional
+on θm, the surrogate induces a posterior predictive distribution for the objective f(λ) given Dt. In
+practice, the parameters θm are not known and must themselves be inferred from data.
+3We provide an extended related work in Supplement A. Therein, we also provide a broader review of BO under different
+types of misspecification and orthogonal ML.
+4We provide a generalization of ORTHOBO at the acquisition function level in Supplement C.
+In our work, we focus on expected improvement (EI) [34] as our acquisition function. For a surrogate
+model m with parameters θm, we define
+EIm(λt; θm) = E
+
+(f ⋆−f(λt))+ | Dt, θm
+
+,
+(1)
+where f ⋆= mini≤t yi is the currently best observed value up to iteration t and (x)+ := max{0, x}
+[34, 55]. In practice, the model parameters are not fixed but follow an approximate posterior
+θm ∼qm,t(θ). The marginal EI over the parameters is then given by
+EImarg
+m
+(λt) = Eθm∼qm,t[EIm(λt; θm)],
+(2)
+which is commonly approximated through MC samples s = 1, . . . , S given a specific MC sampling
+budget S [4, 55, 63], i.e.,
+c
+EI
+MC
+m (λt) = 1
+S
+S
+X
+s=1
+EIm(λt; θ(s)
+m ),
+θ(s)
+m ∼qm,t.
+(3)
+However, c
+EI
+MC
+m
+suffers from high variance for small budgets S and sensitivity to approximation
+errors in the posterior qm,t, which leads to instability in the estimated acquisition and thus suboptimal
+BO decisions.
+Finite-sample acquistion estimation noise.5 Bayesian HPO performance depends on the stability
+of acquisition values used to rank candidate configurations. In practice, these values are often
+obtained by marginalizing over surrogate uncertainty and must be approximated from a finite number
+of samples. As a result, the acquisition function itself becomes a noisy estimate: even when the
+surrogate model is reasonable, finite-sample MC error can perturb acquisition values, flip candidate
+rankings, and thus lead BO to evaluate suboptimal configurations. We identify this acquisition
+estimation noise as a overlooked but practically important failure mode.
+Our work. In this work, we address instability in BO at the level of the acquisition estimate itself.
+Even with a reasonable surrogate family, BO may still perform poorly if the acquisition estimator used
+to rank candidate points is noisy, sensitive to approximate inference, or numerically ill-conditioned.
+We treat the EI-scale marginal acquisition obtained by integrating over surrogate uncertainty as an
+MC estimation problem. We then propose an orthogonal acquisition estimator that reduces variance
+induced by surrogate uncertainty, while preserving the underlying EI-scale target. Therein, we
+subtract an optimally weighted score-function control variate, which yields an acquisition residual
+orthogonal to posterior score directions and which thus reduces MC variance. In ORTHOBO, we
+further combine our orthogonality acquisition estimator for variance reduction with an ensemble of
+surrogate models and adaptive model weighting optimized through an outer log transformation to
+obtain a full, state-of-the-art BO framework.
+Orthogonal Bayesian optimization
+Large variance 
+ unstable ranking
+Rank
+reversal;
+overlapping
+estimates
+Unbiased
+Current BO state
+BO update
+Surrogate
+posteriors
+Aggregation andstabilization
+Orthogonal acquisition estimation
+Rank candidates for 
+Candidate
+hyperparam.
+Expensive
+model
+evaluation
+ (selected)
+...
+Evaluate
+selected 
+Data at
+iteration :
+Observe 
+ and
+update 
+Goal: Select the next
+hyperparam. setting
+Repeat for 
+Input from current BO state
+ ,
+ surrogates
+...
+...
+ MC samples per 
+Candidate rankings
+Small variance 
+ stable ranking
+stable
+ordering
+Naive MC
+Orthogonalized acquisition
+...
+Lower
+variance
+Locally
+robust
+Naive MC
+Orthogonalization
+Address surrogate misspecification
+and numerical instabilitiy
+Ensemble across 
+ models
+with adaptive model
+weights 
+Outer log stabilization
+ Orthogonalization substracts a correction term that
+reduces estimator variance 
+Figure 2: Our proposed ORTHOBO. It improves acquisition estimation through variance reduction.
+For this, we orthogonalize the acquisition estimation without changing the acquisition target.
+Below, we present ORTHOBO, our orthogonalized framework for BO that addresses the failure
+modes discussed above (an overview is shown in Fig. 2). We first present our main contribution: the
+5We discuss structural surrogate misspecification due to improper surrogate model classes and numerical instabilities due
+to small or skewed acquisition values in Supplement B.
+orthogonal acquisition estimator (Section 4.1). Of note, we do not change the acquisition target, but
+rather improve the estimation through variance reduction techniques. Then, we provide example
+instantiations of our orthogonal framework for two common surrogate classes (Section 4.2). We then
+present ORTHOBO, where we embed our orthogonal acquisition estimator inside a state-of-the-art
+BO algorithm (Section 4.3). In the main text, we focus on EI-based acquisition functions in order to
+keep the notation and theoretical arguments simple. The key object throughout is the marginal EI
+under surrogate uncertainty and ensemble aggregation. We provide extensions to constrained and
+parallel acquisition functions in Supplement C.
+4.1
+Orthogonal acquisition estimator
+We now address the instability due to acquisition estimation noise. Our key idea is to introduce an
+orthogonalized acquisition functional that shares the same marginal target as the original EI but has
+reduced variance under qm,t. Let g(θ) := ∇θ log qm,t(θ) denote the posterior score function.
+We define the orthogonalized EI as
+EIorth
+m
+(λ; θ) := EIm(λ; θ) −γm(λ)⊤g(θ),
+(4)
+where γm(λ) := Σ−1
+g
+Covqm,t
+ g, EIm(λ; ·)
+
+and Σg := Covqm,t(g, g). The corresponding
+marginal acquisition is
+EIorth,marg
+m
+(λ) := Eθ∼qm,t
+h
+EIorth
+m
+(λ; θ)
+i
+.
+(5)
+The associated MC estimator is
+c
+EI
+orth
+m
+(λ) = 1
+S
+S
+X
+s=1
+EIorth
+m
+(λ; θ(s)
+m ),
+θ(s)
+m ∼qm,t.
+(6)
+Of note, the construction is non-trivial because g(θ) is based on the parameter posterior, whereas
+common MC pipelines sample only from the predictive posterior over function values. We therefore
+draw parameter samples explicitly and evaluate both EIm and g at the same θ(s)
+m . In practice, γm(λ)
+is unknown and we use the empirical plug-in ˆγm(λ) estimated from the same MC samples; this
+introduces an in-sample bias of order O(1/S) that is dominated by the O(1/
+√
+S) sampling standard
+deviation at the MC budgets used in our experiments.6
+Properties of the orthogonalized acquisition. The orthogonalized EI satisfies three key properties:
+(i) preserved target: it has the same marginal as the original EI, so the BO target is unchanged;
+(ii) variance reduction: it has smaller variance under qm,t; and (iii) local robustness: it is first-order
+insensitive to score-tilt perturbations of qm,t.
+Regularity conditions for the score function. Throughout our analysis, we assume that the
+surrogate parameter distribution qm,t has a differentiable density on a support Θ ⊆Rdθ and that
+the corresponding boundary term vanishes, i.e.,
+R
+Θ ∇θqm,t(θ) dθ = 0. This holds, for example, if
+Θ = Rdθ and qm,t(θ) →0 sufficiently fast as ∥θ∥→∞.
+Theorem 4.1 (Variance reduction). Assume that Eqm,t[EIm(λ; θ)2] < ∞and Eqm,t[∥g(θ)∥2
+2] < ∞,
+that Σg is nonsingular, and that the standard score-function regularity conditions hold for qm,t. Then:
+(i) Preserved target. E[EIorth
+m
+(λ; θ)] = EImarg
+m
+(λ; θ).
+(ii) Variance reduction. Under qm,t, we achieve
+Var
+ EIorth
+m
+(λ; θ)
+
+= Var
+ EIm(λ; θ)
+
+−Cov(g, EIm)⊤Σ−1
+g
+Cov(g, EIm) ≤Var
+ EIm(λ; θ)
+
+. (7)
+Proof. We provide a proof in Supplement E.
+Due to the orthogonal score construction, our estimator is further locally robust to perturbations in
+the score-tilt direction.
+6Sample-splitting (cross-fitting) would restore exact finite-sample unbiasedness without changing the leading asymptotic
+variance; see Supplement E.
+Corollary 4.2 (Local robustness.). Assume the conditions of Theorem 4.1. For any b ∈Rdθ, consider
+the tilted family q(ε)
+m,t(θ) ∝qm,t(θ) exp
+ ε b⊤g(θ)
+
+for small |ε|. Holding γm(λ) fixed at its ε = 0
+value, it holds that
+d
+dε Eq(ε)
+m,t
+h
+EIorth
+m
+(λ; θ)
+i
+ε=0
+= 0.
+(8)
+Proof. We provide a proof in Supplement E.
+Implications for acquisition estimation. Theorem 4.1(i) shows that orthogonalization preserves the
+BO target. Since the MC estimator is an i.i.d. sample mean, Var(c
+EI
+orth
+m
+(λ)) = Var(EIorth
+m
+(λ; θ))/S,
+Theorem 4.1(ii) directly implies Var(c
+EI
+orth
+m
+(λ)) ≤Var(c
+EI
+MC
+m (λ)) for any MC budget S, which
+improves the stability of acquisition-based decisions. Corollary 4.2 provides local robustness in the
+orthogonal ML sense [12, 35]: small score-tilt perturbations of qm,t do not affect the orthogonalized
+acquisition to first order. Importantly, Theorem 4.1 is a within-model result: orthogonalization
+stabilizes acquisition estimation conditional on qm,t, but does not directly correct structural misspeci-
+fication of the surrogate family. We address the latter through ensemble modeling in Section 4.3.
+Proposition 4.3 (Pairwise ranking stability). Let λ, λ′ ∈Λ such that ∆(λ, λ′) := EImarg
+m
+(λ) −
+EImarg
+m
+(λ′) > 0. Let b∆MC(λ, λ′) and b∆orth(λ, λ′) denote the corresponding Monte Carlo difference
+estimators. Then both estimators are unbiased for ∆(λ, λ′), and
+P
+
+b∆orth(λ, λ′) ≤0
+
+≤
+Var
+
+b∆orth(λ, λ′)
+
+Var
+
+b∆orth(λ, λ′)
+
++ ∆(λ, λ′)2
+≤
+Var
+
+b∆MC(λ, λ′)
+
+Var
+
+b∆MC(λ, λ′)
+
++ ∆(λ, λ′)2 .
+(9)
+Proof. We provide a proof for Proposition 4.3 in Supplement E.
+Proposition 4.3 shows how acquisition estimation noise propagates into BO decisions. High estimator
+variance can flip the estimated sign of the acquisition gap between two candidates points, thus
+causing BO to select a suboptimal point. Orthogonalization reduces the variance without changing
+the acquisition target, and therefore directly reduces the probability of such ranking errors.
+4.2
+Instantiations for common surrogates
+We instantiate ORTHOBO for two surrogate classes common in HPO: A Gaussian process and B
+tree-based density surrogates. The first corresponds to the standard BO setting, while the second
+captures widely used non-Gaussian and nonparametric approaches such as TPE-style optimization.
+A Gaussian process (GP) surrogate
+For GP surrogate models [27, 34, 55], acquisition estimation noise is often driven by sensitivity
+of the mean µ(·) and variance σ(·) function to lengthscale and noise hyperparameters. We show
+that orthogonalization reduces MC fluctuations induced by uncertainty in these directions. This
+is especially useful early in optimization when the approximation of the posterior over the GP
+hyperparameters is diffuse. Let
+f ∼GP(mθ(·), kθ(·, ·)) ,
+(10)
+where here mθ denotes the mean function (typically taken constant or zero) and kθ the covariance
+kernel with θ ∈Θ ⊂Rdθ collecting the surrogate hyperparameters, such as kernel lengthscales,
+amplitude, and noise variance. Given data Dt = {(λi, yi)}t
+i=1, the predictive distribution at a
+candidate λ is
+f(λ) | Dt, θ ∼N
+ µt(λ; θ), σ2
+t (λ; θ)
+
+,
+(11)
+with
+µt(λ; θ) = mθ(λ) + kθ(λ, Λt)⊤ Kθ(Λt, Λt) + σ2
+nIt
+−1 (yt −mθ(Λt)) ,
+(12)
+σ2
+t (λ; θ) = kθ(λ, λ) −kθ(λ, Λt)⊤ Kθ(Λt, Λt) + σ2
+nIt
+−1 kθ(λ, Λt),
+(13)
+where Λt = (λ1, . . . , λt) and yt = (y1, . . . , yt)⊤, and K denotes the Gram matrix. We aim to
+maximize the EI
+EIGP(λ; θ) = (f ⋆−µt(λ; θ)) Φ(zt(λ; θ)) + σt(λ; θ) ϕ(zt(λ; θ)),
+(14)
+where
+zt(λ; θ) = f ⋆−µt(λ; θ)
+σt(λ; θ)
+,
+f ⋆= min
+i≤t yi,
+(15)
+and Φ and ϕ denote the standard normal cumulative distribution and probability density function.
+We assume an approximate posterior qt(θ) over GP hyperparameters, obtained for example via a
+Laplace approximation or variational Gaussian approximation. The marginal acquisition is then
+EIGP,marg(λ) = Eθ∼qt
+
+EIGP(λ; θ)
+
+,
+(16)
+and the orthogonalized estimator is
+c
+EI
+GP,orth(λ) = 1
+S
+S
+X
+s=1
+h
+EIGP(λ; θ(s)) −γGP(λ)⊤gt(θ(s))
+i
+,
+θ(s) ∼qt,
+(17)
+where gt(θ) = ∇θ log qt(θ) and γGP(λ) = Cov(gt, gt)−1 Cov
+ gt, EIGP(λ; θ)
+
+.
+B Tree-based / TPE-style surrogate
+As a second instantiation, we consider tree-based or density-based surrogates as in Tree-structured
+Parzen Estimators (TPE) [6, 7, 62]. Rather than modeling p(y | λ) directly, TPE-style methods model
+p(λ | y) =
+ℓθ(λ),
+y < y⋆,
+gθ(λ),
+y ≥y⋆,
+(18)
+where y⋆is a quantile threshold and θ denotes model parameters, such as kernel density bandwidths,
+mixture weights, or tree parameters. In this setting, the acquisition is proportional to a density ratio:
+EITPE(λ; θ) ∝ℓθ(λ)
+gθ(λ).
+(19)
+More generally, we denote the EI as hTPE(λ; θ) := EITPE(λ; θ), where hTPE represents either the
+exact acquisition induced by the density model or a practical approximation.
+Unlike the GP case, differentiability of qt(θ) may not be possible. We therefore consider a more gen-
+eral control variate construction. Let ct(θ) ∈Rdc denote any random vector satisfying Eqt[ct(θ)] = 0,
+such as centered bootstrap statistics, centered density ratio proxies, centered bandwidth or split sum-
+maries, or score functions when they exist. We then obtain our orthogonal acquisition estimator by
+c
+EI
+TPE,orth(λ) = 1
+S
+S
+X
+s=1
+h
+hTPE(λ; θ(s)) −γTPE(λ)⊤ct(θ(s))
+i
+,
+θ(s) ∼qt,
+(20)
+with
+γTPE(λ) = Cov(ct, ct)−1 Cov
+ ct, hTPE(λ; θ)
+
+.
+(21)
+4.3
+ORTHOBO
+We present the full ORTHOBO procedure in Alg. 1. Therein, we combine our orthogonalized
+acquisition estimator with ensemble surrogates and an outer log transformation.
+Ensemble surrogates. To mitigate structural surrogate misspecification, we consider an ensemble of
+surrogate models m = 1, . . . , M. Such ensembles can consist of Gaussian processes with different
+kernels, models with varying likelihood assumptions, various tree-based or neural surrogates. For
+each model m, we obtain the respective orthogonalized acquisition estimate c
+EI
+orth
+m
+(λ). We then
+ensemble the acquisition as a weighted average of weights πm,t
+c
+EI
+ens(λ) =
+M
+X
+m=1
+πm,tc
+EI
+orth
+m
+(λ).
+(22)
+Exponentially weighted aggregation. We update ensemble weights through tempered exponentially
+weighted aggregation [25], a widely used approach in model aggregation [18, 32, 54]. A minimum
+weight floor [28] prevents premature collapse onto a single surrogate
+πm,t ∝max(δ, πm,t−1 exp(ℓm,t/τ)),
+(23)
+where ℓm,t is a predictive log score obtained from mt using (λt+1, yt+1), τ > 0 a temperature
+parameter, and δ > 0 enforces a minimum weight. This results in a robust aggregation rule that
+balances exploitation of well-performing surrogates with persistent exploration across model classes.
+Note, that our overall methodology is independent and can be combined with other update strategies.
+Algorithm 1: ORTHOBO
+Input: Initial data size n0, budget T , number of surrogate models
+M, candidate set generator Ct, numerical floor α > 0,
+objective function f
+Initialize D0 = {(λi, yi)}n0
+i=1 using random hyperparameter
+configurations drawn from a Sobol distribution
+for t = 0, 1, . . . , T −1 do
+for m = 1, . . . , M do
+Fit surrogate model m on Dt;
+Obtain approximate posterior qm,t(θ);
+end
+Update ensemble weights πm,t for m = 1, . . . , M;
+foreach λ ∈Ct do
+for m = 1, . . . , M do
+Orthogonalization: Compute orthogonalized
+marginal EI estimate c
+EI
+orth
+m
+(λ) via Eq. (6);
+end
+Ensemble strategy:
+c
+EI
+ens(λ) =
+M
+X
+m=1
+πm,t c
+EI
+orth
+m
+(λ)
+end
+Outer log transformation:
+λt+1 = arg max
+λ∈Ct
+log
+ max(c
+EI
+ens(λ), α)
+
+Evaluate yt+1 = f(λt+1); update
+Dt+1 = Dt ∪{(λt+1, yt+1)};
+end
+Output: Best observed configuration in DT
+Optimization based on outer log stabilization.
+To improve numerical stability, we follow re-
+cent literature [2] and optimize the outer log
+transformed acquisition
+bLens(λt) = log
+ max(c
+EI
+ens(λt), α)
+
+,
+(24)
+where α > 0 ensures that the logarithm is well
+defined. We select the next hyperparameter con-
+figuration λt+1 = arg maxλ∈Ct bLens(λ), and
+evaluate it on the true objective to obtain yt+1.
+Empirical results
+Experimental setup. • Baselines: We evalu-
+ate ORTHOBO against various baselines from
+the literature. Specifically, we compare OR-
+THOBO against: qLogEI [2] (main comparison
+method), UCB [64], TuRBO [16], and Sobol
+sampling (e.g., [3]). Our experimental settings
+follow prior literature (e.g., [2, 3]): unless other-
+wise noted, all experiments use 16 replications,
+S = 512, and we start all methods from the
+same n0 = 32 Sobol points. For optimizing the
+acquisition functions, we use 512 raw samples and allow 8 restarts to prevent getting stuck in local
+minima [58]. To isolate the effect of orthogonalization, we use M = 1 throughout the experiments in
+the main paper. • Datasets: We consider four standard benchmarking functions with known global
+optima (to compute the regret) and varying dimensionality: Hartmann6, Ackley8, Michalewicz10,
+and Levy16 (e.g., [2, 10, 15, 43]). Details of the benchmark functions and surrogate choices are
+provided in Supplement F. • Metrics: We compare methods using best-so-far regret and report 95%
+confidence intervals (CIs) from standard normal approximation.
+Evaluation. Our goal is to first demonstrate the theoretical properties of ORTHOBO by isolating
+the effect of orthogonalization of the acquisition estimation. For this, we show RQ1 the variance
+reduction and RQ2 ranking stability properties of ORTHOBO. Then, we evaluate the resulting
+RQ3 efficiency gain in terms of MC sampling budget. Finally, we demonstrate the effectiveness for
+real-world training and fine-tuning tasks where we show RQ4 the improved downstream utility.
+We present further experiments on misspecified surrogate families, weakly fitted hyperparameters or
+surrogates, CIFAR10, and ensemble experiments in Supplement G.
+Table 1: Variance reduction through orthogonalization
+(with Sobol probes; ×10−8).
+Michalewicz10
+Levy16
+S
+Var(c
+EI
+MC
+m )
+Var(c
+EI
+ortho
+m
+) Var(c
+EI
+MC
+m )
+Var(c
+EI
+ortho
+m
+)
+9.50861
+4.54151
+105590.0
+70935.8
+(-52.24%)
+(-32.82%)
+1.66805
+0.10681
+20765.8
+2266.7
+(-93.60%)
+(-89.08%)
+RQ1 Variance reduction. We probe the
+acquisition function with random Sobol
+samples and compare the estimated vari-
+ance of the raw and orthogonalized acquisi-
+tion function. We use a GP surrogate. We
+report results for a Matérn-5/2 kernel with
+ARD on Michalewicz10 and Levy16 in Ta-
+ble 1; results for an RBF kernel and a TPE
+surrogate are in Supplement G.1. ⇒Across
+all settings, orthogonalization reduces the variance, which confirms that ORTHOBO substantially
+stabilizes the acquisition estimate.
+RQ2 Ranking stability. We repeatedly evaluate the acquisition function on the same fixed Sobol
+probe set and compare the rankings across runs. We report: (i) Probe variance: mean variance of the
+acquisition value over the probe points across repeated acquisition evaluations; (ii) Top1 agreement:
+fraction of repeats that select the same top-ranked probe point; (iii) the Flip rate of adjacent high-
+ranked candidate pairs, and (iv) Regret. The flip rate mirrors the idea behind Proposition 4.3, in
+that it measures how often local pairwise orderings change due to noise in the acquisition-function
+estimation. The main results are in Table 2; further results are in Supplement G.1. ⇒Our variance
+reduction yields more stable rankings.
+Table 2: Ranking stability (mean±std), via Sobol probes. Lower vari-
+ance and flip rate indicate more stable acquisition estimates; higher top-
+1 agreement indicates more stable candidate rankings across probes.
+Method
+Probe
+Top1
+Flip
+Regret ↓
+variance ↓
+agreement ↑
+rate ↓
+Michalewicz10
+qLogEI
+168.603154.76
+0.9250.16
+0.1480.12
+7.1400.01
+OrthoBO (ours)
+0.0190.03
+0.9880.06
+0.0140.03
+6.9610.36
+Levy16
+qLogEI
+233.655287.67
+0.9170.12
+0.0690.09
+82.1946.05
+OrthoBO (ours)
+0.0730.21
+0.9880.06
+0.0480.04
+58.9380.00
+RQ3 MC efficiency. We
+use an isotropic RBF ker-
+nel (as a common smooth
+GP prior) combined with
+a moderate surrogate mis-
+match and reduced budges
+for the acquisition.
+We
+show the main results for
+varying S on Ackley8 in
+Fig. 3; further results are in Fig. 12 in Supplement G. Reducing the MC budget makes the per-
+formance of acquisition-based methods more sensitive to estimation noise. Across all benchmarks,
+our ORTHOBO remains competitive and frequently achieves the lowest regret. ⇒Orthogonalization
+is especially effective in earlier iterations, where MC estimation noise has a larger effect on the
+acquisition values.
+50
+150
+Iteration
+16
+20
+Ackley8
+Best-so-far regret
+MC = 64
+50
+150
+Iteration
+12.5
+15.0
+17.5
+20.0
+MC = 128
+50
+150
+Iteration
+12.5
+15.0
+17.5
+20.0
+MC = 256
+50
+150
+Iteration
+16
+20
+MC = 512
+Sobol
+UCB
+TuRBO
+qLogEI
+OrthoBO (ours)
+Figure 3: MC efficiency. Best-so-far regret for different MC budgets S ⇒ORTHOBO achieves the
+lowest regrets across all budgets.
+RQ4 Downstream utility.
+We show how ORTHOBO improves hyperparameter optimization
+on two real-world tasks: (i) training a neural network and (ii) optimizing fine-tuning hyperpa-
+rameters of a pre-trained vision transformer (ViT) [14] for manufacturing image classification.
+20
+60
+100
+Iteration
+0.950
+0.975
+Best-so-far value
+5D CNN, outlier with 20% prob.
+UCB
+TuRBO
+RPR
+qLogEI
+OrthoBO (ours)
+Figure 4: Training (5D CNN). Outliers (20%
+prob.) are injected to make MNIST training
+more challenging. ⇒ORTHOBO achieves
+the strongest final performance.
+(i) Training (neural network). We employ the 5D
+CNN benchmark by Ament et al. [3] and include their
+RPR method as comparison. Details are in Supple-
+ment F.3. To make the training more challenging, we
+introduce outliers with 20% probability at different it-
+erations, which can distort the surrogate fit, especially
+early in BO when only few observations are available.
+Results on MNIST [37] are in Fig. 4; CIFAR10 [36]
+results are in Fig. 13. ⇒Here, ORTHOBO improves
+steadily over the optimization horizon and achieves
+the best value.
+5
+15
+Iteration
+0.3
+0.4
+0.5
+Best-so-far value
+ViT finetuning for manufacturing
+Sobol
+UCB
+TuRBO
+qLogEI
+OrthoBO (ours)
+Figure 5: Fine-tuning (ViT). ⇒ORTHOBO
+improves faster than the baselines and
+achieves the highest best-so-far validation
+score.
+(ii) Fine-tuning (vision transformer). We optimize
+five fine-tuning hyperparameters on the industrial
+WM811K wafer-map dataset [33, 66] for a vision
+transformer (ViT) based on the F1 score. Details
+are provided in Appendix F.4. We present results
+in Fig. 5. ORTHOBO improves rapidly within the
+first few evaluations and maintains the highest best-
+so-far validation F1 score throughout most of the
+optimization horizon. ⇒Compared with qLogEI,
+ORTHOBO improves the best observed validation
+F1 score by up to 20 percentage points. This demonstrates that the ORTHOBO also improves
+performance in a practical, high-cost HPO setting beyond synthetic benchmarks.
+Discussion
+• Conclusion. We introduce ORTHOBO: a novel orthogonalized framework for reducing variance
+when estimating the acquisition function. As a result, our work identifies a failure mode of BO
+that was previously overlooked: BO decisions depend on the ranking of estimated acquisition
+values, so MC noise in these estimates can directly induce ranking errors and lead to suboptimal
+evaluations. ORTHOBO addresses this failure mode by reducing variance while preserving the
+underlying marginal EI target. Our results show that this variance reduction improves ranking
+stability and translates into better downstream BO performance. • Limitations. First, ORTHOBO
+introduces additional computational overhead; however, the overhead is typically small compared with
+expensive evaluations of the objective function in HPO (see Supplement D). Second, we focus only
+on EI-based acquisition functions. Note that the same variance-reduction principle can be extended
+to other acquisition functions but may require acquisition-specific orthogonalization schemes (see
+Supplement C.1). • Implications. Our framework is widely applicable not only to HPO but essentially
+all BO problems, including in marketing and medicine.
+References
+[1] A. AlBahar, I. Kim, and X. Yue. A robust asymmetric kernel function for Bayesian optimization,
+with application to image defect detection in manufacturing systems. IEEE Transactions on
+Automation Science and Engineering, 19(4):3222-3233, 2021.
+[2] S. Ament, S. Daulton, D. Eriksson, M. Balandat, and E. Bakshy. Unexpected improvements to
+expected improvement for Bayesian optimization. In Neural Information Processing Systems
+(NeurIPS), 2023.
+[3] S. Ament, E. Santorella, D. Eriksson, B. Letham, M. Balandat, and E. Bakshy. Robust Gaussian
+processes via relevance pursuit. In Neural Information Processing Systems (NeurIPS), 2024.
+[4] M. Balandat, B. Karrer, D. Jiang, S. Daulton, B. Letham, A. G. Wilson, and E. Bakshy.
+Botorch: A framework for efficient Monte-Carlo Bayesian optimization. In Neural Information
+Processing Systems (NeurIPS), 2020.
+[5] T. Ban, M. Ohue, and Y. Akiyama. Efficient hyperparameter optimization by using Bayesian op-
+timization for drug-target interaction prediction. In International Conference on Computational
+Advances in Bio and Medical Sciences (ICCABS), 2017.
+[6] J. Bergstra, R. Bardenet, Y. Bengio, and B. Kégl. Algorithms for hyper-parameter optimization.
+In Neural Information Processing Systems (NeurIPS), 2011.
+[7] J. Bergstra, D. Yamins, and D. Cox. Making a science of model search: Hyperparameter
+optimization in hundreds of dimensions for vision architectures. In International Conference on
+Machine Learning (ICML), 2013.
+[8] F. Berkenkamp, A. P. Schoellig, and A. Krause. No-regret Bayesian optimization with unknown
+hyperparameters. Journal of Machine Learning Research, 20(50):1-24, 2019.
+[9] P. J. Bickel, C. A. Klaassen, P. J. Bickel, Y. Ritov, J. Klaassen, J. A. Wellner, and Y. Ritov.
+Efficient and adaptive estimation for semiparametric models, volume 4. Springer, 1993.
+[10] E. Bodin, M. Kaiser, I. Kazlauskaite, Z. Dai, N. Campbell, and C. H. Ek. Modulating surrogates
+for Bayesian optimization. In International Conference on Machine Learning (ICML), 2020.
+[11] I. Bogunovic and A. Krause. Misspecified Gaussian process bandit optimization. In Neural
+Information Processing Systems (NeurIPS), 2021.
+[12] V. Chernozhukov, D. Chetverikov, M. Demirer, E. Duflo, C. Hansen, W. Newey, and J. Robins.
+Double/debiased machine learning for treatment and structural parameters. The Econometrics
+Journal, 21:C1-C68, 2018.
+[13] J. Deng, W. Dong, R. Socher, L.-J. Li, K. Li, and L. Fei-Fei. ImageNet: A large-scale hierarchical
+image database. In 2009 IEEE conference on computer vision and pattern recognition, pages
+248-255. Ieee, 2009.
+[14] A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani,
+M. Minderer, G. Heigold, S. Gelly, et al. An image is worth 16x16 words: Transformers for
+image recognition at scale. arXiv preprint arXiv:2010.11929, 2020.
+[15] D. Eriksson and M. Poloczek. Scalable constrained Bayesian optimization. In International
+Conference on Artificial Intelligence and Statistics (AISTATS), 2021.
+[16] D. Eriksson, M. Pearce, J. Gardner, R. D. Turner, and M. Poloczek. Scalable global optimization
+via local Bayesian optimization. In Neural Information Processing Systems (NeurIPS), 2019.
+[17] S. Falkner, A. Klein, and F. Hutter. BOHB: Robust and efficient hyperparameter optimization at
+scale. In International Conference on Machine Learning (ICML), 2018.
+[18] W. Fedus, B. Zoph, and N. Shazeer. Switch transformers: Scaling to trillion parameter models
+with simple and efficient sparsity. Journal of Machine Learning Research, 23(120):1-39, 2022.
+[19] M. Feurer, A. Klein, K. Eggensperger, J. Springenberg, M. Blum, and F. Hutter. Efficient and
+robust automated machine learning. In Neural Information Processing Systems (NeurIPS),
+2015.
+[20] D. J. Foster and V. Syrgkanis. Orthogonal statistical learning. The Annals of Statistics, 51(3):
+879-908, 2023.
+[21] D. Frauen, M. Schröder, K. Hess, and S. Feuerriegel. Orthogonal survival learners for estimating
+heterogeneous treatment effects from time-to-event data. In Neural Information Processing
+Systems (NeurIPS), 2025.
+[22] D. Frauen, A. Deviyani, M. van der Schaar, and S. Feuerriegel. Nonparametric LLM evaluation
+from preference data. arXiv preprint, arXiv:2601.21816, 2026.
+[23] P. I. Frazier. Bayesian optimization. In Recent advances in optimization and modeling of
+contemporary problems, pages 255-278. 2018.
+[24] P. I. Frazier. A tutorial on Bayesian optimization. arXiv preprint, arXiv:1807.02811, 2018.
+[25] Y. Freund and R. E. Schapire. A decision-theoretic generalization of on-line learning and an
+application to boosting. Journal of Computer and System Sciences, 55(1):119-139, 1997.
+[26] J. González, Z. Dai, P. Hennig, and N. Lawrence. Batch Bayesian optimization via local
+penalization. In International Conference on Artificial Intelligence and Statistics (AISTATS),
+2016.
+[27] H. Ha, V. Nguyen, H. Tran-The, H. Zhang, X. Zhang, and A. v. d. Hengel. Provably efficient
+Bayesian optimization with unknown Gaussian process hyperparameter estimation. arXiv
+preprint, arXiv:2306.06844, 2023.
+[28] M. Herbster and M. K. Warmuth. Tracking the best expert. Machine learning, 32(2):151-178,
+1998.
+[29] J. M. Hernández-Lobato, M. W. Hoffman, and Z. Ghahramani. Predictive entropy search for
+efficient global optimization of black-box functions. In Neural Information Processing Systems
+(NeurIPS), 2014.
+[30] J. M. Hernández-Lobato, M. Gelbart, M. Hoffman, R. Adams, and Z. Ghahramani. Predictive
+entropy search for Bayesian optimization with unknown constraints. In International Conference
+on Machine Learning (ICML), 2015.
+[31] K. Hess, D. Frauen, N. Kilbertus, and S. Feuerriegel. Debiased neural operators for estimating
+functionals. arXiv preprint, arXiv:2604.19296, 2026.
+[32] R. A. Jacobs, M. I. Jordan, S. J. Nowlan, and G. E. Hinton. Adaptive mixtures of local experts.
+Neural Computation, 3(1):79-87, 1991.
+[33] J.-S. R. Jang. Mir-wm811k: Dataset for wafer map failure pattern recognition. http://
+mirlab.org/dataset/public/, 2015.
+[34] D. R. Jones, M. Schonlau, and W. J. Welch. Efficient global optimization of expensive black-box
+functions. Journal of Global Optimization, 13(4):455-492, 1998.
+[35] E. H. Kennedy. Semiparametric doubly robust targeted double machine learning: a review.
+Handbook of Statistical Methods for Precision Medicine, pages 207-236, 2024.
+[36] A. Krizhevsky. Learning multiple layers of features from tiny images. Technical report, 2009.
+[37] Y. LeCun, C. Cortes, and C. Burges. Mnist handwritten digit database. ATT Labs [Online].
+Available:  2, 2010.
+[38] Q. Lu, K. D. Polyzos, B. Li, and G. B. Giannakis. Surrogate modeling for Bayesian optimization
+beyond a single Gaussian process. IEEE Transactions on Pattern Analysis and Machine
+Intelligence, 45(9):11283-11296, 2023.
+[39] L. Mackey, V. Syrgkanis, and I. Zadik. Orthogonal machine learning: Power and limitations. In
+International Conference on Machine Learning (ICML), 2018.
+[40] R. Martinez-Cantin, K. Tee, and M. McCourt. Practical Bayesian optimization in the presence
+of outliers. In International Conference on Artificial Intelligence and Statistics (AISTATS),
+2018.
+[41] V. Melnychuk and S. Feuerriegel. GDR-learners: Orthogonal learning of generative models for
+potential outcomes. arXiv preprint, arXiv:2509.22953, 2025.
+[42] H. B. Moss, D. S. Leslie, J. Gonzalez, and P. Rayson. GIBBON: General-purpose information-
+based Bayesian optimisation. Journal of Machine Learning Research, 22(235):1-49, 2021.
+[43] H. B. Moss, S. W. Ober, and V. Picheny. Inducing point allocation for sparse Gaussian processes
+in high-throughput Bayesian optimisation. In International Conference on Artificial Intelligence
+and Statistics (AISTATS), 2023.
+[44] V. Nath, D. Yang, A. Hatamizadeh, A. A. Abidin, A. Myronenko, H. R. Roth, and D. Xu.
+The power of proxy data and proxy networks for hyper-parameter optimization in medical
+image segmentation. In International Conference on Medical Image Computing and Computer-
+Assisted Intervention, 2021.
+[45] W. Neiswanger and A. Ramdas. Uncertainty quantification using martingales for misspecified
+Gaussian processes. In International Conference on Algorithmic Learning Theory (ALT), 2021.
+[46] X. Nie and S. Wager. Quasi-oracle estimation of heterogeneous treatment effects. Biometrika,
+108(2):299-319, 2021.
+[47] M. Oprescu, V. Syrgkanis, and Z. S. Wu. Orthogonal random forest for causal inference. In
+International Conference on Machine Learning (ICML), 2019.
+[48] K. D. Polyzos, Q. Lu, and G. B. Giannakis. Bayesian optimization with ensemble learning
+models and adaptive expected improvement. In International Conference on Acoustics, Speech
+and Signal Processing (ICASSP), 2023.
+[49] A. Quitadadmo, J. Johnson, and X. Shi. Bayesian hyperparameter optimization for machine
+learning based eqtl analysis. In International Conference on Bioinformatics, Computational
+Biology, and Health Informatics, 2017.
+[50] J. M. Robins, A. Rotnitzky, and L. P. Zhao. Estimation of regression coefficients when some
+regressors are not always observed. Journal of the American Statistical Association, 89(427):
+846-866, 1994.
+[51] J. M. Robins, M. A. Hernan, and B. Brumback. Marginal structural models and causal inference
+in epidemiology. Epidemiology, 11(5):550-560, 2000.
+[52] M. Schröder, V. Melnychuk, and S. Feuerriegel. Differentially private learners for heterogeneous
+treatment effects. International Conference on Learning Representations (ICLR), 2025.
+[53] B. Shahriari, K. Swersky, Z. Wang, R. P. Adams, and N. De Freitas. Taking the human out of
+the loop: A review of Bayesian optimization. Proceedings of the IEEE, 104(1):148-175, 2016.
+[54] N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean. Outrageously
+large neural networks: The sparsely-gated mixture-of-experts layer. In International Conference
+on Learning Representations (ICLR), 2017.
+[55] J. Snoek, H. Larochelle, and R. P. Adams. Practical Bayesian optimization of machine learning
+algorithms. In Neural Information Processing Systems (NeurIPS), 2012.
+[56] N. Srinivas, A. Krause, S. M. Kakade, and M. Seeger. Gaussian process optimization in the
+bandit setting: No regret and experimental design. In International Conference on Machine
+Learning (ICML), 2010.
+[57] L. Tani and C. Veelken. Comparison of Bayesian and particle swarm algorithms for hyper-
+parameter optimisation in machine learning applications in high energy physics. Computer
+Physics Communications, 294:108955, 2024.
+[58] A. Törn and A. Žilinskas. Global optimization, volume 350. Springer, 1989.
+[59] R. Turner, D. Eriksson, M. McCourt, J. Kiili, E. Laaksonen, Z. Xu, and I. Guyon. Bayesian
+optimization is superior to random search for machine learning hyperparameter tuning: Analysis
+of the black-box optimization challenge 2020. In NeurIPS Competition and Demonstration
+Track, 2020.
+[60] M. J. Van Der Laan and D. Rubin. Targeted maximum likelihood learning. The International
+Journal of Biostatistics, 2, 2006.
+[61] Z. Wang and S. Jegelka. Max-value entropy search for efficient Bayesian optimization. In
+International conference on machine learning, pages 3627-3635. PMLR, 2017.
+[62] S. Watanabe. Tree-structured parzen estimator: Understanding its algorithm components and
+their roles for better empirical performance. arXiv preprint, arXiv:2304.11127, 2023.
+[63] J. Wilson, F. Hutter, and M. Deisenroth. Maximizing acquisition functions for Bayesian
+optimization. In Neural Information Processing Systems (NeurIPS), 2018.
+[64] J. T. Wilson, R. Moriconi, F. Hutter, and M. P. Deisenroth. The reparameterization trick for
+acquisition functions. arXiv preprint, arXiv:1712.00424, 2017.
+[65] J. Wu, S. Toscano-Palmerin, P. I. Frazier, and A. G. Wilson. Practical multi-fidelity Bayesian
+optimization for hyperparameter tuning. In Uncertainty in Artificial Intelligence (UAI), 2020.
+[66] M.-J. Wu, J.-S. R. Jang, and J.-L. Chen. Wafer map failure pattern recognition and similarity
+ranking for large-scale data sets. IEEE Transactions on Semiconductor Manufacturing, 28(1):
+1-12, 2015.
+[67] Y. Yuan, W. Wang, and W. Pang. A systematic comparison study on hyperparameter optimisation
+of graph neural networks for molecular property prediction. In Proceedings of the genetic and
+evolutionary computation conference, 2021.
+A
+Extended related work
+Below, we discuss more distant related literature, completing the discussion in Section 2. We first
+cover literature regarding the robustness of the three components of BO in our work, and finally
+present related work on orthogonal machine learning.
+Marginalization over surrogate uncertainty. A standard source of instability in BO is uncertainty
+in the surrogate itself, especially in the hyperparameters such as kernel lengthscales. Prior work has
+emphasized that a fully Bayesian treatment of these hyperparameters can substantially improve ro-
+bustness relative to empirical Bayes or plug-in optimization [55]. Related work has also incorporated
+hyperparameter uncertainty directly into acquisition design [29, 30]. While these approaches account
+for surrogate uncertainty by integrating over posterior uncertainty in the model, they do not directly
+address the additional MC instability that arises when the resulting acquisition value must itself be
+estimated.
+Ensemble surrogates and model aggregation. A natural strategy for mitigating surrogate mis-
+specification is to replace a single surrogate with an ensemble of surrogate models. Recent work
+has proposed GP ensembles and mixture-based surrogate models for BO, showing that combining
+multiple kernels or surrogate classes can improve robustness relative to committing to a single GP
+prior [38, 48]. These approaches address only structural misspecification at the model level and do
+not account for instability in the individual surrogates.
+Acquisition functions and numerical stability. Acquisition functions are the core decision rule
+in BO, with classical choices including Probability of Improvement, Expected Improvement, and
+upper-confidence-based methods [34, 56]. Recent work has highlighted that vanilla EI and its variants
+can be numerically unstable, which can substantially degrade optimization performance [2]. This has
+motivated numerically stable reformulations based on the logarithmic scale, which are substantially
+easier to optimize in practice.
+Orthogonal machine learning. Orthogonal machine learning is rooted in semi-parametric statistics
+[9], and is applied in many settings where the estimation target is defined based on unknown nuisance
+components [12, 20]. Very common examples are found in the missing data analysis [50] and causal
+inference literature [35, 46, 47, 51, 60]. Recently, orthogonal learning has also been expanded to
+other fields such as private machine learning [52], survival analysis [21], LLM evaluation [22], and
+general ML optimization topics such as neural operators or generative models [31, 41].
+B
+Failure modes in Bayesian Optimization
+Failure modes in BO. Several failure modes arise in a realistic HPO setting (see, e.g., [e.g. 2, 8,
+11, 45]). Bayesian HPO performance depends on the accuracy and stability of acquisition estimates,
+which are computed from a surrogate posterior that is often misspecified and approximately inferred,
+leading to instability in acquisition values. Specifically, BO suffers from the following main failure
+modes:
+(i) Structural surrogate misspecification arises when the surrogate model class does not adequately
+represent the unknown objective. For example, the assumed kernel, likelihood, prior smoothness, or
+stationary structure may be incompatible with the true response surface. As a result, the posterior
+mean and posterior uncertainty estimates may be systematically biased.
+(ii) Numerical instability can arise when acquisition values are very small, highly skewed, or nearly
+indistinguishable across candidates. Directly optimizing such quantities can lead to unstable gradients.
+(iii) Posterior approximation and acquisition estimation noise. Marginalizing over surrogate uncer-
+tainty mitigates plug-in overconfidence, but the marginal acquisition value must be approximated
+from a finite number of posterior samples. This introduces Monte Carlo variance into the acquisition
+estimate, on top of any bias from the approximate posterior qm,t itself differing from the true posterior.
+Both effects can negatively affect the ranking of candidate points.
+C
+Extension to constrained and parallel acquisitions
+In Section 4, we develop an orthogonalized estimator for the standard Expected Improvement setting.
+The same construction extends to a broader class of acquisition functions, including constrained
+EI, parallel or batch EI, and their combinations. Below, we first provide a general extension to our
+standard EI setting in the main paper and then specialize it to constrained and parallel Bayesian
+optimization.
+C.1
+General acquisition-level extension
+Let z denote a generic acquisition input. Depending on the setting, we write z to represent (i) a single
+candidate point λ in standard BO, (ii) a single candidate point λ in constrained BO, or (iii) a batch
+Λ = (λ1, . . . , λq) in parallel BO.
+For surrogate model m with parameter θm and approximate posterior qm,t(θ), let am(z; θm) denote a
+generic acquisition function computed under parameter value θm. We define the marginal acquisition
+target
+Am(z) := Eθm∼qm,t[am(z; θm)] .
+(25)
+As in Section 4, let gm(θm) := ∇θm log qm,t(θm) denote the score function. With θ(s)
+m
+i.i.d.
+∼qm,t the
+orthogonalized estimator is given by
+bAorth
+m
+(z) = 1
+S
+S
+X
+s=1
+h
+am(z; θ(s)
+m ) −
+ Cov(gm, gm)−1 Cov(gm, am)
+⊤gm(θ(s)
+m )
+i
+.
+(26)
+Proposition C.1 (Generic extension of the orthogonalized estimator). Fix an iteration t, a surrogate
+model m, and an acquisition input z. Assume that
+Eqm,t
+
+∥gm(θm)∥2
+
+< ∞,
+Eqm,t
+
+am(θm; z)2
+< ∞,
+(27)
+and that Cov(gm, gm) is nonsingular. Then:
+1. bAorth
+m
+(z) is unbiased for Am(z)
+2.
+Var
+
+bAorth
+m
+(z)
+
+= 1
+S
+ Var(hm) −Cov(hm, gm)⊤Cov(gm, gm)−1 Cov(gm, hm)
+
+, (28)
+and therefore
+Var
+
+bAorth
+m
+(z)
+
+≤Var
+
+bAMC
+m (z)
+
+,
+(29)
+where bAMC
+m (z) := 1
+S
+PS
+s=1 hm(θ(s)
+m ; z)
+3. The residual rm(θm; z) := am(θm; z) −
+ Cov(gm, gm)−1 Cov(gm, am)
+⊤gm(θm) is or-
+thogonal to the score directions.
+Proof. The proof is identical to that of the EI case in Supplement E after replacing EIm(λ; θm) by
+the generic acquisition value am(z; θm).
+Remark.
+Proposition C.1 shows that the theoretical properties of our orthogonalized approach are
+acquisition-agnostic. We only require square integrability of the acquisition value under qm,t and the
+usual score-function regularity conditions.
+C.2
+Constrained Expected Improvement
+Consider constrained BO with one objective f1 and constraint functions f2, . . . , fM, where, without
+loss of generality, the feasible set is defined by
+fi(λ) ≤0,
+i = 2, . . . , M.
+(30)
+A standard constrained Expected Improvement (CEI) acquisition is
+CEIm(λ; θm) := E
+"
+(f ⋆−f1(λ))+
+M
+Y
+i=2
+1{fi(λ) ≤0}
+ Dt, θm
+#
+,
+(31)
+where f ⋆denotes the current best feasible objective value (i.e., the minimum of f1 over feasible
+observations).
+The corresponding marginal target is CEImarg
+m
+(λ)
+:=
+Eθm∼qm,t[CEIm(λ; θm)].
+Defining
+hCEI
+m (θm; λ) := CEIm(λ; θm), the orthogonalized CEI estimator is given by
+d
+CEI
+orth
+m
+(λ) = 1
+S
+S
+X
+s=1
+h
+CEIm(λ; θ(s)
+m ) −
+ Cov(gm, gm)−1 Cov
+ gm, hCEI
+m
+⊤gm(θ(s)
+m )
+i
+.
+(32)
+Corollary C.2 (Orthogonalized constrained EI). Assume Eqm,t
+h
+(CEIm(λ; θm))2i
+< ∞. Then
+Proposition C.1 applies with am(z; θm) = CEIm(λ; θm).
+Proof. The indicator product is bounded by 1, so 0 ≤CEIm(λ; θm) ≤EIm,1(λ; θm) :=
+E[(f ⋆−f1(λ))+ | Dt, θm]. Square integrability of EIm,1 thus implies square integrability of CEIm,
+and the corollary follows from Proposition C.1.
+C.3
+Parallel or batch Expected Improvement
+In parallel BO, we select a batch Λ = (λ1, . . . , λq) of q candidate points at each iteration. The
+standard batch expected improvement (qEI) is given by
+qEIm(Λ; θm) := E
+
+max
+j=1,...,q
+ f ⋆−f(λj)
+
++
+ Dt, θm
+
+,
+(33)
+with corresponding marginal target is qEImarg
+m
+(Λ) := Eθm∼qm,t[qEIm(Λ; θm)].
+We define hqEI
+m (θm; Λ) := qEIm(Λ; θm). Then the orthogonalized qEI estimator is given by
+d
+qEI
+orth
+m
+(Λ) = 1
+S
+S
+X
+s=1
+h
+qEIm(Λ; θ(s)
+m ) −
+ Cov(gm, gm)−1 Cov
+ gm, hqEI
+m
+⊤gm(θ(s)
+m )
+i
+.
+(34)
+Corollary C.3 (Orthogonalized batch EI). Assume Eqm,t
+h
+(qEIm(Λ; θm))2i
+< ∞. Then Proposi-
+tion C.1 applies with am(z; θm) = qEIm(Λ; θm).
+Proof. Observe that for every fixed batch X
+= (x1, . . . , xq) and parameter value θ, 0 ≤
+qEIm(X; θ) ≤Pq
+j=1 EIm(xj; θ). Consequently, qEIm(X; θ)2 ≤
+Pq
+j=1 EIm(xj; θ)
+2
+. In par-
+ticular, if Eθ∼qm,t
+Pq
+j=1 EIm(xj; θ)
+2
+< ∞, then as well Eθ∼qm,t
+
+qEIm(X; θ)2
+< ∞. The
+corollary now directly follows from Proposition C.1.
+Unlike standard EI, qEI does not admit a closed-form expression. Therefore, we follow common
+practice and approximate it by inner MC sampling. Let
+d
+qEIm(Λ; θm) = 1
+N
+N
+X
+n=1
+max
+j=1,...,q
+ f ⋆−ξ(n)(λj)
+
++,
+ξ(n) ∼p(· | Dt, θm),
+(35)
+where the inner MC estimator is assumed to be unbiased for qEIm(Λ; θm).
+The resulting orthogonalized MC estimator is then given by
+d
+qEI
+orth
+m,nested(Λ) = 1
+S
+S
+X
+s=1
+h
+d
+qEIm(Λ; θ(s)
+m ) −(Cov(gm, gm)−1 Cov(gm, d
+qEI(Λ; θm)))⊤gm(θ(s)
+m )
+i
+.
+(36)
+Importantly, under the assumption that the inner estimator (35) is unbiased for qEIm(X; θm) for
+every fixed θm, and that all required second moments exist, then d
+qEI
+orth
+m,nested(Λ) is unbiased for
+qEIm(X; θm) as well due to the law of iterated expectations.
+D
+Theoretical properties
+D.1
+Computational Complexity
+GP surrogate. For an exact GP surrogate, fitting requires O(t3) time due to kernel matrix inversion.
+Per candidate λ, computing µt(λ; θ) and σ2
+t (λ; θ) for a fixed θ costs O(t2) in a naive implementation,
+or O(t) if Cholesky factors are reused appropriately. For S posterior samples, marginal EI estimation
+costs O(St2) or O(St), depending on the implementation.
+The orthogonalization step introduces two types of cost. First, once per BO iteration, one computes
+the score covariance matrix bΣg := d
+Cov(gt, gt) ∈Rdθ×dθ, which depends only on the surrogate
+posterior samples and not on the candidate λ. This costs O(Sd2
+θ), followed by O(d3
+θ) to invert or
+factorize bΣg. Second, for each candidate λ, one computes the cross-covariance vector bcgh(λ) :=
+d
+Cov(gt, h(·; λ)), which costs O(Sdθ), followed by O(d2
+θ) for a matrix-vector solve or multiplication
+with the precomputed factorization of bΣ−1
+g . Hence, the additional per-candidate orthogonalization
+overhead is O(Sdθ + d2
+θ), and the total per-candidate cost is O(St2 + Sdθ + d2
+θ), plus a one-time
+per-iteration preprocessing cost of O(Sd2
+θ + d3
+θ).
+We compare the average per-step runtimes of ORTHOBO with qLogEI in Table 3. We observe that
+the runtimes vary with the dimensionality of the problem, but the overhead over MC-based qLogEI
+is often around 2 s. For our implementation, we used the BoTorch framework, which has made
+MC-sampling highly efficient. We thus expect further runtime reductions from a more improved
+orthogonalization implementation.
+Table 3: Average per-step runtimes (in seconds) for ORTHOBO and qLogEI.
+Hartmann6
+Ackley8
+Michalewicz10
+Levy16
+qLogEI
+0.696
+0.156
+0.325
+0.582
+ORTHOBO
+1.607
+0.492
+2.362
+2.563
+Tree-based / TPE-style surrogate. Tree-based or density-based surrogates are typically cheaper
+to fit. A single fit often requires O(t log t) or comparable cost, depending on the underlying model.
+Per-candidate acquisition evaluation is usually O(1) or logarithmic in t. As in the GP case, the
+covariance matrix of the control variate, bΣc := d
+Cov(ct, ct) ∈Rdc×dc, depends only on the posterior
+samples and can therefore be computed once per BO iteration at cost O(Sd2
+c), followed by O(d3
+c)
+for inversion or factorization. For each candidate, one then computes the cross-covariance vector
+bcch(λ) := d
+Cov(ct, h(·; λ)), at cost O(Sdc), followed by O(d2
+c) for the matrix-vector solve. Hence,
+the additional per-candidate orthogonalization overhead is O(Sdc + d2
+c), with one-time per-iteration
+preprocessing cost O(Sd2
+c + d3
+c).
+We report average per-step runtimes for orthogonalized TPE versus MC-based TPE in Table 4.
+Runtime differences are generally small.
+Table 4: Average per-step runtimes (in seconds) for ORTHOBO and MC-based TPE.
+Hartmann6
+Ackley8
+Michalewicz10
+Levy16
+MC-TPE
+0.224
+0.347
+0.356
+0.754
+ORTHOBO
+0.390
+0.736
+2.533
+0.360
+Ensemble overhead. For an ensemble of M surrogate models, the total cost scales linearly as
+O
+PM
+m=1 costm
+
+. In practice, the main computational advantage of debiasing through orthogonal-
+ization is not that it makes each acquisition evaluation cheaper, but that it can achieve comparable
+acquisition stability with a smaller MC budget S.
+D.2
+Variance reduction, robustness and ranking stability for GP and TPE
+We provide versions of Theorem 4.1, and Proposition 4.3 for the two surrogate instantiations GP
+and TPE. The proofs follow directly from the proofs of the original theorem and proposition in
+Supplement E.
+Theorem D.1 (Variance reduction for the GP surrogate). Fix an iteration t and a candidate λ ∈Λ.
+Assume Eqt∥gt(θ)∥2
+2 < ∞, Eqt[(EIGP(λ; θ))2] < ∞, and that Cov(gt, gt) is nonsingular. Define
+EIGP,orth(λ; θ) := EIGP(λ; θ) −γGP(λ)⊤gt(θ).
+(37)
+Then:
+(i) Target preservation: Eqt[EIGP,orth(λ; θ)] = EIGP,marg(λ).
+(ii) Variance reduction:
+Var
+ EIGP,orth(λ; θ)
+
+= Var
+ EIGP(λ; θ)
+
+−Cov(EIGP, gt)⊤Cov(gt, gt)−1 Cov(gt, EIGP),
+(38)
+and therefore Var(EIGP,orth(λ; θ)) ≤Var(EIGP(λ; θ)). By the i.i.d. MC variance identity, the
+corresponding estimator satisfies Var(c
+EI
+GP,orth(λ)) ≤Var(c
+EI
+GP,MC(λ)) for any MC budget S.
+Proposition D.2 (Ranking stability for the GP surrogate). Let λ, λ′ ∈Λ with ∆GP(λ, λ′) :=
+EIGP,marg(λ)−EIGP,marg(λ′) > 0. Let b∆GP,orth denote the MC estimator obtained by applying the
+orthogonalization construction in Theorem D.1 to the difference functional EIGP(λ; θ)−EIGP(λ′; θ).
+Then
+P
+
+b∆GP,orth ≤0
+
+≤Var(b∆GP,orth)
+(∆GP(λ, λ′))2 ≤Var(b∆GP,MC)
+(∆GP(λ, λ′))2 .
+(39)
+Theorem D.3 (Variance reduction for the tree-based / TPE-style surrogate). Fix an iteration t and a
+candidate λ ∈Λ. Assume Eqt[∥ct(θ)∥2
+2] < ∞, Eqt[(hTPE(λ; θ))2] < ∞, Eqt[ct(θ)] = 0, and that
+Cov(ct, ct) is nonsingular. Define
+hTPE,orth(λ; θ) := hTPE(λ; θ) −γTPE(λ)⊤ct(θ).
+(40)
+Then:
+(i) Target preservation: Eqt[hTPE,orth(λ; θ)] = EITPE,marg(λ).
+(ii) Variance reduction:
+Var
+ hTPE,orth(λ; θ)
+
+= Var
+ hTPE(λ; θ)
+
+−Cov(hTPE, ct)⊤Cov(ct, ct)−1 Cov(ct, hTPE),
+(41)
+and therefore Var(hTPE,orth(λ; θ)) ≤Var(hTPE(λ; θ)). By the i.i.d. MC variance identity, the
+corresponding estimator satisfies Var(c
+EI
+TPE,orth(λ)) ≤Var(c
+EI
+TPE,MC(λ)) for any MC budget S.
+Proposition D.4 (Ranking stability for the tree-based / TPE-style surrogate). Let λ, λ′ ∈Λ with
+∆TPE(λ, λ′) := EITPE,marg(λ) −EITPE,marg(λ′) > 0. Let b∆TPE,orth denote the MC estimator
+obtained by applying the orthogonalization construction in Theorem D.3 to the difference functional
+hTPE(λ; θ) −hTPE(λ′; θ). Then
+P
+
+b∆TPE,orth ≤0
+
+≤Var(b∆TPE,orth)
+(∆TPE(λ, λ′))2 ≤Var(b∆TPE,MC)
+(∆TPE(λ, λ′))2 .
+(42)
+E
+Proofs of the main theorems and propositions
+E.1
+Proof of Theorem 4.1
+Theorem 4.1 Assume Eqm,t[EIm(λ; θ)2] < ∞and Eqm,t[∥g(θ)∥2
+2] < ∞, that Σg is nonsingular, and
+that the standard score-function regularity conditions hold for qm,t. Then:
+(i) Preserved target. EIorth,marg
+m
+(λ) = EImarg
+m
+(λ).
+(ii) Variance reduction. Under qm,t,
+Var
+ EIorth
+m
+(λ; θ)
+
+= Var
+ EIm(λ; θ)
+
+−Cov(g, EIm)⊤Σ−1
+g
+Cov(g, EIm) ≤Var
+ EIm(λ; θ)
+
+.
+(43)
+Proof. Let h(θ) := EIm(λ; θ) and g(θ) := ∇θ log qm,t(θ), and write γ := γm(λ) = Σ−1
+g
+Cov(g, h).
+Then
+EIorth
+m
+(λ; θ) = h(θ) −γ⊤g(θ).
+(44)
+(i) Preserved target.
+Under the assumed regularity conditions, the score function satisfies
+Eqm,t[g(θ)] =
+Z
+∇θ log qm,t(θ) qm,t(θ) dθ =
+Z
+∇θqm,t(θ) dθ = 0.
+(45)
+Hence
+EIorth,marg
+m
+(λ) = Eqm,t[h(θ)] −γ⊤Eqm,t[g(θ)] = Eqm,t[h(θ)] = EImarg
+m
+(λ).
+(46)
+(ii) Variance reduction.
+For any a ∈Rdθ,
+Varqm,t(h −a⊤g) = Var(h) −2a⊤Cov(g, h) + a⊤Σg a.
+(47)
+Since Σg is positive definite by assumption, this quadratic in a is uniquely minimized at
+a⋆= Σ−1
+g
+Cov(g, h) = γ.
+(48)
+Substituting a = γ gives
+Var
+ EIorth
+m
+(λ; θ)
+
+= Var(h) −Cov(g, h)⊤Σ−1
+g
+Cov(g, h).
+(49)
+Because Σg is positive definite, the quadratic form Cov(g, h)⊤Σ−1
+g
+Cov(g, h) ≥0, and therefore
+Var
+ EIorth
+m
+(λ; θ)
+
+≤Var
+ EIm(λ; θ)
+
+.
+(50)
+E.2
+Proof of Corollary 4.2
+Corollary 4.2 Assume the conditions of Theorem 4.1. For any b ∈Rdθ, consider the tilted family
+q(ε)
+m,t(θ) ∝qm,t(θ) exp
+ ε b⊤g(θ)
+
+for small |ε|. Holding γm(λ) fixed at its ε = 0 value, it holds that
+d
+dε Eq(ε)
+m,t
+h
+EIorth
+m
+(λ; θ)
+i
+ε=0
+= 0.
+(51)
+Proof. Throughout, we hold γ fixed at its ε = 0 value. Consider the exponentially tilted family
+q(ε)
+m,t(θ) = qm,t(θ) exp(ε b⊤g(θ))
+Z(ε)
+,
+Z(ε) =
+Z
+qm,t(θ) exp(ε b⊤g(θ)) dθ.
+(52)
+For any integrable test function φ, differentiation under the integral sign (justified by the square-
+integrability assumptions and dominated convergence in a neighborhood of ε = 0) yields
+d
+dε Eq(ε)
+m,t[φ(θ)]
+
+ε=0
+= Covqm,t
+ φ(θ), b⊤g(θ)
+
+.
+(53)
+Apply with φ(θ) = EIorth
+m
+(λ; θ) = h(θ) −γ⊤g(θ):
+Cov
+ g, h −γ⊤g
+
+= Cov(g, h) −Σg γ = Cov(g, h) −ΣgΣ−1
+g
+Cov(g, h) = 0.
+(54)
+Hence
+d
+dε Eq(ε)
+m,t
+h
+EIorth
+m
+(λ; θ)
+i
+ε=0
+= b⊤Cov
+ g, h −γ⊤g
+
+= 0
+(55)
+for every b ∈Rdθ. The orthogonalized acquisition is therefore first-order insensitive to score-tilt
+perturbations of qm,t.
+E.3
+Proof of Proposition 4.3
+Proposition 4.3 Let λ, λ′ ∈Λ such that ∆(λ, λ′) := EImarg
+m
+(λ) −EImarg
+m
+(λ′) > 0. Let b∆MC(λ, λ′)
+and b∆orth(λ, λ′) denote the corresponding Monte Carlo difference estimators. Then both estimators
+are unbiased for ∆(λ, λ′), and
+P
+
+b∆orth(λ, λ′) ≤0
+
+≤
+Var
+
+b∆orth(λ, λ′)
+
+Var
+
+b∆orth(λ, λ′)
+
++ ∆(λ, λ′)2 ≤
+Var
+
+b∆MC(λ, λ′)
+
+Var
+
+b∆MC(λ, λ′)
+
++ ∆(λ, λ′)2 .
+(56)
+Proof. By unbiasedness from Theorem 4.1,
+E
+h
+b∆orth(λ, λ′)
+i
+= ∆(λ, λ′).
+(57)
+Hence
+P
+ b∆orth(λ, λ′) ≤0
+
+= P
+
+b∆orth(λ, λ′) −∆(λ, λ′) ≤−∆(λ, λ′)
+
+.
+(58)
+Applying Cantelli’s inequality to the centered random variable
+Z := b∆orth(λ, λ′) −∆(λ, λ′)
+(59)
+gives
+P(Z ≤−a) ≤
+Var(Z)
+Var(Z) + a2 ,
+a > 0.
+(60)
+With a = ∆(λ, λ′), this yields
+P
+ b∆orth(λ, λ′) ≤0
+
+≤
+Var
+
+b∆orth(λ, λ′)
+
+Var
+
+b∆orth(λ, λ′)
+
++ ∆(λ, λ′)2 .
+(61)
+The second inequality follows from Theorem 4.1, which gives
+Var
+
+b∆orth(λ, λ′)
+
+≤Var
+
+b∆MC(λ, λ′)
+
+.
+(62)
+Since the map v 7→v/(v + ∆2) is increasing for v ≥0, the result follows.
+F
+Implementation details
+General implementation details All experiments were conducted on a proprietary compute cluster.
+Our experiments utilized 4 CPU cores, 16 GB of main memory, and a A100 MIG slice with 7GB
+of VRAM. We used BoTorch for all code implementations. In total, we use ∼1000 GPU hours
+including initial experimentation and bug fixing.
+License details We used BoTorch, which is MIT licensed. We implemented all methods and
+benchmarks in this framework. The WM811K dataset [33, 66] is available at 
+org/dataSet/public/ and allows usage under the following conditions (copied verbatim from the
+license document):
+2. Redistribution and use in any form must be
+accompanied by the following two citations:
+[1] Ming-Ju Wu, Jyh-Shing Roger Jang, and Jui-Long Chen,
+"Wafer Map Failure Pattern Recognition and
+Similarity Ranking for Large-Scale Data Sets,"
+in IEEE Transactions on Semiconductor Manufacturing,
+vol. 28, no. 1, pp. 1-12, Feb. 2015, doi: 10.1109/TSM.2014.2364237.
+[2] MIR-WM811K: Dataset for wafer map failure pattern recognition,
+2015 
+We included these citations at the appropriate places. Further, we received written permission by the
+authors to use the dataset for our research.
+F.1
+TPE implementation
+TPE implementation.
+For the TPE-based experiments, we approximate the parameter distribution
+qt(θ) by a nonparametric bootstrap over the current BO history. Concretely, for each sample
+s = 1, . . . , S, we resample the observed data with replacement, fit a TPE surrogate θ(s), and evaluate
+the corresponding TPE acquisition
+hTPE(λ; θ(s)) ∝ℓθ(s)(λ)
+gθ(s)(λ).
+We use the empirical γ-quantile split with γ = 0.2 to define the good and bad sets.
+As control variate, we use centered bootstrap summary statistics. For each bootstrap fit θ(s), we form
+ϕ(θ(s)) =
+
+log b(s)
+good,1, . . . , log b(s)
+good,d, log b(s)
+bad,1, . . . , log b(s)
+bad,d, y⋆,(s)⊤,
+where b(s)
+good,j and b(s)
+bad,j are the fitted KDE bandwidths in dimension j, and y⋆,(s) is the bootstrap
+split threshold. The implemented control variate is then
+ct(θ(s)) = ϕ(θ(s)) −1
+S
+S
+X
+r=1
+ϕ(θ(r)),
+which is zero-mean by construction. The orthogonalized TPE estimator is
+c
+EI
+c
+TPE,orth(λ) = 1
+S
+S
+X
+s=1
+
+hTPE(λ; θ(s)) −γTPE(λ)⊤ct(θ(s))
+
+.
+F.2
+Misspecified kernel family experiments
+F.3
+CNN outlier experiment
+We include the CNN outlier experiment used by Ament et al. [3]. Specifically, the goal is to optimize
+the test-set accuracy of a CNN trained on MNIST images. To model corrupted evaluations, we
+Function
+Qualitative structure
+Kernel family
+Reason for
+misspecification
+Mildly
+misspecified
+Strongly
+misspecified
+Hartmann6
+Smooth, anisotropic,
+interaction-heavy,
+multimodal
+Isotropic RBF
+or isotropic
+Matérn
+Linear
+Isotropic kernel
+variants miss
+dimension-specific
+lengthscales. Linear
+kernels cannot capture
+the nonlinear
+multimodal structure.
+Ackley8
+Highly multimodal,
+oscillatory, with many
+local minima
+Smooth RBF
+Linear
+Very smooth kernels
+tend to smear out
+Ackley’s rugged local
+structure. Linear
+kernels are too simple
+for the landscape.
+Michalewicz10
+Sharp valleys, strong
+multimodality, narrow
+optima
+Isotropic RBF
+or Matérn
+Linear
+Isotropic kernels blur
+the narrow valleys and
+local optima. Linear
+kernels are strongly
+misspecified.
+Levy16
+Rugged, oscillatory,
+with nonlinear
+interactions
+Overly smooth
+isotropic RBF
+Linear
+Isotropic smooth
+kernels underfit
+sharper local variation
+and ignore anisotropy.
+Linear kernels cannot
+represent the
+nonlinear oscillatory
+structure.
+Table 5: Synthetic benchmark functions, their qualitative structure, and examples of mildly and
+strongly misspecified kernel families.
+prematurely stop training with probability 20 % after observing between 100 and 1000 training
+samples. We optimize the same parameters as Ament et al. [3]. For comparison, we also include their
+RPR method. To not implicitly mitigate the corrupted evaluations, we only use n0 = 2 initial points.
+In initial experiments, we found that using larger n0 made the problem too easy for all methods; all
+reached ∼100 % test accuracy after few iterations.
+F.4
+Case study experiment, additional details
+Dataset. For our real-world case study, we use the large-scale industrial WM811K dataset [33, 66].
+It contains 811 457 real-world wafer map images and annotations of common failure types. The
+images have pixel values 0, 1, 2, where 0 is background, 1 are OK regions, and 2 are faulty regions.
+Depending on the clustering of the failures, one of eight class labels is assigned. Exemplary failure
+patterns are shown in Figure 6. Images without any failures are labelled with an additional class label.
+We resize all wafer maps to a common (48 × 48) resolution, rescale the data to (0, 1) by dividing by
+/2, and then normalize using ImageNet statistics.
+The dataset is strongly imbalanced, and we randomly split the data into a 80 % train and 20 % test set,
+stratifying on the labels to keep class distributions equal across the two splits. During fine-tuning, we
+use an (inverse) class-weighted cross-entropy loss.
+Model. As a model, we use an ImageNet [13] pretrained ViT B16 [14] model. We freeze the
+backbone model and train only the penultimate output layers.
+Center
+Donut
+Edge-Loc
+Edge-Ring
+Loc
+Random
+Scratch
+Near-full
+Figure 6: Examples of wafer-map manufacturing failures.
+Experimental settings. For this experiment, due to computational constraints, we deviate from the
+settings used in the main paper. Specifically, we here use S = 512, n0 = 4, and run four trials of 20
+iterations. We use a RBF kernel.
+Problem. The goal is to optimize the fine-tuning test accuracy of a pretrained ViT B16 model on the
+industrial WM811K dataset. The tunable parameters are: learning rate in [1e −4, 1e −1], momentum
+in [0, 1], weight decay in [0, 1], step size (for the learning rate scheduling) in [1, 100], and γ ∈[0, 1].7
+7This experiment conceptually builds on Ament et al.’s experiment on CNN training.
+G
+Further results
+G.1
+Variance reduction and ranking stability
+We estimate the empirical macro variance of the acquisition estimator by fixing a BO state, drawing
+a fixed set of n = 64 Sobol probe samples, rebuilding the acquisition independently 16 times, and
+computing the sample variance across repeated estimator values at each probe point. We report the
+mean pointwise macro variance for the raw and orthogonalized estimators. (Note: this does not affect
+the fitted surrogate model, which stays untouched). We repeat this at fixed points throughout training.
+Due to space reasons, we only report abridged results in the main text. We report results for (i) a
+Matérn-5/2 kernel in section G.1.1, (ii) a RBF kernel in section G.1.2, and (iii) a TPE surrogate in
+section G.1.3.
+G.1.1
+Matérn-5/2 kernel
+In Table 6, we give the variance reduction of ORTHOBO for all benchmark functions. For higher-
+dimensional Michalewicz10 and Levy16, we found that larger n0 were required Across all bench-
+marks, we observe a strong reduction in variance, confirming that our proposed ORTHOBO stabilizes
+the acquisition estimate. Further, we report the ranking stabilities in Table 7, We observe that
+ORTHOBO again reduces the variance and consistently stabilizes the probe ranking.
+Table 6: Variance reduction by orthogonalization.
+Hartmann6
+Ackley8
+Michalewicz10
+Levy16
+n0
+S
+Var(c
+EI
+MC
+m )
+Var(c
+EI
+ortho
+m
+)
+Var(c
+EI
+MC
+m )
+Var(c
+EI
+ortho
+m
+)
+Var(c
+EI
+MC
+m )
+Var(c
+EI
+ortho
+m
+)
+Var(c
+EI
+MC
+m )
+Var(c
+EI
+ortho
+m
+)
+8
+2e-08
+1.61e-07
+9.68e-09
+5.24e-09
+9.51e-08
+4.54e-08
+0.00106
+0.000709
+32
+2.59e-09
+3.02e-10
+6.3e-09
+4.17e-10
+1.67e-08
+1.07e-09
+0.000208
+2.27e-05
+Table 7: Ranking stability. Lower probe variance and flip rate indicate more stable acquisition
+estimates; higher ranking correlation and top-1 agreement indicate more stable candidate rankings
+across probes.
+Benchmark
+Method
+Probe variance
+Top1 agr.
+Flip rate
+Regret
+Hartmann6
+qLogEI
+8.41615.43
+0.9250.16
+0.1140.12
+1.4110.42
+OrthoBO (ours)
+0.0380.04
+0.9500.10
+0.0510.04
+1.2320.67
+Ackley8
+qLogEI
+19.47139.29
+0.9580.11
+0.1020.12
+17.8642.08
+OrthoBO (ours)
+0.0170.04
+0.9860.06
+0.0210.05
+18.1360.78
+Michalewicz10
+qLogEI
+168.603154.76
+0.9250.16
+0.1480.12
+7.1400.01
+OrthoBO (ours)
+0.0190.03
+0.9880.06
+0.0140.03
+6.9610.36
+Levy16
+qLogEI
+233.655287.67
+0.9170.12
+0.0690.09
+82.1946.05
+OrthoBO (ours)
+0.0730.21
+0.9880.06
+0.0480.04
+58.9380.00
+G.1.2
+RBF kernel
+We repeat our previous analysis, but use RBF kernel for the GP surrogate. We report the raw and
+orthogonalized variances in Table 8. Our observations are consistent: orthogonalization substantially
+reduces estimation variance.
+Table 8: Variance reduction through orthogonalization, using a RBF kernel.
+Hartmann6
+Ackley8
+Michalewicz10
+Levy16
+n0
+S
+Var(c
+EI
+MC
+m )
+Var(c
+EI
+ortho
+m
+)
+Var(c
+EI
+MC
+m )
+Var(c
+EI
+ortho
+m
+)
+Var(c
+EI
+MC
+m )
+Var(c
+EI
+ortho
+m
+)
+Var(c
+EI
+MC
+m )
+Var(c
+EI
+ortho
+m
+)
+8
+5.91e-08
+1.91e-07
+1.28e-08
+7.19e-09
+1.15e-07
+4.56e-08
+0.00129
+0.000758
+32
+8.62e-09
+7.3e-10
+3.71e-09
+4e-10
+2.61e-08
+1.76e-09
+0.000301
+2.85e-05
+Table 9: Ranking stability, RBF kernel. Lower probe variance and flip rate indicate more stable
+acquisition estimates; higher ranking correlation and top-1 agreement indicate more stable candidate
+rankings across probes.
+Benchmark
+Method
+Probe variance
+Top1 agr.
+Flip rate
+Regret
+Hartmann6
+qLogEI
+5.37311.64
+0.9440.15
+0.0850.10
+0.1260.00
+OrthoBO (ours)
+0.0310.04
+0.9860.08
+0.0310.04
+0.1250.00
+Ackley8
+qLogEI
+10.05131.34
+0.9860.06
+0.0520.10
+12.4762.06
+OrthoBO (ours)
+0.0130.04
+0.9930.04
+0.0190.04
+12.5814.03
+Michalewicz10
+qLogEI
+55.138100.54
+0.9310.15
+0.0850.09
+4.5170.20
+OrthoBO (ours)
+0.0020.01
+1.0000.00
+0.0310.04
+4.0040.52
+Levy16
+qLogEI
+82.913154.71
+0.8890.18
+0.2010.10
+3.1090.57
+OrthoBO (ours)
+0.0340.17
+1.0000.00
+0.0490.04
+2.8190.57
+G.1.3
+TPE-based surrogate
+In Table 10, we show the variance reduction from ORTHOBO for a TPE surrogate, using a MC budget
+of S = 32. Our observations are in line with the GP surrogate: ORTHOBO can substantially reduce
+the variance.
+Table 10: Variance reduction by orthogonalization, for a TPE surrogate.
+Hartmann6
+Ackley8
+Michalewicz10
+Levy16
+Var(EITPE)
+Var(c
+EITPE,orth)
+Var(EITPE)
+Var(c
+EITPE,orth)
+Var(EITPE)
+Var(c
+EITPE,orth)
+Var(EITPE)
+Var(c
+EITPE,orth)
+11.22216.405
+1.2142.620
+13.18218.233
+1.2842.601
+21.71225.982
+2.1973.358
+20.94426.200
+1.3992.259
+G.2
+Misspecified surrogate families
+We first study robustness to surrogate misspecification. In practical BO, the surrogate family is
+only an approximation to the unknown objective, and kernel hyperparameters are often estimated
+from limited data. As a result, the posterior quantities used inside MC acquisition estimates can
+be noisy or biased, which may destabilize candidate rankings. This experiment evaluates whether
+the variance reduction induced by ORTHOBO improves BO decisions under such challenging, but
+realistic, surrogate conditions.
+We consider four standard synthetic regression problems with known global optima and varying
+dimensionality: Hartmann6, Ackley8, Michalewicz10, and Levy16 [e.g., 2, 10, 15, 43]. Details of
+the benchmark functions and surrogate choices are provided in Table 5. We compare methods using
+best-so-far regret.
+Mild misspecification: isotropic RBF kernel. We first use an isotropic RBF kernel, a common
+smooth GP prior. For anisotropic and multimodal objectives it is mildly misspecified because it uses
+a single lengthscale across all dimensions. (The dimension of the benchmark functions varies from 6
+to 16.) The results are in Fig. 7.
+25
+75
+125
+175
+Iteration
+0.0
+0.5
+1.0
+1.5
+Best-so-far regret
+Hartmann6
+OrthoBO (ours)
+qLogEI
+TuRBO
+UCB
+25
+75
+125
+175
+Iteration
+14
+18
+Best-so-far regret
+Ackley8
+OrthoBO (ours)
+qLogEI
+TuRBO
+UCB
+25
+75
+125
+175
+Iteration
+5
+7
+Best-so-far regret
+Michalewicz10
+OrthoBO (ours)
+qLogEI
+TuRBO
+UCB
+25
+75
+125
+175
+Iteration
+20
+60
+Best-so-far regret
+Levy16
+OrthoBO (ours)
+qLogEI
+TuRBO
+UCB
+Figure 7: Best-so-far regret as a function of iterations on four widely used regression problems,
+using a mildly misspecified isotropic RBF kernel. Our proposed ORTHOBO is competitive, and in
+higher-dimensional functions (Michalewicz10, Levy16) outperforms the baselines.
+Results. Under mild surrogate misspecification, our proposed ORTHOBO remains competitive across
+all benchmarks. On Hartmann6 and Ackley8, it improves over qLogEI and reaches the lowest regret.
+On the higher-dimensional Michalewicz10 and Levy16 functions, ORTHOBO achieves the lowest
+regret and improves substantially earlier than the baselines. For example, ORTHOBO reaches a regret
+of ∼5 after 5 iterations, whereas the baseline methods require at least 50 to 60 additional iterations.
+Together, these results indicate that variance reduction at the acquisition-estimation level improves
+the reliability of BO decisions under realistic surrogate mismatch, with the largest gains appearing in
+higher-dimensional settings where candidate rankings are more sensitive to estimation noise.
+Strong misspecification: linear kernel. We next consider a more challenging setting by using a
+linear kernel. This surrogate is unable to represent the nonlinear and multimodal structure of the
+benchmark functions, which amplifies the effect of posterior and acquisition-estimation errors. We
+therefore test whether stabilizing the acquisition estimate can still improve BO decisions when the
+surrogate family is substantially imperfect. The results are shown in Fig. 8.
+25
+75
+125
+175
+Iteration
+1.00
+1.25
+1.50
+1.75
+2.00
+Best-so-far regret
+Hartmann6
+OrthoBO (ours)
+qLogEI
+UCB
+25
+75
+125
+175
+Iteration
+18.5
+19.0
+19.5
+20.0
+Best-so-far regret
+Ackley8
+OrthoBO (ours)
+qLogEI
+UCB
+25
+75
+125
+175
+Iteration
+6.0
+6.5
+7.0
+7.5
+Best-so-far regret
+Michalewicz10
+OrthoBO (ours)
+qLogEI
+UCB
+25
+75
+125
+175
+Iteration
+60
+80
+100
+Best-so-far regret
+Levy16
+OrthoBO (ours)
+qLogEI
+UCB
+Figure 8: Best-so-far regret as a function of iterations on four widely used regression problems, using
+a strongly misspecified linear kernel. Our proposed ORTHOBO substantially outperforms other
+methods. The performance difference increases as the problem dimensionality grows. Notably, on
+Hartmann6, qLogEI takes five times more iterations than ORTHOBO to reach the same level of regret.
+Results. We observe: (i) On all regression problems, our ORTHOBO outperforms the baselines. (ii)
+on Hartmann6, ORTHOBO reaches the same regret as qLogEI in half the time. (iii) On Levy16,
+ORTHOBO is the only method to substantially improve over time. Together, the results demonstrate
+the orthogonalization can successfully overcome strong misspecifications of the surrogate family.
+With the strongly misspecified linear kernel, ORTHOBO outperforms the baselines on all four
+functions. On Hartmann6, it reaches the same regret level as qLogEI with substantially fewer
+evaluations. On Levy16, ORTHOBO is the only method that shows a clear improvement over
+the optimization horizon. Together, these results indicate that acquisition-estimation noise can be
+a significant failure mode when the surrogate is imperfect, and that orthogonalization helps by
+stabilizing the acquisition values used to rank candidates. Thus, ORTHOBO does not require a
+perfectly specified surrogate to improve BO performance; rather, it provides a variance-reduction
+mechanism that is especially useful when MC acquisition estimates become unreliable.
+G.3
+Weakly fitted hyperparameters
+We next study a data-scarce regime in which the surrogate family is expressive, but its hyperparameters
+are weakly identified. This situation is common in expensive HPO problems: only a small initial
+design is available, yet the GP must already estimate lengthscales, output scale, and noise parameters
+that determine the posterior and hence the acquisition values. Uncertainty or instability in these
+hyperparameters can therefore propagate to the acquisition function and distort candidate rankings.
+25
+75
+125
+175
+Iteration
+60
+100
+Best-so-far regret
+Levy16
+OrthoBO (ours)
+qLogEI
+Sobol
+TuRBO
+UCB
+Figure 9: Best-so-far regret on Levy16 with a
+Matérn-5/2 ARD kernel and only n0 = 4 ini-
+tial Sobol points. ORTHOBO remains among the
+strongest methods and improves steadily despite
+weakly identified surrogate hyperparameters.
+To isolate this effect, we use a GP with a Matérn-
+5/2 kernel and ARD. Unlike the isotropic ker-
+nels studied above, ARD assigns a separate
+lengthscale to each input dimension. This makes
+the surrogate more flexible, but also harder to fit
+when the initial design is small. We therefore
+initialize BO with only n0 = 4 Sobol points
+and evaluate performance on Levy16, which is
+particularly challenging in this setting because
+the surrogate must estimate 16 lengthscales and
+a noise parameter from very limited data. The
+results are shown in Fig. 9.
+Results. All methods initially exhibit high re-
+gret, reflecting the difficulty of fitting an ARD
+surrogate from only four initial observations.
+Nevertheless, ORTHOBO decreases regret steadily over the optimization horizon and reaches one
+of the lowest final regrets among the compared methods. These results show that orthogonalization
+remains useful even when the kernel class is flexible but its hyperparameters are poorly estimated. The
+gains are consistent with the proposed mechanism: reducing sensitivity of the acquisition estimate to
+surrogate-posterior perturbations yields more reliable candidate rankings in early, data-limited BO.
+G.4
+Ensembling
+In the main experiments, we used M = 1 to avoid confounding the effect of orthogonalization with
+mere performance gains from a larger ensemble. We now use an ensemble of M = 3 models, each
+with a different kernel: linear, RBF, and Matérn-5/2. We increased the number of iterations by 25 %
+to account for additional fitting iterations for the models. We compute ℓm,t from the GP surrogate
+posteriors, set τ = 1, and use δ = 0.001 as a minimum weight floor.
+The results for ensembling are in Figure 10.
+Further, we compute (i) the variance reduction, (ii) ranking stability metrics, and (iii) weighting
+metrics. These additional measures are computed on a Sobol probe. We present the results in Table 11
+and Figure 11.
+50
+150
+250
+Iteration
+20
+60
+Best-so-far regret
+Levy16
+OrthoBO (ours) [Ens.]
+qLogEI [Ens.]
+UCB [Ens.]
+Figure 10: Results for ensembling.
+Table 11: Variance reduction for ensembling on Levy16.
+Method
+Probe variance
+Top1 agr.
+Flip rate
+Regret
+Entropy
+Weight 1
+Weight 2
+Weight 3
+UCB [Ens.]
+39.25548.64
+1.0000.00
+0.0260.04
+18.2672.40
+0.1630.18
+0.0080.06
+0.0620.14
+0.9330.14
+qLogEI [Ens.]
+390.5981033.83
+0.8750.20
+0.1670.10
+2.9261.66
+0.1450.16
+0.0140.07
+0.0730.21
+0.9170.21
+ORTHOBO (Ours) [Ens.]
+0.0390.12
+0.9580.14
+0.0810.08
+0.9410.54
+0.1690.23
+0.0080.06
+0.0690.14
+0.9270.14
+Results. We observe: (1) ORTHOBO achieves the lowest regret. (iii) ORTHOBO has substantially
+lower Sobol probing variance. (iii) Weight are highest for the Matérn-5/2 kernel ("Weight 3")
+demonstrating that all methods primarily focus the "most correct" kernel. We plot the evolution of the
+entropy over time in Figure 11, which shows that the weight aggregation scheme balances exploration
+and exploitation.
+0
+100
+200
+Iteration
+−0.2
+0.0
+0.2
+0.4
+0.6
+0.8
+Weight entropy
+Levy16
+OrthoBO (ours) [Ens.]
+qLogEI [Ens.]
+UCB [Ens.]
+Figure 11: Evolution of the entropy across ensembling weights. For all methods, the used tempered
+exponentially weighted aggregation scheme is effective in balancing exploration and exploitation at
+the ensemble level.
+G.5
+Monte Carlo sampling ablation experiment
+We here study the effect of the MC budget used to estimate the acquisition function. Here, finite-
+sample acquisition noise can change candidate rankings, with the effect becoming more pronounced
+for small sampling budgets S [cf. 2]. This setting is practically relevant because acquisition functions
+are evaluated many times during optimization, so increasing S can be computationally expensive.
+We therefore test whether the variance reduction of ORTHOBO improves BO performance when
+acquisition estimates must be computed from limited MC samples.
+We use an isotropic RBF kernel, thereby combining moderate surrogate mismatch with reduced
+acquisition-estimation budgets. We vary S ∈{64, 128, 256, 512}. The main results for Ackley8 and
+Michalewicz10 are shown in Fig. 3; additional results are provided in Fig. 12.
+50
+150
+0.5
+1.0
+1.5
+2.0
+Hartmann6
+Best-so-far regret
+MC = 64
+50
+150
+0.0
+0.5
+1.0
+1.5
+2.0
+MC = 128
+50
+150
+0.5
+1.0
+1.5
+2.0
+MC = 256
+50
+150
+0.5
+1.0
+1.5
+2.0
+MC = 512
+50
+150
+14
+18
+Ackley8
+Best-so-far regret
+50
+150
+12
+16
+20
+50
+150
+14
+18
+0
+100
+200
+16
+20
+50
+150
+4
+6
+Michalewicz10
+Best-so-far regret
+50
+150
+4
+6
+0
+100
+200
+5
+7
+50
+150
+4
+6
+0
+100
+200
+Iteration
+25
+75
+Levy16
+Best-so-far regret
+50
+150
+Iteration
+25
+75
+0
+100
+200
+Iteration
+25
+75
+0
+100
+200
+Iteration
+25
+75
+Sobol
+UCB
+TuRBO
+qLogEI
+OrthoBO (ours)
+Figure 12: Different mc samples
+Results Reducing the MC budget makes the performance of acquisition-based methods more sensitive
+to estimation noise. Across the tested budgets, ORTHOBO remains competitive on Ackley8 and
+consistently achieves low regret on Michalewicz10. The effect of orthogonalization are most visible
+0
+10
+20
+Iteration
+0.2
+0.3
+Best-so-far value
+Cifar10
+UCB
+TuRBO
+qLogEI
+OrthoBO (ours)
+Figure 13: Results for HPO optimization for training on CIFAR10 from scratch.
+at earlier iterations, where MC estimation noise has a larger effect on the acquisition values and
+hence on the induced candidate rankings. Overall, these results support the central mechanism of
+ORTHOBO: orthogonalization improves the reliability of acquisition estimates when MC budgets are
+limited, leading to more stable BO decisions and thus lower regret.
+G.6
+CIFAR10
+We again utilize the outlier experiment by Ament et al. [3]. However, this time we utilize the more
+challenging CIFAR10 dataset on a modified CNN architecture. To model corrupted evaluations,
+we prematurely stop training with probability 20 % after observing between 100 and 1000 training
+samples. We optimize the same parameters as Ament et al. [3]. To not implicitly mitigate the
+corrupted evaluations, we only use n0 = 2 initial points. The results are in Figure 13. ORTHOBO
+achieves the best performance, despite 20% corruptions during training.

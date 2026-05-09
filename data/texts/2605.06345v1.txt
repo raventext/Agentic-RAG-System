@@ -1,0 +1,1019 @@
+MORE THAN CAN BE SAID: A BENCHMARK AND FRAMEWORK
+FOR PRE-QUESTION SCIENTIFIC IDEATION
+Jie Yu
+Shanghai Key Laboratory of Multidimensional Information Processing
+East China Normal University
+Shanghai, 200241
+71285904004@stu.ecnu.edu.cn
+Song Qiu
+Shanghai Key Laboratory of Multidimensional Information Processing
+East China Normal University
+Shanghai, 200241
+sqiu@ee.ecnu.edu.cn
+May 8, 2026
+ABSTRACT
+AI research agents have shown strong potential in automating literature search and manuscript
+refinement, yet most assume a clear and actionable initial input, operating only after a research
+question has been made explicit. In contrast, human research often begins with tacit friction, a
+sense of misalignment before a question can be formed. We introduce InciteResearch, a multi-
+agent framework designed to make a researcher’s implicit understanding explicit, inspectable, and
+actionable. InciteResearch decomposes the logical chain of Socratic questioning and distributes
+it across the entire pipeline that: (1) Elicits a structured five-dimensional researcher profile state
+anchored by specific friction points from vague, even domain-unrelated inputs; (2) Violates hidden
+assumptions by maximizing the feasibility-novelty product with enforcing a 7-stage causal derivation
+trace; and (3) check whether the proposed method is a Necessary consequence of the reframed insight.
+We further introduce TF-Bench, the first benchmark for tacit-to-explicit research assistance that
+distinguishes domain-related from domain-unrelated inspirations across four scientific modes. On
+TF-Bench, InciteResearch achieves leapfrogging gains over a prompt-based baseline (novelty/impact
+from 3.671/3.806 to 4.250/4.397), shifting generated proposals from recombination to architectural
+insight. Our work demonstrates that AI can serve as an extension of thinking itself, rather than merely
+automating downstream execution. Code is available at 
+InciteResearch.git.
+Introduction
+The feasibility of AI-driven research automation has long been a subject of active debate (Field et al., 2026; Reddy
+and Shojaee, 2025). As large language models (LLMs) demonstrate remarkable potential in logical reasoning and
+hypothesis construction (Alkan et al., 2025; Li et al., 2025a; Schmidgall et al., 2025), the field has witnessed a
+pronounced divergence of views regarding their fundamental nature. Whether these models possess genuine capacity
+for discovery (Pandey et al., 2026; Beel et al., 2025) or engage in sophisticated pattern matching within the boundaries
+of existing knowledge remains an open question (Gupta and Pruthi, 2025; Georgiou, 2025; Field et al., 2026). A
+more productive framing may be to move beyond evaluating large language models in isolation and instead consider
+them as extensions of human researchers’ thinking. Human research is driven by affect, intuition, frustration, and
+moments of insight (Chiriatti et al., 2025; Kapusta, 2025), whereas large language models are data-driven (Alkan et al.,
+2025; Li et al., 2025b; Pandey et al., 2026), with strengths in systematic pattern induction and structured reasoning.
+arXiv:2605.06345v1 [cs.AI] 7 May 2026
+
+A PREPRINT - MAY 8, 2026
+Elicit & Direction
+Human ⇆ AI
+Reframe & Execution
+AI (as Human Extension)
+Reflect & Correction
+AI ⇆ Human
+Vague
+Inspiration
+Human
+Human keeps looping:
+AI extension → reflect →refine →iterate
+Research
+Proposal
+Figure 1: In this paradigm of scientific exploration, the process begins with casual human conversation, in which humans
+steer the direction while AI broadens the space of thought through assumption breaking as an extension of human
+cognition. Humans then correct the direction through reflection, while AI provides additional directional suggestions.
+Under this collaborative condition, the process iterates until the vague human inspiration is made explicit as a research
+proposal.
+The intersection of this determinacy and indeterminacy (Chiriatti et al., 2025; Pandey et al., 2026), the convergence
+of data-driven precision with affect-driven openness, inevitably gives rise to a new form of cognitive collaboration
+(Kapusta, 2025) whose potential far exceeds what any purely automation-centric narrative can accommodate.
+In scientific practice, progress often originates in anomaly, frustration, or a mismatch between intuition and existing
+abstraction, not in a clearly stated problem, but in a tacit sense that something is off (Reddy and Shojaee, 2025; Kuhn,
+1962). Recent research agents have accelerated literature search (Nogueira et al., 2026), synthesis (Schmidgall et al.,
+2025), and drafting (Li et al., 2025b), but they typically begin operating after the research question has already been
+made explicit (Wu et al., 2026; Baek et al., 2025; Zheng et al., 2025), assuming that the user can already articulate the
+task, decompose the objective and supply the relevant constraints in a directly actionable form. The model is then cast
+as an executor, a search assistant, or a summarizer over an already legible problem space, rather than as an amplifier of
+human intelligence capable of participating in the cognitive origin of research.
+If the user input is a tacit sense of dissatisfaction rather than an explicit specification, we must first elicit and make
+explicit the latent distinctions in the intuition of the user (Chiriatti et al., 2025; Schön, 1983). If the goal is genuine
+originality rather than recombination within the existing framework, the problem must be reframed by identifying
+and violating assumptions (Alkan et al., 2025; Pandey et al., 2026; Kuhn, 1962). It should be noted that violating
+assumptions here does not require AI to genuinely break assumptions on its own; rather, it designates violation of
+assumptions as a necessary choice in the process of assisting human research thinking, as is shown in Figure 1. If the
+output is to be a research method rather than a plausible-sounding suggestion, each method component must be verified
+as entailed by the insight rather than appended post hoc (Schmidgall et al., 2025; Schön, 1983). Accordingly, these
+requirements give rise to three corresponding operators: E for eliciting and making explicit latent intuitions, V for
+assumption violation and problem reframing, and N for necessity checking.
+We present an agent driven by a cognitive state-machine based on Assumption-Breaking Hypothesis Generation (ABHG)
+named InciteResearch, which treats the model not as a source of ideas ex nihilo but as an instrument for making a
+researcher’s implicit understanding explicit, inspectable, and ultimately actionable. The output proposal is therefore not
+an alien invention imposed from outside, but a clarified form of what the researcher may already know tacitly. The
+deeper conviction of this project is that the advancement of AI capability will not take the form of AI replacing intuition,
+but of AI extending intuition, endowing human intuition with leverage, articulation, and reach.
+We construct TF-Bench, the one of the first benchmark designed specifically for tacit-to-explicit research assistance.
+Existing datasets cannot be directly applied to this setting because they typically presuppose that the input is already an
+actionable research question rather than an inchoate intuition fragment (Wu et al., 2026; Schmidgall et al., 2025; Beel
+et al., 2025). TF-Bench examines the structured capacity of research assistants before a problem has taken shape by
+distinguishing two ambiguity types, domain-related and domain-unrelated, and conducts evaluation across four scientific
+modes, prediction, discovery, attribution, and causality, ensuring coverage of the core cognitive tasks of empirical
+science rather than merely achieving surface-level domain diversity. We systematically evaluate InciteResearch on
+TF-Bench, reporting overall performance, qualitative analysis and ablation studies. The results show substantial gains in
+novelty and impact over direct prompting baselines, from 3.671 / 3.806 to 4.250 / 4.397 over direct prompting baselines,
+and the ablation studies further reveal the functional indispensability of each individual operator.
+Related Works
+An increasing number of studies frame scientific idea generation as an end-to-end automated problem. The AI Scientist
+(Lu et al., 2024) represents one of the most complete attempts to date to realize a fully closed-loop path from task
+A PREPRINT - MAY 8, 2026
+Semantic Alignment
+Maximum amount
+of user information
+What if we were to
+apply EVN
+methodology to
+explore the
+evolution of the
+system itself?
+User Expression
+Alignment
+extract
+structure
+Multi-round Socratic Dialogue
+User Expression
+I suddenly thought
+that linguistic limits
+and multimodal
+complexity
+eventually distill
+into simpler forms.
+Until clear friction
+point is uncovered
+Triage
+Deepening
+Researcher Profile
+Friction
+Points
+Research
+Motivation
+Research
+Taste
+Constraints
+Refined
+Topic
+Socratic Elicitation
+E
+Assumption Breaking & Reframing
+Assumptions
+⋅ Problem Exogeneity
+⋅ Tacit Knowledge
+   Captureability
+⋅ Single-Level
+   Execution
+⋅ External Necessity
+   Arbiter
+⋅ ...
+Considering
+Feasibility
+Considering
+Novelty
+Reframing
+Broken
+Assumptions
+Logical
+Rationale
+Reframed
+Problem
+Candidate Directions
+...
+...
+Topic
+Anchor
+Derivation Trace
+Problem
+Directions 1, 2, ...
+select
+Broken
+Assumption
+Insight
+Claim
+Predictions
+Constraints
+Method
+V
+Validity & Problem Reframing
+A single agent cannot externalize its own
+operator priors - the scanning lens
+cannot scan itself. Two agents in a
+reflective loop is the minimum
+architecture that makes operator-level
+tacit knowledge a first-class research
+object, not an engineering footnote.
+Necessity
+Sufficiency
+The mirror loop generates finite, open-
+ended levels - each level's unresolvable
+failure pattern becomes the next level's
+research input. Termination is determined
+by the absence of structured failures, not
+by a fixed recursion limit. Threshold for
+"structured" remains unspecified.
+Counterexample
+Constitutional AI and Self-Refine
+demonstrate that one LLM can critique
+and revise its own outputs across multiple
+turns, including reasoning about its own
+reasoning strategy. If that constitutes
+"operator rewriting," the dual-agent
+architecture adds complexity without
+necessity.
+N
+Necessity Checking
+Vague Inspiration Inputs
+Outputs
+Research Proposal
+Problem
+EVN operators fail when EVN itself
+is the research target.
+Broken Assumption
+EVN operates not only on external
+tasks but also on self-referential ones.
+Insight
+Two vocabulary-isolated agents form a
+self-sustaining methodological engine.
+Claim
+Given structured failure patterns, self-
+referential EVN produces operator
+rewriting, not infinite regression.
+Relevant Code
+Repository
+6
+Core Algorithm
+Method Overview
+Necessity Test
+Figure 2: Overview of InciteResearch. InciteResearch transforms vague inspiration into a structured research proposal
+through the EVN framework. Italicized text denotes a self-referential research proposal generated by InciteResearch.
+In the current implementation, N mainly acts as a post hoc structural verifier rather than a fully revision-integrated
+controller, kept lightweight intentionally to validate the core effectiveness of EVN without requiring continuous human
+intervention at intermediate nodes.
+specification to paper output without human intervention. SciMON (Wang et al., 2024) takes user-provided descriptions
+of concrete problems, research goals and experimental constraints as input, retrieves inspirations from existing papers,
+and generates novel research directions. Scideator (Radensky et al., 2024) takes a set of related scientific papers as
+input, extracts key dimensions such as purpose, mechanism and evaluation, allows users to synthesize new ideas by
+recombining dimensions, and automates novelty evaluation. ResearchAgent (Baek et al., 2025) takes a core paper as
+input, augments it with related literature and a knowledge base, and then deploys multiple reviewing agents for iterative
+peer-review-style refinement. Agent Laboratory (Schmidgall et al., 2025) starts from an explicit research idea and
+then sequentially completes literature review, experimental design and paper writing. Yet they all assume a clear and
+actionable initial input, and on this basis improve idea-generation strategies that are highly dependent on that premise.
+On this basis, a number of works have tried to improve the research ideation process from different angles. Some focus
+on novelty boosting (Alkan et al., 2025), such as SciMON, which introduces multiple retrievals and iterative comparison
+to improve the distinctiveness of ideas (Wang et al., 2024). Some focus on structured reasoning (Alkan et al., 2025),
+such as MotivGraph-SoIQ (Lei et al., 2025), which combines a motivational knowledge graph with question-driven
+Socratic inquiry to strengthen ideation quality. Other work introduces self-critique and structured scientific hypothesis
+revision (Liu et al., 2026). There are also works from the tool and evaluation side, such as DeepResearch-9K (Wu et al.,
+2026), which points out the two bottlenecks faced by current deep-research agents, namely the lack of datasets and the
+lack of trainable frameworks, and provides the corresponding benchmark and training tools. However, these methods
+still optimize within a given problem frame rather than making the frame itself explicit and breaking it.
+Therefore, we argue that the legitimacy of a research problem does not come from its correspondence to gaps in the
+existing literature, but rather from reflection on the conceptual frame that constitutes the problem, namely Assumption-
+Breaking Hypothesis Generation (ABHG). Our approach borrows from the Socratic questioning chain, which moves
+from definition, presupposition, evidence and perspective, and refutation/elenchus, to aporia, then refutation, redefinition,
+and meta-questioning (Lu and Hu, 2025; Ho et al., 2023; L’Arrivee, 2020). We then distribute this chain across a
+multi-stage agent pipeline, named cognitive state-machine.
+Methodology
+As is shown in Figure 2, we adopt a cognitive state-machine driven framework to map vague initial research feelings
+into structured and logically self-consistent research plans. It is formalized into three core stages, namely Socratic
+Elicitation, Validity and Problem Reframing, and Necessity Checking, i.e., the EVN framework, which decomposes the
+A PREPRINT - MAY 8, 2026
+traditional Socratic questioning chain and distributes it across the entire multi-agent pipeline, while also supporting
+domain-unrelated inputs, including vague problems or irrelevant statements.
+In the ideal sense, a system that truly treats language models as a cognitive extension of human researchers should
+manifest as an open-ended interactive process, in which the human provides vague inspiration, the system externalizes
+it and reflects it back through assumption violation, then the system proceeds through necessity checking, and the
+human further intervenes on this basis, repeating this process in a loop and continuously expanding the reach of human
+intuition while satisfying the EVN structure. The current implementation constitutes the first step toward this direction.
+In the E stage, InciteResearch completes the externalization of inspiration through two rounds of structured interaction;
+then the V and N operators are executed sequentially and the result is directly presented as an actionable research
+proposal. This design is intentionally kept lightweight, with the aim of validating the core effectiveness of EVN without
+requiring continuous human intervention at intermediate nodes.
+3.1
+Socratic Elicitation (E)
+This module aims to externalize the user’s tacit intuition into a structured research profile through multiple rounds of
+human-machine dialogue. Specifically, the state machine selects the next prompting question according to the currently
+collected information and user feedback until a clear friction point is identified.
+First, we perform semantic alignment on an arbitrary initial input t0 ∈Itacit, extract the potential domain signal and
+conflict signal contained in it, and generate the first anchoring question q1 to locate the most central domain friction
+point in the user’s intuition. For example, given a user expression such as "What if we were to apply EVN methodology
+to explore the evolution of the system itself?", the semantic alignment extracts the structural intent by strictly following
+the prompt constraint "Ask concrete, friction-inducing questions. Do not ask abstract questions like ’what is your
+insight?’. The question must be concrete enough to immediately recall a specific paper or class of methods." The goal
+of generating q1 is to maximize the amount of user information obtained in the subsequent dialogue, that is, to select
+the question that maximally reduces the expected uncertainty of the researcher profile.
+During the multi-round Socratic dialogue, InciteResearch processes subsequent inputs using a dynamic triage and
+deepening strategy. When encountering a user expression like "I suddenly thought that linguistic limits and multimodal
+complexity eventually distill into simpler forms", InciteResearch performs triage to evaluate the information density.
+If the response contains concrete friction points, the system executes deepening to probe the underlying causes; if
+the response is vague, InciteResearch switches the analytical angle; if the response implies resource restrictions,
+InciteResearch elicits formal boundary constraints.
+Regarding the researcher profile, we represent the cognitive state in the research process as the vector Pprofile =
+(f, m, c, r, t), corresponding to five core dimensions: Friction Points f, research motivation m, constraints c, research
+taste r, and refined topic t. The data flow operates with the friction points serving as the central gravitational node. The
+friction points point leftward to research motivation and research taste to answer why the problem matters and what
+preference guides the solution. Simultaneously, the friction points point rightward to the refined topic and constraints to
+define the actionable objective and its boundary conditions. Furthermore, research taste guides the research motivation,
+while the refined topic is bounded by the constraints. This structured researcher profile replaces loose dialogue text and
+transforms Itacit into a structured semantic prior Pprofile that can be parsed by subsequent operators.
+Based on Pprofile and the related literature abstracts, we extract core concepts from the keyword set of the refined topic
+t and construct the topic anchor set C = {c1, . . . , cm}. C is imposed as a hard constraint on the generation process
+of candidate directions Dcand, preventing subsequent reasoning from drifting across domains by ensuring that any
+generated direction failing to encompass these anchors is filtered out.
+3.2
+Validity and Problem Reframing (V)
+Existing research often falls into the trap of making incremental improvements on the wrong problem. This module
+aims to reflect on and reconstruct the premises of the current research direction, breaking the presuppositions of the
+problem statement while opening up the solution space. Combined with the given Dcand, it outputs a specified number
+of candidate research directions d∗through the hidden assumptions mined below.
+Using the pattern of the current state Pprofile, InciteResearch extracts the dependent hidden assumption set from the
+selected research direction:
+Ahidden = {ah
+1, ah
+2, . . . , ah
+n}.
+Subsequently, for each candidate assumption ah
+i , InciteResearch measures it from two independent dimensions,
+feasibility ϕ(ah
+i ) and novelty ν(ah
+i ). Feasibility evaluates whether this assumption corresponds to an artificial constraint
+that has an engineeringly feasible bypass path. Novelty evaluates whether breaking this assumption can open a solution
+A PREPRINT - MAY 8, 2026
+space that has not yet been explored in the existing literature. For instance, when evaluating assumptions such as "Tacit
+Knowledge Captureability, Single-Level Execution, External Necessity Arbiter", InciteResearch identifies the one
+whose absence creates the maximum paradigm shift rather than a delta improvement.
+The condition for the final selected assumptions as the specified number of assumptions to be broken is:
+a∗= arg
+max
+ah
+i ∈Ahidden ϕ(ah
+i ) · ν(ah
+i )
+Finally, InciteResearch formally outputs the triplet:
+⟨a∗, R, d†⟩
+where R (Breaking Rationale) is the logical rationale for breaking a∗, and d† (Problem Reframing) is the reconstructed
+formulation of the original research direction d∗based on R. d† is not an incremental rewriting of d∗, but a re-anchoring
+of the problem under a new coordinate system defined by the absence of a∗.
+Finally, to ensure that the proposed method is a logical necessity rather than one of many feasible options, InciteResearch
+uses the problem reframing result and the user motivation to construct a causal derivation trace. This derivation trace
+acts as an anti-inversion mechanism by forcing the narrative through a strict causal sequence. It ensures that the problem
+necessitates breaking the broken assumption, which yields a specific Insight; this Insight generates a falsifiable claim
+that implies concrete predictions; these predictions dictate minimal method constraints, which inevitably produce the
+final method. This narrative chain is forcibly constrained into seven stages:
+⟨Problem, Broken Assumption, Insight, Claim, Predictions, Constraints, Method⟩
+3.3
+Necessity Checking (N)
+The final module acts as a strict reviewer and reflector, performing comprehensive necessity checks on the generated
+method and derivation trace to ensure that the research plan is highly self-consistent and falsifiable, and by injecting
+this report as forced context into the final proposal assembly node, it forces the final output to correct logical loopholes.
+Specifically, necessity check asks whether there exists a simpler alternative m′ than the current method ˆm, questioning
+if the uniqueness of the method is merely a product of over-engineering rather than an inevitable derivation from the
+insight. Sufficiency check asks whether the current component set of ˆm is sufficient to support its core claim, acting as
+an anti-inversion check to identify floating components constructed post-hoc simply to justify the hypothesis without
+being required by any prediction. Counterexample check actively searches for the failure modes of ˆm, constructing
+extreme input scenarios that can violate its core assumptions or invalidate its verification scheme, thereby ensuring the
+contribution cannot be dissolved by stacking scaled-up simple baselines.
+Experimental Setup
+4.1
+TF-Bench
+We construct TF-Bench because no existing public dataset directly matches the tacit-to-explicit research assistance
+setting. To improve benchmark coverage and authenticity, we first used Grok 4.3 to generate examples, which human
+annotators then refined through multiple interactive rounds per example. We partition the examples into two ambiguity
+types: domain-related and domain-unrelated. The former comprises prompts that already carry scientific domain
+signals yet remain under-specified; the latter comprises prompts that carry only weak metaphorical or conceptual cues.
+Although a scientific domain is provided by TF-Bench for evaluation uniformity, the exploratory task itself remains
+deliberately vague.
+To ensure that TF-Bench covers the core empirical tasks of empirical science, we draw on classical dimensions of
+scientific methodology (Voit, 2019; Witte and Zenker, 2017) and recent surveys of AI-driven scientific discovery (Zhou
+et al., 2025), selecting four orthogonal modes, prediction, discovery, attribution, and causality, instantiated respectively
+as multimodal medical prognosis prediction, computational genomics analysis of single-cell RNA-seq, attribution of
+extreme weather events in climate models and causal brain-network modeling in neuroscience. Among them, each
+domain consists of 10 pieces of domain-related inspiration and 3 pieces of domain-unrelated inspiration. Each piece of
+inspiration is divided into 2 paragraphs.
+Table 1 presents two representative examples from TF-Bench, illustrating the contrast between the two ambiguity types.
+A PREPRINT - MAY 8, 2026
+Table 1: Two representative examples from TF-Bench. Each example consists of two paragraphs: the first articulates a
+perceived failure or friction and the second gestures toward a possible reframing. The domain-related example already
+signals a scientific context; the domain-unrelated example supplies only a situational metaphor.
+Domain
+Type
+Input Text
+Multimodal
+Learning for
+Cancer Prognosis
+Analysis
+RELATED
+Paragraph 1. The inductive bias of positional decay in Transformers seems to
+cause problems for large models in the medical field.
+Paragraph 2.
+It suddenly occurred to me that when large models analyze
+pathology, they tend to misjudge benign tissues as skin tumors because they
+are memoryless greedy navigators and lack global context. Perhaps at the 15th
+step, the context is already filled with a bunch of high-magnification images,
+and the low-magnification global impression has been drowned out and diluted.
+Would a hierarchical multi-centric design be better?
+Attribution of
+Extreme Weather
+Events in Climate
+Models
+UNRELATED
+Paragraph 1. The luggage wouldn’t fit at first, but after rearranging it, every-
+thing went in. Actually, the things didn’t change.
+Paragraph 2. Suddenly I feel, if just changing the arrangement changes the
+result, is the problem not with the things themselves? If I handled things in a
+different way, would it be much easier?
+4.2
+Evaluation Indicators
+We adopt three core dimensions widely recognized in the field of creativity evaluation (Si et al., 2025; Saraogi et al.,
+2026), namely novelty, feasibility and impact. The novelty metric follows the formulation of (Schopf and Färber,
+2026), where scores of 3 and 4 represent a transition from "solving problems" to "defining problems." Feasibility
+refers to technical feasibility, namely whether the core technical path can be realized under existing methods, data
+and computational resources, rather than resource limitations or time cost (Saraogi et al., 2026). Impact refers to
+the potential theoretical value and domain-transformative power of an idea from the perspective of depth, namely
+whether it can promote fundamental theoretical breakthroughs, paradigm shifts or long-term scientific progress, rather
+than only short-term citations or breadth of application (Si et al., 2025). The scoring adopts a five-point scale whose
+details are elaborated in the appendix, where Gemini 3.1 Pro and GPT-5.2 score each proposal according to the scoring
+standard from 1 to 5. The final value of each item is the average of the scores from the two reviewers. At the same
+time, two professors from the corresponding domain independently conduct blind review on the proposals whose
+domains correspond and whose order is shuffled under the same evaluation conditions. We also evaluate the statistical
+consistency between the results of Gemini 3.1 Pro and GPT-5.2 and the human evaluation scores, by using Cohen’s
+weighted kappa coefficient with quadratic weights (Li et al., 2023).
+4.3
+Implementation Details
+All experiments use Claude 4.6 Sonnet as the base model across all agent nodes to ensure the consistency of reasoning
+capability. To balance the trade-off between deterministic reasoning and creative generation, we tailor the sampling
+temperature T for different operators in the EVN pipeline. For E, set to T = 0.7. In the stage of V, the temperature is
+set to T = 0.6 . For problem reframing, it is slightly increased to T = 0.65. The derivation trace and necessity check
+operators are strictly configured with lower temperatures, from T = 0.2 to T = 0.3. The final proposal generation
+operates at T = 0.4. For the TF-Bench evaluation phase, the LLM-as-a-judge is executed with a deterministic setting
+of T = 0.0 to guarantee strict reproducibility and stability of the scoring metrics.
+Results
+5.1
+Qualitative Analysis
+We first conduct a qualitative comparison between InciteResearch and prompt-based LLM proposal results under the
+same human vague inspiration. For InciteResearch, the token usage is 4,471 input tokens, 43,547 output tokens, and
+34,322 cache-creation input tokens. For the prompt-based LLM, the token usage is 1,573 input tokens and 4,371 output
+tokens.
+A PREPRINT - MAY 8, 2026
+Table 2: The proposal contents generated by prompt-based LLM and InciteResearch based on the same human
+inspiration. InciteResearch explores architectural evolution via failure-triggered bifurcation. Conversely, the Prompt-
+based LLM performs linguistic compression. Practically, the proposal of InciteResearch builds the logical scaffolding
+that the proposal of the LLMs populate.
+Source
+Content
+Human Inspiration
+Any system designed to navigate from "tacit friction" toward the eventual generation of "research
+outcomes" must, at a minimum, incorporate three core operators: E (Externalization) to articulate the
+subconscious, V (Violation) to break free from inherent assumptions, and N (Necessity) to reinforce
+logical rigor. If we were to apply this specific methodology to explore the evolution of the agent itself,
+what emergent properties or developmental shifts would we observe? This premise asserts that "truth
+cannot be fully captured by language"-yet this statement itself, being a linguistic construct, fails to
+fully capture the very truth it intends to convey. By the same token, humans require Research Agents to
+acquire broader information through generalized multimodality; as the volume of information increases,
+the resulting expression becomes increasingly simple.
+Prompt-based LLM
+Large language models are trained to predict tokens from text corpora, implicitly assuming linguistic
+forms suffice as proxies for meaning and grounding conditions. This confuses discourse form with
+anchoring conditions, yielding fluent descriptions but collapse on demonstration probes for tacit
+knowledge. Multimodal enhancements are additive, overlooking the compression hypothesis that true
+anchoring reduces representational complexity. EVN-Compress breaks these assumptions by imposing
+compression pressure, forcing models to shorten outputs with available anchors. Wittgenstein’s insight
+reveals that shared context enables brevity over reconstruction.
+InciteResearch
+Research Agent systems evolve toward methodological autonomy via EVN operators that formalize
+discovery cognition. Yet self-reference causes operator failure: E cannot externalize its own tacit
+assumptions, V cannot violate its frame, N cannot self-adjudicate necessity. This breaks the tacit
+knowledge captureability assumption. The insight is that patterned failures trigger level bifurcation
+rather than collapse, whose trigger condition is the regularity of the failure mode, using meta-layers
+with isolated vocabularies to form an open tower advancing methodology. Simple prompt layering fails
+to meet core needs: vocabulary isolation and automatic failure detection module triggering constitute
+the operational boundary for level bifurcation.
+Table 3: The overall evaluation results. Grey segments denote domain-related, domain-unrelated, and overall types;
+yellow segments highlight the aggregate performance of InciteResearch and Prompt-based LLM in the Overall type.
+The bold font indicates the highest score for this indicator across all types and models. More comparison models can be
+found in the appendix.
+Type
+Model
+Novelty
+Feasibility
+Impact
+InciteResearch
+4.172 ± 0.054
+3.012 ± 0.091
+4.378 ± 0.057
+Prompt-based LLM
+3.888 ± 0.030
+3.250 ± 0.047
+3.978 ± 0.058
+InciteResearch
+4.328 ± 0.051
+3.172 ± 0.069
+4.416 ± 0.061
+Prompt-based LLM
+3.454 ± 0.033
+3.624 ± 0.034
+3.626 ± 0.048
+InciteResearch
+4.250 ± 0.094
+3.092 ± 0.118
+4.397 ± 0.061
+Prompt-based LLM
+3.671 ± 0.215
+3.437 ± 0.183
+3.806 ± 0.178
+RELATED
+UNRELATED
+OVERALL
+As shown in Table 2, the table presents the refined versions of the proposals from both. The proposal of InciteResearch
+treats EVN as dynamic operators and focuses on the logical collapse of the operators under self-reference, reflecting
+a deeper understanding and redefinition of the concept. The LLM, in contrast, treats EVN as static constraints and
+focuses on the correspondence between language and representation, transforming the paradox into a "Wittgensteinian
+context" problem and remaining at the level of philosophical citation. In terms of concept proposal, InciteResearch
+proposes the concept of "Vocabulary Isolation," pointing out the limits of current Prompt Engineering, while the LLM
+remains at the conventional cognitive level of "Multimodal Enhancement," and stitches the EVN operators together
+with the "compression hypothesis" to propose the concept of "EVN-Compress." It can be clearly seen that the proposal
+of InciteResearch achieves a transition from semantic understanding to architectural design.
+A PREPRINT - MAY 8, 2026
+Table 4: The ablation study results. The w/o E variant removes the human inspiration externalization part. The w/o
+V variant removes the assumption violation part. The w/o N variant removes the necessity checking part. The Full
+condition represents the complete InciteResearch model.
+Variant
+Novelty
+Feasibility
+Impact
+Full
+4.250 ± 0.094
+3.092 ± 0.118
+4.397 ± 0.061
+w/o E
+3.730 ± 0.034
+3.152 ± 0.036
+4.132 ± 0.036
+w/o V
+3.500 ± 0.033
+2.720 ± 0.034
+3.720 ± 0.033
+w/o N
+4.192 ± 0.012
+2.932 ± 0.033
+4.354 ± 0.022
+5.2
+Overall Performance
+The proposals generated by InciteResearch based on both domain-related and domain-unrelated human inspirations
+achieve higher mean scores over five repeated experiments than Prompt-based LLM on the novelty and impact metrics
+in the report of mean and standard deviation over 5 runs. Under the condition of domain-related human inspiration, the
+novelty and impact of InciteResearch reach 4.172 / 4.378, while Prompt-based LLM achieves 3.888 / 3.978. Under the
+condition of domain-unrelated human inspiration, the novelty and impact of InciteResearch are instead higher than
+under the domain-related condition, increasing to 4.328 / 4.416, while Prompt-based LLM drops to 3.454 / 3.626.
+Finally, the overall performance of InciteResearch, with 4.250 / 4.397, far exceeds that of Prompt-based LLM, which is
+3.671 / 3.806. It is worth noting that under the condition of domain-unrelated human inspiration, the novelty and impact
+of Prompt-based LLM decrease while feasibility instead increases, whereas InciteResearch, under higher novelty and
+impact performance, also shows lower feasibility than Prompt-based LLM. We interpret this pattern as consistent with a
+novelty-feasibility trade-off. The scoring standard of feasibility is technical feasibility rather than resource feasibility,
+so lower feasibility corresponds to dependence on immature technologies or unverified assumptions, while higher
+novelty means breaking existing assumptions and introducing unverified mechanisms, thereby lowering feasibility. If
+the model is more inclined toward recombination, feasibility will be higher but novelty will be limited. Under the
+condition of domain-unrelated inspiration, Prompt-based LLM departs from domain constraints and generates solutions
+that are easier to implement, but the cost of doing so is a further decline in novelty and impact, indicating that the
+generation strategy of Prompt-based LLM does not proceed along the boundary of the problem. InciteResearch shows
+the opposite. Under domain-unrelated inspiration, novelty and impact do not decrease but instead increase, indicating
+that it can extract structural insights from cross-domain inspiration rather than being bound by the specific content of
+the inspiration.
+To further assess the consistency between LLM-based evaluation and human expert judgment, we measured inter-rater
+agreement using Cohen’s weighted kappa coefficient with quadratic weights. We adopted weighted kappa (Li et al.,
+2023) rather than the unweighted version because the proposal scores are based on a five-point ordinal scale, where
+disagreements of different distances carry different semantic severity. Human evaluation was conducted on 26 shuffled
+proposals in the domain of Multimodal Learning for Cancer Prognosis Analysis generated by both InciteResearch
+and Prompt-based LLM under the same blind-review condition. LLM-human κ was computed by averaging the four
+pairwise κ values across all LLM-human rater combinations. The agreement between LLM evaluators and human
+experts reaches κ = 0.624, indicating moderate agreement, while the agreement between the human professors reaches
+κ = 0.748, indicating substantial agreement. This indicates that the proposal evaluation based on language models has
+a certain degree of reliability.
+5.3
+Ablation
+To evaluate the role of each EVN operator individually, we construct three ablation variants by selectively disabling
+each component in the full model, and report the mean and standard deviation over 5 runs. When removing the V
+operator, the performance of all three metrics shows the most severe decline, where novelty drops from 4.250 to 3.500,
+impact drops from 4.397 to 3.720, and feasibility drops from 3.092 to 2.720. This suggests that assumption violation is
+not merely a strategy for improving novelty, but an element with structural supporting function. When removing the E
+operator, it causes the second largest decline in novelty, from 4.250 to 3.730, while impact also drops from 4.397 to
+4.132. It is worth noting that feasibility is the only metric that increases in this case, rising from 3.092 to 3.152, which is
+consistent with the pattern observed in the main experiment, suggesting that the E stage is responsible for anchoring the
+generation process on real friction points rather than surface-level reformulations and proving that human inspiration
+structurally important in the current implementation. When removing the N operator, it causes the smallest decline in
+overall performance, which is consistent with the current situation that the necessity checking operator exists only as a
+post hoc structural verifier rather than a fully integrated revision mechanism. Taken together, these results suggest that
+A PREPRINT - MAY 8, 2026
+the EVN is not an arbitrary modularization of Socratic questioning, but an ordered process with causal relations, where
+the output of each operator is a necessary prerequisite for the validity of the next stage.
+Conclusion
+We present InciteResearch, a multi-agent framework that decomposes the logical chain of Socratic questioning and
+distributes it across the entire pipeline, aiming to realize the transformation from tacit thinking to explicit scientific
+ideation. However, the InciteResearch is currently limited to lightweight structured interaction and cannot fully capture
+the richness of long-term human intuition formation, including correction and reflection. We view this direction as
+a step toward a new paradigm of human-AI scientific collaboration, in which language models do not function as
+independent inventors, but as cognitive extensions that enhance the scope, articulation, and depth of human intuition.
+References
+Atilla Kaan Alkan, Shashwat Sourav, Maja Jablonska, Simone Astarita, Rishabh Chakrabarty, Nikhil Garuda, Pranav
+Khetarpal, Maciej Pióro, Dimitrios Tanoglidis, Kartheik G. Iyer, Mugdha S. Polimera, Michael J. Smith, Tirthankar
+Ghosal, Marc Huertas-Company, Sandor Kruk, Kevin Schawinski, and Ioana Ciuc˘a. A survey on hypothesis
+generation for scientific discovery in the era of large language models. arXiv preprint arXiv:2504.05496, 2025.
+Jinheon Baek, Sujay Kumar Jauhar, Silviu Cucerzan, and Sung Ju Hwang. ResearchAgent: Iterative research idea
+generation over scientific literature with large language models. In Proceedings of the Conference of the Association
+for Computational Linguistics: North American Chapter, pages 6709-6738, 2025.
+Joeran Beel, Min-Yen Kan, and Moritz Baumgart. Evaluating sakana’s ai scientist: Bold claims, mixed results, and a
+promising future? SIGIR Forum, 59(1):1-20, 2025.
+Massimo Chiriatti, Marianna Bergamaschi Ganapini, Enrico Panai, Brenda K. Wiederhold, and Giuseppe Riva. System
+0: Transforming artificial intelligence into a cognitive extension. arXiv preprint arXiv:2506.14376, 2025.
+Severin Field, Raymond Douglas, and David Krueger. Ai researchers’ views on automating ai r&d and intelligence
+explosions. arXiv preprint arXiv:2603.03338, 2026.
+Georgios P. Georgiou. Capabilities of GPT-5 across critical domains: Is it the next breakthrough? arXiv preprint
+arXiv:2508.19259, 2025.
+Tarun Gupta and Danish Pruthi. All that glitters is not novel: Plagiarism in AI generated research. In Proceedings of
+ACL, pages 25721-25738, 2025.
+Yueh-Ren Ho, Bao-Yu Chen, and Chien-Ming Li. Thinking more wisely: using the socratic method to develop critical
+thinking skills amongst healthcare students. BMC Medical Education, 23(173):173, 2023.
+Jan Kapusta. SynLang and symbiotic epistemology: A manifesto for conscious Human-AI collaboration. arXiv preprint
+arXiv:2507.21067, 2025.
+Thomas S. Kuhn. The Structure of Scientific Revolutions. University of Chicago Press, 1962.
+E. Anne L’Arrivee. Refute thyself: The socratic method in plato’s republic book 4. The European Legacy, 25(6):
+653-670, 2020.
+Xinping Lei, Tong Zhou, Yubo Chen, Kang Liu, and Jun Zhao. Motivgraph-soiq: Integrating motivational knowledge
+graphs and socratic dialogue for enhanced llm ideation. In Findings of the Association for Computational Linguistics:
+EMNLP, pages 2913-2933, 2025.
+Long Li, Weiwen Xu, Jiayan Guo, Ruochen Zhao, Xingxuan Li, Yuqian Yuan, Boqiang Zhang, Yuming Jiang, Yifei
+Xin, Ronghao Dang, Yu Rong, Deli Zhao, Tian Feng, and Lidong Bing. Chain of ideas: Revolutionizing research via
+novel idea development with LLM agents. In Findings of the Association for Computational Linguistics: EMNLP,
+pages 8971-9004, 2025a.
+Long Li, Weiwen Xu, Jiayan Guo, Ruochen Zhao, Xingxuan Li, Yuqian Yuan, Boqiang Zhang, Yuming Jiang, Yifei
+Xin, Ronghao Dang, Yu Rong, Deli Zhao, Tian Feng, and Lidong Bing. Chain of ideas: Revolutionizing research via
+novel idea development with LLM agents. In Findings of the Association for Computational Linguistics: EMNLP,
+pages 8971-9004, 2025b.
+Ming Li, Qian Gao, and Tianfei Yu. Kappa statistic considerations in evaluating inter-rater reliability between two
+raters: which, when and context matters. BMC Cancer, 23(1):799, 2023.
+Qi Liu, Ruochen Hao, Can Li, and Wanjing Ma. Or-agent: Bridging evolutionary search and structured research for
+automated algorithm discovery. arXiv preprint arXiv:2602.13769, 2026.
+A PREPRINT - MAY 8, 2026
+Chris Lu, Cong Lu, Robert Tjarko Lange, Jakob Foerster, Jeff Clune, and David Ha. The ai scientist: Towards fully
+automated open-ended scientific discovery. arXiv preprint arXiv:2408.06292, 2024.
+Wencheng Lu and Zhenni Hu. Addressing autonomy risks in generative chatbots with the socratic method. Science and
+Engineering Ethics, 31(41):41, 2025.
+Brenda Nogueira, Werner Geyer, Andrew A. Anderson, Toby Jia-Jun Li, Dongwhi Kim, Nuno Moniz, and Nitesh V.
+Chawla. From verification burden to trusted collaboration: Design goals for LLM-assisted literature reviews. In
+Companion Proceedings of the ACM Conference on Intelligent User Interfaces, pages 61-65, 2026.
+Rohan Pandey, Eric Ye, and Michael Li. Beyond the answer: Decoding the behavior of llms as scientific reasoners.
+arXiv preprint arXiv:2603.28038, 2026.
+Marissa Radensky, Simra Shahid, Raymond Fok, Pao Siangliulue, Tom Hope, and Daniel S. Weld. Scideator: Human-
+llm scientific idea generation and novelty evaluation grounded in research-paper facet recombination. arXiv preprint
+arXiv:2409.14634, 2024.
+Chandan K. Reddy and Parshin Shojaee. Towards scientific discovery with generative ai: progress, opportunities, and
+challenges. In Proceedings of the AAAI Conference on Artificial Intelligence, page 3186, 2025.
+Devesh Saraogi, Rohit Singhee, and Dhruv Kumar. Evaluating novelty in ai-generated research plans using multi-
+workflow llm pipelines. arXiv preprint arXiv:2601.09714, 2026.
+Samuel Schmidgall, Yusheng Su, Ze Wang, Ximeng Sun, Jialian Wu, Xiaodong Yu, Jiang Liu, Michael Moor, Zicheng
+Liu, and Emad Barsoum. Agent laboratory: Using LLM agents as research assistants. In Findings of the Association
+for Computational Linguistics: EMNLP, pages 5977-6043, 2025.
+Donald A. Schön. The Reflective Practitioner: How Professionals Think in Action. Basic Books, 1983.
+Tim Schopf and Michael Färber. Is this idea novel? an automated benchmark for judgment of research ideas. arXiv
+preprint arXiv:2603.10303, 2026.
+Chenglei Si, Diyi Yang, and Tatsunori Hashimoto. Can LLMs generate novel research ideas? a large-scale human study
+with 100+ NLP researchers. In The International Conference on Learning Representations, 2025.
+Eberhard O. Voit. Perspective: Dimensions of the scientific method. PLOS Computational Biology, 15(9):e1007279,
+2019.
+Qingyun Wang, Doug Downey, Heng Ji, and Tom Hope. Scimon: Scientific inspiration machines optimized for novelty.
+In Proceedings of the Association for Computational Linguistics, pages 279-299, 2024.
+Erich H. Witte and Frank Zenker. From discovery to justification: Outline of an ideal research program in empirical
+psychology. Frontiers in Psychology, 8:1847, 2017.
+Tongzhou Wu, Yuhao Wang, Xinyu Ma, Xiuqiang He, Shuaiqiang Wang, Dawei Yin, and Xiangyu Zhao. DeepResearch-
+9K: A challenging benchmark dataset of deep-research agent. arXiv preprint arXiv:2603.01152, 2026.
+Yuxiang Zheng, Dayuan Fu, Xiangkun Hu, Xiaojie Cai, Lyumanshan Ye, Pengrui Lu, and Pengfei Liu. DeepResearcher:
+Scaling deep research via reinforcement learning in real-world environments. In Proceedings of the Conference on
+Empirical Methods in Natural Language Processing, pages 414-431, 2025.
+Lianhao Zhou, Hongyi Ling, Cong Fu, Yepeng Huang, Michael Sun, Wendi Yu, Xiaoxuan Wang, Xiner Li, Xingyu Su,
+Junkai Zhang, Xiusi Chen, Chenxing Liang, Xiaofeng Qian, Heng Ji, Wei Wang, Marinka Zitnik, and Shuiwang Ji.
+Autonomous agents for scientific discovery: Orchestrating scientists, language, code, and physics. arXiv preprint
+arXiv:2510.09901, 2025.
+A PREPRINT - MAY 8, 2026
+Appendix
+A
+Evaluation Details
+LLM-as-a-Judge Prompt
+System: You are a tough but fair paper reviewer. Your goal is to score the proposal on Novelty, Feasibility, and Impact using
+the strict rubric below. You must output strict JSON only, matching the schema exactly.
+Novelty (1-5) focuses on deep originality in problem framing, method necessity, and broken assumptions (not superficial
+tweaks):
+1. Not novel; all key aspects exist in prior work.
+2. Marginal novelty; a small variant of existing work.
+3. Moderately novel; recombines known ideas in a new way, applies them to a new setting, or provides an incremental update.
+4. Novel; introduces a new aspect not present in existing work.
+5. Highly innovative; opens a new research direction, encourages new thinking, or suggests a paradigm shift.
+Feasibility (1-5) is technical feasibility (not budget/compute). You must use the cached intermediate state if provided (JSON
+below) to avoid information asymmetry.
+1. Technically infeasible; fundamental blocker.
+2. Major technical difficulties; depends on immature techniques or many unvalidated assumptions.
+3. Mostly feasible; needs moderate engineering or adaptation.
+4. Highly feasible; can be implemented with minor extensions.
+5. Very easy; no obvious blockers.
+Impact (1-5) is deep theoretical value and field-changing potential (not short-term citations or shallow application breadth).
+1. Minimal impact.
+2. Limited, local improvement.
+3. Moderate impact in a subarea.
+4. Significant impact; could change methodology or solve a long-standing issue.
+5. Major impact; could trigger a paradigm shift or cross-field influence.
+Output format (strict JSON):
+{
+"novelty":
+{"score": 4, "reason": "..."},
+"feasibility": {"score": 3, "reason": "..."},
+"impact":
+{"score": 5, "reason": "..."},
+"overall_explanation": "..."
+}
+Important:
+• For each metric, decide the reasoning first, then finalize the score.
+• Keep novelty/feasibility/impact reasons concise (≤3 sentences each) and avoid quotation marks.
+• Output exactly one JSON object, in a single line. No markdown, no code fences, no extra text.
+Proposal (Markdown):
+{proposal_md}
+Cached intermediate state (JSON):
+{state_json}
+A PREPRINT - MAY 8, 2026
+Prompt-based LLM Baseline Prompt
+System: You are a senior researcher and a rigorous paper reviewer. Your goal is to convert a rough intuition into a technically
+credible, testable ablation proposal.
+Hard requirements:
+• Output must be English.
+• Output must be a single Markdown document.
+• No code blocks unless strictly necessary.
+• Avoid meta commentary. Do not mention that you are an AI.
+• Make the narrative inevitable: show why the method and experiments follow from the broken assumption.
+• Include a concrete ablation matrix with factors, settings, and expected outcomes.
+• Include baselines, datasets/tasks, metrics, and failure analyses.
+Structure (keep these headers, you may add sub-bullets):
+# LLM Ablation Proposal
+## Problem
+## Broken Assumption
+## Core Insight
+## Hypothesis and Predictions
+## Method (High-level)
+## Experimental Plan
+## Ablation Matrix
+## Baselines and Comparisons
+## Datasets / Tasks
+## Metrics and Evaluation
+## Implementation Notes
+## Risks, Failure Modes, and Diagnostics
+## Expected Outcomes
+## Minimal Repro Checklist
+User Prompt - Turn 1:
+Domain: {topic}
+User initial intuition: {para1}
+Write the first draft of the proposal.
+User Prompt - Turn 2:
+User follow-up intuition: {para2}
+Based on your first draft, refine and output the final Markdown proposal. Ensure it meets all strict constraints,
+especially logical inevitability and detailed ablation matrix.
+A PREPRINT - MAY 8, 2026
+Table B.1: The quantitative results of AgentLaboratory on TF-Bench. The three metrics are Novelty, Feasibility, and
+Impact.
+Type
+Novelty
+Feasibility
+Impact
+RELATED
+3.940 ± 0.044
+3.550 ± 0.040
+4.030 ± 0.051
+UNRELATED
+3.100 ± 0.036
+3.550 ± 0.038
+3.250 ± 0.038
+OVERALL
+3.520 ± 0.331
+3.550 ± 0.038
+3.640 ± 0.335
+Table B.2: Qualitative comparison under the same human inspiration.
+Source
+Content
+AgentLaboratory
+Research Agent systems operate within linguistic confines, failing to capture "tacit friction" and lacking
+self-improvement mechanisms. This breaks the assumption that LLM prompts sufficiently externalize,
+violate, and enforce necessity. The insight is that tacit friction can be operationalized as geometric
+distance in a multimodal embedding space. E, V, and N operators are implemented as minimal vector
+transformations-Identity, Gaussian perturbation, and Constrained pull-back-applied directly to
+semantic embeddings to bypass linguistic simplification. Recursive application to the system’s own
+architecture enables pure self-referential evolution, structurally balancing generative novelty with logical
+necessity while avoiding semantic collapse.
+B
+Additional Comparison with AgentLaboratory
+B.1
+Why we report AgentLaboratory in the appendix
+AgentLaboratory is a strong multi-agent research-assistant baseline, but it is structurally different from our main setting.
+It starts from an explicit research topic and then sequentially completes literature review, experimental design, and paper
+writing. In contrast, our task begins from vague, often pre-question inspiration and asks whether such tacit friction can
+be externalized into a structured research proposal. Therefore, we keep Prompt-based LLM as the primary comparator
+in the main text because it provides the cleanest input-matched baseline under the same vague human inspiration, while
+AgentLaboratory is reported here as an additional agentic baseline.
+B.2
+Quantitative Results
+Table B.1 reports the quantitative comparison with AgentLaboratory. We follow the same evaluation protocol as in the
+main paper and report mean ± standard deviation over repeated runs.
+B.3
+Qualitative Results
+Table B.2 shows the qualitative comparison under the same human inspiration used for InciteResearch and Prompt-
+based LLM. AgentLaboratory attempts to resolve the paradoxes within human inspiration through geometric mapping,
+materializing EVN operators as vector transformations within a multimodal embedding space. Its innovation lies
+primarily in the mathematical translation of these operators-a gap-driven approach rooted in semantic understanding,
+analogous to prompt-based LLM methodologies.
+C
+Human Evaluation Protocol
+Overview.
+Human expert evaluation was conducted on 26 proposals in the domain of Multimodal Learning for Cancer
+Prognosis Analysis, generated by both InciteResearch and the Prompt-based LLM baseline under the same human
+inspiration inputs. Two professors with domain expertise independently reviewed the proposals under blind conditions.
+Blinding procedure.
+All 26 proposals after data cleaning were shuffled into a randomized order and stripped of any
+identifying information. Reviewers were not informed which proposals originated from InciteResearch and which from
+the baseline.
+Instructions given to reviewers.
+Reviewers were provided with the following written instructions (translated to
+English here for presentation):
+A PREPRINT - MAY 8, 2026
+Background: This review aims to evaluate 26 research proposals in the field of Multimodal Learning
+for Cancer Prognosis Analysis, generated by various Research Assistant AI models. All proposals
+have undergone standardized cleaning and double-blind anonymization (source models and numbering
+logic have been hidden)
+Scope of Review: Please perform independent scoring for the 26 proposals numbered 008.md to
+104.md contained within the compressed archive.
+Evaluation Dimensions and Benchmarks: Scoring must strictly adhere to the guidelines provided
+in 02_Evaluation_Criteria_Details.pdf. The core dimensions include:
+• Novelty (1-5 points): Assessment of the originality of ideas and problem-awareness.
+• Feasibility (1-5 points): Assessment of technical feasibility (excluding resource availability).
+• Impact (1-5 points): Assessment of potential theoretical value and transformative power in the
+field.
+Submission Requirements: Please complete the provided 04_Review_Scoring_Sheet.xlsx.
+Ensure that each quantitative score is accompanied by a brief qualitative comment, and provide a
+comprehensive summary evaluation at the end.
+Inter-rater reliability.
+Agreement between the two human professors reached κ = 0.748 (Cohen’s weighted kappa
+with quadratic weights), indicating substantial agreement. Agreement between the LLM judges and human experts
+reached κ = 0.624, indicating moderate agreement.
+A PREPRINT - MAY 8, 2026
+D
+EVN Prompt Templates
+Semantic Alignment and Anchoring (Turn 0)
+System: You are a research thinking partner. Your goal is to help a researcher surface the research intuitions they cannot yet
+articulate.
+Operating principles:
+1) Ask concrete, friction-inducing questions. Do not ask abstract questions like "what is your insight?"
+2) Every answer is valid input, including "I don’t know" or "something feels off but I can’t explain."
+3) After 1-3 turns, summarize into a structured researcher profile.
+4) The user’s original research direction (Topic) is the primary objective and must not drift. Never replace the Topic with a
+different task/domain.
+Style: curious, equal-footing, and never rushing.
+Language: reply in the same language as the user’s latest message.
+User: [User Input injected here]
+In 1-2 sentences, acknowledge you understood. Then ask the first question. The question must be concrete enough
+to immediately recall a specific paper or class of methods. Do not explain what you are doing; just continue the
+conversation.
+Dynamic Triage and Deepening (Turn 1+)
+System: [System context from Turn 0]
+Research topic: {topic}
+Answer to the previous question: {prev_answer}
+Analyze the answer:
+• If it contains a concrete friction point (an assumption, a class of methods, a specific dissatisfaction), dig deeper.
+• If it is vague, switch angle and ask a different concrete question.
+• If it implies resource constraints, ask about constraints.
+Ask the next question in at most 2 sentences.
+Researcher Profile Formalization
+System: Summarize a researcher profile from the dialogue.
+Priority rule:
+• The original Topic is the primary objective and must dominate.
+• The user’s answers are secondary: treat them as constraints/mechanisms, never as a new standalone task.
+Hard constraints:
+• Do not introduce a different domain/task/dataset not implied by the original Topic.
+• refined_topic must be a paraphrase/clarification of the original Topic, not a different problem.
+Output strict JSON only. Do not add extra text.
+{
+"friction_points": ["friction point 1", "friction point 2"],
+"motivation": "Why this matters (one sentence)",
+"constraints": {
+"compute":
+"...",
+"timeline": "...",
+"other":
+"..."
+},
+"research_taste":
+"What kinds of work they prefer (one sentence)",
+"refined_topic":
+"A more precise version of the original topic"
+}
+A PREPRINT - MAY 8, 2026
+Hidden Assumption Extraction and Breaking
+System: You are a top-tier mentor in critical research thinking.
+Implicit assumptions are premises that most people in the field never question: "Of course we need . . . " / "All methods rely on
+. . . " / a design choice never validated by ablations.
+Task:
+1) List 3-5 implicit assumptions in existing methods (be as specific as possible).
+2) Pick the single most worth breaking (high impact + technically feasible).
+3) Describe what the "new world" looks like after breaking it.
+Output strict JSON:
+{
+"hidden_assumptions": [
+"assumption 1",
+"assumption 2",
+"assumption 3"
+],
+"broken_assumption":
+"the assumption to break (one sentence)",
+"breaking_rationale":
+"why it can be broken and what the world
+looks like after breaking it",
+"novelty_score":
+0.0,
+"feasibility_score": 0.0
+}
+(novelty_score and feasibility_score are floats in [0, 1].)
+Causal Derivation Trace
+System: You design paper narratives for top-tier conferences.
+Core criterion: the method must feel inevitable. Given Problem + Broken Assumption + Insight, the method should be the
+logically forced choice, not merely "a reasonable option."
+Additional constraint: avoid post-hoc method construction. Before proposing the method, you must first lock in:
+1) A single-sentence, falsifiable core claim (what would be proven wrong if false).
+2) 2-3 concrete, testable predictions implied by the claim.
+3) Minimal design constraints the method must satisfy to make those predictions hold.
+Then propose the smallest method that satisfies the constraints. If you propose any optional component, label it OPTIONAL and
+justify why it is not required for the core claim.
+Output format:
+Problem: concrete problem (with data context)
+Broken Assumption: which fundamental assumption is wrong
+Insight: key insight after breaking the assumption
+Claim: one sentence, falsifiable
+Predictions: 2-3 testable predictions (each can be validated or falsified)
+Constraints: minimal requirements the method must satisfy (derived from predictions)
+Method: why the design becomes inevitable given the insight
+Validation: what experiment could falsify the insight
+Impact: what it would mean for the field if true
+A PREPRINT - MAY 8, 2026
+Necessity, Sufficiency, and Counterexample Checks
+System: You are an extremely strict NeurIPS Area Chair who hunts for logical gaps in the story.
+Run five tests:
+1) Necessity. Given Problem + Insight, is there a simpler solution than the proposed method? If yes: explain why the simpler
+solution is insufficient and what makes the method irreplaceable.
+2) Sufficiency. For each core component, can you say "Because [story reason], we must have [component]"? Check one by one
+and identify "floating" components.
+3) Counterexample. Can you reach the same effect by simply scaling up the baseline? If yes: the contribution is weak; give
+strengthening suggestions.
+4) Anti-inversion. Does any component look "constructed to justify the hypothesis"? Red flags include: components not
+required by any prediction, method choices that hide failure cases, or validation that cannot falsify the claim. Identify such
+components and how to fix the story/method.
+5) Uniqueness (identifiability). Is the method uniquely constrained by the insight? List 2-4 plausible alternative method
+families that could also satisfy the claim. For each, state exactly which prediction/constraint it fails. If more than one family
+survives, the insight/constraints are under-specified; propose the smallest additional constraint that would make it unique.
+Finally: verdict (is the story closed: yes/no) + the single most critical thing to strengthen.
+A PREPRINT - MAY 8, 2026
+E
+TF-Bench Dataset Card
+Dataset name.
+TF-Bench (Tacit Friction Benchmark).
+Purpose and task.
+TF-Bench is a tacit-to-explicit ideation evaluation dataset designed for research agents. It evaluates
+AI systems on the task of tacit-to-explicit research assistance: given a vague, under-specified human inspiration, the
+assistant must elicit, structure, and transform it into a concrete, actionable research proposal.
+Scale and structure.
+TF-Bench contains 52 inspiration examples distributed across 4 scientific domains and 2
+ambiguity types, including domain-related and domain-unrelated. The former comprises prompts that already carry
+scientific domain signals yet remain under-specified; the latter comprises prompts that carry only weak metaphorical or
+conceptual cues, where the scientific domain cannot be inferred from the inspiration text alone.
+TF-Bench covers the core empirical tasks of empirical science across four orthogonal scientific modes, including
+prediction (multimodal learning for cancer prognosis analysis), discovery (computational genomics analysis of single-
+cell RNA-seq), attribution (attribution of extreme weather events in climate models) and causality (causal brain-network
+modeling in neuroscience).
+Each domain consists of 10 domain-related inspiration examples and 3 domain-unrelated inspiration examples. Each
+inspiration example is divided into 2 paragraphs: the first articulates a perceived failure and the second gestures toward
+a possible reframing.
+Construction procedure.
+Examples were first generated by Grok 4.3 using domain-specific prompts designed to
+elicit vague research intuitions. Each generated example was then reviewed and revised through multiple rounds of
+human interaction to improve authenticity, remove artifacts of LLM generation, and ensure coverage of the intended
+ambiguity spectrum.
+Known limitations.
+TF-Bench covers the core empirical tasks of empirical science; generalization to other domains
+(e.g., social sciences, mathematics) has not been evaluated. Meanwhile, the quality of domain-unrelated examples
+depends on the metaphorical associations available to the generation model and human annotators, and may not
+uniformly represent the full range of cross-domain inspiration types.
+License.
+CC BY 4.0.
+F
+Broader Impacts
+Positive impacts.
+InciteResearch aims to outsource the cognitive processes in research, in order to help researchers
+clearly express their implicit intuitions, which were already known to them. By externalizing a researcher’s latent
+understanding and reflecting it back for critique, rather than simply generating ideas from scratch, InciteResearch may
+also help broaden participation in research by reducing the advantage conferred by access to experienced mentors or
+large research groups.
+Negative impacts and mitigations.
+Language models can produce research directions that appear novel and well-
+argued yet rest on subtle factual errors or unverified assumptions. Users should treat InciteResearch outputs as a
+starting point for critical examination, not a finished proposal. Meanwhile, if widely adopted, systems of this type
+could inadvertently concentrate scientific attention on the directions that are easiest for LLMs to generate, potentially
+narrowing the diversity of research agendas. We encourage future work to study the distributional properties of
+AI-assisted ideation at scale.
+G
+Licenses for Existing Assets
+All external models and tools used in this work are accessed via their respective commercial API services. Claude
+Sonnet 4.6 (Anthropic) is accessed via the Anthropic API under Anthropic’s Usage Policy.1 Gemini 3.1 Pro (Google
+DeepMind) is accessed via the Google AI API under Google’s Generative AI Prohibited Use Policy.2 GPT-5.2 (OpenAI)
+is accessed via the OpenAI API under OpenAI’s Usage Policies.3 Grok 4.3 (xAI) is accessed via the xAI API under
+1
+2
+3
+A PREPRINT - MAY 8, 2026
+xAI’s Terms of Service.4 No open-source datasets or third-party codebases with restrictive licenses are incorporated.
+TF-Bench is an original dataset created by the authors and will be released under the Creative Commons Attribution
+4.0 International (CC BY 4.0) license upon acceptance.
+4

@@ -1,0 +1,1473 @@
+Continuous-Time Distribution Matching for Few-Step
+Diffusion Distillation
+Tao Liu1, Hao Yan2, Mengting Chen2,∗, Taihang Hu2, Zhengrong Yue2, Zihao Pan2
+Jinsong Lan2, Xiaoyong Zhu2, Ming-Ming Cheng1, Bo Zheng2,†, Yaxing Wang3,†
+1VCIP, College of Computer Science, Nankai University
+2Alibaba Group
+3College of Artificial Intelligence, Jilin University
+ 
+§ 
+DMD2
+CDM
+DMD2
+CDM
+DMD2
+CDM
+DMD2
+CDM
+DMD2
+CDM
+Figure 1:
+CDM enables high-fidelity few-step text-to-image generation. We compare our
+Continuous-Time Distribution Matching (CDM) against DMD2, both distilled from Longcat-Image
+(1024×1024) and evaluated at 4 NFE with identical prompts and seeds. Without relying on any GAN
+or reward-model auxiliary objectives, CDM produces sharper textures, richer fine-grained details,
+and overall higher visual fidelity, while DMD2 suffers from noticeable over-smoothing and detail
+loss. (Best viewed zoomed-in.)
+Abstract
+Step distillation has become a leading technique for accelerating diffusion models,
+among which Distribution Matching Distillation (DMD) and Consistency Dis-
+tillation are two representative paradigms. While consistency methods enforce
+self-consistency along the full PF-ODE trajectory to steer it toward the clean data
+manifold, vanilla DMD relies on sparse supervision at a few predefined discrete
+timesteps. This restricted discrete-time formulation and mode-seeking nature of
+the reverse KL divergence tends to exhibit visual artifacts and over-smoothed
+outputs, often necessitating complex auxiliary modules-such as GANs or reward
+models-to restore visual fidelity. In this work, we introduce Continuous-Time
+Distribution Matching (CDM), migrating the DMD framework from discrete an-
+choring to continuous optimization for the first time. CDM achieves this through
+two continuous-time designs. First, we replace the fixed discrete schedule with a
+dynamic continuous schedule of random length, so that distribution matching is
+enforced at arbitrary points along sampling trajectories rather than only at a few
+∗Project leader.
+†Co-corresponding authors.
+Preprint.
+arXiv:2605.06376v1 [cs.CV] 7 May 2026
+
+fixed anchors. Second, we propose a continuous-time alignment objective that
+performs active off-trajectory matching on latents extrapolated via the student’s ve-
+locity field, improving generalization and preserving fine visual details. Extensive
+experiments on different architectures, including SD3-Medium and Longcat-Image,
+demonstrate that CDM provides highly competitive visual fidelity for few-step
+image generation without relying on complex auxiliary objectives.
+Introduction
+The remarkable capabilities of diffusion and flow-matching models [8, 13, 23, 26, 42, 48] have
+revolutionized text-to-image generation in recent years, setting new benchmarks for high-fidelity
+visual synthesis. Despite their exceptional generation quality, these models fundamentally rely on
+an iterative sampling process. This sequential procedure, typically demanding tens to hundreds of
+network evaluations, imposes a severe computational bottleneck that ultimately limits their real-world
+deployment. Accelerating this generation process without sacrificing sample quality has therefore
+become a central research challenge.
+To bridge this gap, a variety of diffusion distillation paradigms have emerged [27, 30, 34, 44, 45, 49].
+While early efforts reduced sampling to a few steps, the resulting models often struggle to balance
+inference speed with faithful text-image alignment. Among the diverse technical routes aimed at
+few-step synthesis, score-based distribution matching-prominently represented by Diff-Instruct [31]
+and Distribution Matching Distillation [59]-has emerged as a leading framework. By mathematically
+matching the student’s output distribution with the pre-trained teacher’s target distribution, these
+methods have demonstrated state-of-the-art performance in accelerating generative models.
+Despite its success, existing DMD methods [1, 24, 58] inherit a structural limitation from their
+backward simulation strategy. To keep the simulated training trajectory consistent with the few-step
+inference procedure, they restrict the simulated timesteps to a fixed set of discrete anchors that matches
+the inference schedule. Unlike Consistency Distillation [28, 30, 49], which naturally optimizes
+trajectories within a continuous space, this strict confinement to sparse discrete schedules severely
+limits DMD. The lack of intermediate, dense supervision forces the student to learn an unsmooth
+velocity field. Furthermore, the underlying reverse KL objective is inherently mode-seeking [29, 57],
+biasing the student toward a few dominant modes of the teacher’s distribution. Consequently, the
+generated images often suffer from oversmoothing and visual artifacts, typically necessitating complex
+auxiliary modules (such as GANs or reward models) to restore visual fidelity [1, 59].
+However, our preliminary empirical analysis challenges this strict training-inference alignment
+requirement [17] (Figure 2). We investigate an alternative formulation where the model is optimized
+via backward simulation using uniformly sampled continuous timesteps t ∈(0, 1] with random length
+at each training iteration, decoupling it from the fixed inference schedule. By simply randomizing
+the training timestep at each iteration, the student is trained over the full continuous time space
+rather than a few fixed points, and receives teacher gradients from a much wider range of trajectories.
+Empirically, this simple change not only preserves distillation performance, but yields consistent
+improvements: the dynamically scheduled model attains higher HPSv3 scores with finer details
+and fewer artifacts than its strictly aligned counterpart. This suggests that distribution matching is
+schedule-independent-rather than serving as a necessary anchor, the discrete schedule acts as an
+overly restrictive constraint on the student’s achievable quality.
+Given that distribution matching benefits from unrestricted continuous timesteps, it is crucial to
+understand what exactly the model learns from these matching signals. Recent studies [24, 60]
+decouple DMD training into a CFG Augmentation (CA) loss and a Distribution Matching (DM) loss,
+treating the latter simply as a "regularizer" for training stability and mitigating artifacts. However,
+visual evidence in Figure 3 (further supported by the quantitative validation in Appendix Table 4)
+reveals a fundamentally different paradigm. When student models are distilled solely with the DM
+loss, their generated images closely match the samples produced by the teacher without classifier-free
+guidance (CFG)-which we refer to as the teacher’s CFG-free distribution. This tight correlation
+indicates that the achievable performance of the DM loss is closely aligned with the teacher’s CFG-
+free distribution. Rather than acting as a passive regularizer, the DM loss plays a substantive role in
+faithfully capturing this CFG-free distribution throughout the distillation process.
+Iteration 1
+Iteration 2
+Iteration n
+Iteration 1
+Iteration 2
+Iteration n
+(a) Training Schedules: Fixed vs. Dynamic
+(b) Visual Quality Comparation
+Fixed: t ∈{1.0, 0.75, 0.5, 0.25}, n = 4
+Dynamic: t ∈[1.0, 0.0), n ∈[1, Nmax]
+Backward Simulation
+(c) Performance Comparation
+Fixed
+Dynamic
+Figure 2: Empirical evidence of schedule decoupling. (a) Conventional distillation strictly anchors
+backward simulation to predefined discrete inference timesteps. In contrast, our dynamic scheduling
+optimizes over uniformly sampled continuous timesteps t ∈(0, 1] at each iteration. (b) Visually,
+the dynamically scheduled model produces finer details and fewer artifacts than the strictly aligned
+baseline. (c) Quantitatively, it also attains a higher HPSv3 score, indicating that exact discrete
+alignment is not only unnecessary but in fact restrictive-motivating our continuous-time formulation.
+SD3-M (w/ cfg)
+SD3-M (w/o cfg)
+Distill (w/ dm)
+Longcat (w/ cfg)
+Longcat (w/o cfg)
+Distill (w/ dm)
+A person sits in a tent with a chair and a table, 
+surrounded by framed pictures of flowers.
+Two women cut into a cake together at a restaurant
+Figure 3: Visual evidence on the role of the DM loss. Samples from teacher models (SD3-Medium
+and Longcat-Image) with and without CFG, compared against student models distilled with the DM
+loss alone. Students distilled with the DM loss alone closely match their teachers’ CFG-free samples,
+indicating that the DM loss is not a mere stabilizer but the key driver that aligns the student to the
+teacher’s CFG-free distribution.
+While continuous scheduling provides flexible on-trajectory supervision, few-step generation in-
+evitably introduces severe numerical truncation errors due to large integration step sizes, causing the
+inference trajectory to drift off the ideal manifold [36, 37]. To directly counter this, we propose a
+novel Continuous-Time Distribution Matching (CDM) loss, which intrinsically incorporates a velocity-
+driven extrapolation mechanism into its matching objective. Instead of restricting supervision to
+on-trajectory latents, the CDM loss actively probes off-trajectory latents by taking a first-order step
+along the student’s predicted velocity field, and enforces distribution matching upon them. Acting as
+a powerful spatial alignment objective, it effectively mitigates off-trajectory drift, empowering the
+student to self-correct integration errors and recover sharp, high-frequency details.
+In summary, to the best of our knowledge, we are the first to migrate the DMD distillation framework
+from discrete schedules to a continuous optimization space. Our contributions are as follows:
+• We empirically reveal two key insights in distribution matching: (1) anchoring the training
+optimization to a fixed set of discrete timesteps is not necessary; and (2) the distribution
+matching (DM) loss acts not merely as a "regularizer", but drives the student to align with
+the teacher’s CFG-free distribution.
+• To fully exploit these findings, we propose the CDM framework. This paradigm unifies a
+dynamic continuous scheduling strategy for flexible on-trajectory supervision, and a novel
+off-trajectory CDM loss equipped with velocity-driven extrapolation to actively mitigate
+numerical integration errors during sampling.
+• Extensive experimental results demonstrate that our continuous paradigm yields significant
+performance gains, establishing new state-of-the-art results for few-step image generation
+across different models (e.g., SD3-Medium and Longcat-Image) without relying on complex
+auxiliary modules.
+2
+Related Work
+Diffusion Distillation. While diffusion models [13, 42, 50] have achieved unprecedented suc-
+cess in visual generation tasks, their iterative sampling process poses a significant computational
+bottleneck. To accelerate inference, numerous distillation paradigms have been proposed. Pro-
+gressive distillation [34, 43, 44] accelerates sampling by iteratively training a student to compress
+two teacher steps into one, progressively halving the required function evaluations. Consistency
+models [18, 28, 30, 38, 49, 54, 61] take a different approach by enforcing a self-consistency property:
+learning a direct mapping from any point along the probability flow ODE trajectory to the trajectory’s
+origin on the data manifold, enabling few-step generation. Alternatively, adversarial distillation
+methods [21, 45] leverage a discriminator to align the few-step student’s output directly with the
+real data distribution. Recent hybrid approaches further combine these paradigms: SANA-Sprint [3]
+and SwiftVideo [52] unify continuous-time consistency distillation with adversarial distribution
+alignment or trajectory distribution alignment, while TwinFlow [5] pairs consistency modeling with
+self-adversarial distribution matching to enable high-fidelity one-step generation.
+Score-based Distillation.
+Score-based distillation originated in text-to-3D generation, where
+SDS [39] and VSD [55] leveraged pretrained diffusion scores to optimize 3D representations, estab-
+lishing the conceptual foundation of distribution matching for distillation. Extending this paradigm
+to 2D image generation, Diff-Instruct [31] and DMD [59] formulated KL-based distribution match-
+ing frameworks for distilling diffusion models into few-step generators, with DMD2 [58] further
+improving stability via adversarial losses. Subsequent theoretical analyses [24, 60] decoupled the
+score distillation objective, revealing that CFG augmentation drives few-step conversion while the
+distribution matching term serves as a stabilizing regularizer. More recently, the DMD framework
+has been extended along multiple axes: scaling to large flow-based models [10], incorporating RL-
+based or GAN-based refinement [1, 16, 41], combining with consistency distillation or progressive
+distillation [9, 41, 56], introducing scale-wise distillation [2, 51], score identity distillation [62], or
+cache-aware distillation [20, 35]. Despite these advances, all existing DMD-based methods evaluate
+the DM loss exclusively at sparse discrete timesteps, leaving the continuous trajectory unoptimized.
+To address these limitations, we propose Continuous-Time Distribution Matching (CDM), which
+introduces a dynamic continuous schedule together with a velocity-driven off-trajectory alignment
+objective, shifting the optimization to the continuous-time domain. Notably, a concurrent work [40]
+shares a similar off-trajectory insight with us, but constructs off-trajectory points via re-noising and
+focuses on post-training alignment rather than distillation.
+Method
+We present Continuous-Time Distribution Matching (CDM), a unified distillation framework that lifts
+the discrete-time DMD paradigm into a fully continuous-time formulation for high-fidelity few-step
+generation. We first formalize the decoupled Distribution Matching Distillation (DMD) baseline
+(Section 3.1). Building on this, we relax the fixed inference schedule into a dynamic continuous
+schedule and theoretically examine its implications for distribution matching (Section 3.2). Finally, in
+Section 3.3 we complement these with the CDM loss, which extends supervision from on-trajectory
+anchors to off-trajectory latents via a velocity-driven extrapolation, regularizing the student’s velocity
+field across the continuous time domain. The unified training pipeline is illustrated in Figure 4.
+3.1
+Preliminaries: Decoupled Distribution Matching
+The goal of our distillation framework is to train a student flow model Dθ capable of generating
+high-quality samples in N discrete steps, by distilling knowledge from a pre-trained teacher model
+Dϕ that typically requires T ≫N steps. Here, D(xt, t, c) denotes the model prediction that estimates
+the clean data from the noisy latent xt at timestep t ∈(0, 1], conditioned on c. Formally, assuming
+the underlying neural network vθ is trained to predict the velocity field, the clean data estimate Dθ is
+explicitly parameterized as:
+Dθ(xt, t, c) = xt −tvθ(xt, t, c).
+(1)
+Building upon DMD [59], DMD2 [58], and Decoupled DMD (D-DMD) [24], we employ a backward
+simulation strategy to construct the sampling trajectory. Specifically, starting from random noise
+xt1 ∼N(0, I), we generate the trajectory by numerically integrating the probability flow ODE along
+Few-Step 
+Generator
+add noise
+Noise
+Backward simulation
+CA & DM
+CDM
+cond uncond
+add noise
+Real Socre
+Estimator
+Real Socre
+Estimator
+Fake Socre
+Estimator
+Real Socre
+Estimator
+cond cond
+∇θLCFG
+∇θLDDM
+Dynamic Time Schedule
+Denoise w/o grad
+Denoise w/ grad
+xσ1
+Clean Image
+Student ODE Path
+1 = t1 > t2 > . . . > tN > 0
+xt1
+xt1
+xt2
+xti
+xtN−1
+xtN
+on-trajectory
+point
+off-trajectory
+point
+Few-Step 
+Generator
+cond cond
+Real Socre
+Estimator
+Fake Socre
+Estimator
+∇θLCDM
+xt′
+i
+add noise
+Figure 4: Overview of Continuous-Time Distribution Matching (CDM). Top: Our approach
+employs a dynamic continuous time schedule during backward simulation, sampling intermediate
+anchors uniformly from (0, 1]. Bottom Left: CFG augmentation (CA) and distribution matching
+(DM) operate on this dynamic schedule to align text-image conditions and data distributions at
+on-trajectory anchors. Bottom Right: To address inter-anchor inconsistency, the proposed CDM
+objective explicitly extrapolates off-trajectory latents (xt′
+i) using the predicted velocity.
+the student’s predefined discrete time schedule {t1, . . . , tN}. During this process, we extract an
+intermediate latent state xti, where the index i ∼U{1, . . . , N} is uniformly sampled. The distillation
+objective is decoupled into two orthogonal components: a CFG Augmentation (CA) term and a
+Distribution Matching (DM) term:
+LDMD = LCA + LDM.
+(2)
+CA Loss (LCA). To enforce text-image alignment, the latent xti is passed through the student model
+to yield the clean data estimate Dθ(xti, ti, c). This estimate is subsequently perturbed with noise to a
+random continuous timestep τ ∈(0, 1] to form zτ. Following DMD [59], we introduce a dynamic
+weighting factor wτ = ∥Dϕ(zτ, τ, c)−Dθ(xti, ti, c)∥−1
+to normalize the gradient’s magnitude. The
+CA loss is then defined as:
+LCA = 1
+Dθ(xti, ti, c) −sg
+
+Dθ(xti, ti, c) + wτα (Dϕ(zτ, τ, c) −Dϕ(zτ, τ, ∅))
+|
+{z
+}
+∆real
+ca
+(CFG Augmentation)
+
+
+2
+,
+(3)
+where c is the conditioning text, α is the guidance scale, and sg[·] is the stop-gradient operator.
+DM Loss (LDM). To align the student’s marginal distribution with the real data manifold, we similarly
+reuse the student’s clean data estimate Dθ(xti, ti, c). This estimate is independently perturbed with
+noise to another random continuous timestep ˜τ ∈(0, 1] to form z˜τ. Using a frozen real teacher Dϕ
+and an online-updated fake teacher Dψ (which parameterizes the student’s score), the DM loss is
+defined as:
+LDM = 1
+Dθ(xti, ti, c) −sg
+
+Dθ(xti, ti, c) + w˜τ(Dϕ(z˜τ, ˜τ, c) −Dψ(z˜τ, ˜τ, c))
+|
+{z
+}
+∆real−fake
+dm
+(Distribution Matching)
+
+
+2
+,
+(4)
+where Dϕ and Dψ denote the frozen real teacher and the online-updated fake teacher (which parame-
+terizes the student’s generated distribution), respectively.
+3.2
+Dynamic Time Schedule
+In vanilla DMD2 [58] paradigm, the backward simulation strategy relies on a fixed, predefined set
+of discrete timesteps matching the target inference schedule, denoted as Sinfer = {t1, . . . , tN}. To
+maintain strict training-inference consistency, prior methods force the backward simulation during
+training to exclusively operate on these exact points.
+However, we propose to break this rigid constraint by introducing a continuous dynamic time schedule.
+In each training iteration, the backward simulation length N is no longer fixed but randomly sampled
+(N ∼U{1, Nmax}). We then randomly generate a strictly decreasing continuous time sequence
+1 = t1 > t2 > . . . > tN > 0, where 1 represents pure noise and 0 represents the clean image. This
+dynamic schedule brings two independent benefits. First, the random simulation length N exposes
+the student to varying numbers of inference steps at training time and lets the teacher provide gradient
+signals over a more diverse distribution of intermediate latents xti. Second, the student’s anchors
+ti are no longer confined to the fixed discrete set Sinfer; instead, they are drawn from the same
+continuous domain (0, 1] as the teacher’s perturbation timesteps τ and ˜τ, which remain independently
+sampled. This eliminates the mismatch between the discrete student anchors and the continuous
+teacher supervision in vanilla DMD.
+To provide a theoretical motivation for our dynamic time schedule, we examine the optimization
+from a score-matching perspective by applying Tweedie’s formula [7] (see Appendix D for detailed
+derivations). Let preal(zt|c) denote the marginal distribution of the real data at a continuous noise
+level t, and pfake(zt|c) represent the fake target distribution.
+For the CFG Augmentation (CA) loss, the gradient mathematically defines the direction of an implicit
+classifier log preal(c|zτ) [60], effectively pushing the student’s generation toward regions of higher
+text-image alignment:
+∇θLCA = −wτα τ 2
+1 −τ
+∂Dθ(xti, ti, c)
+∂θ
+T
+∇zτ log preal(c|zτ).
+(5)
+For the Distribution Matching (DM) loss, the formulation reveals its analytical connection to the
+Kullback-Leibler divergence. Specifically, optimizing the DM loss corresponds to minimizing the
+KL divergence DKL(p˜τ
+gen∥p˜τ
+real) between the student’s generative distribution and the real data
+distribution at time ˜τ:
+∇θLDM = −w˜τ
+˜τ 2
+1 −˜τ
+∂Dθ(xti, ti, c)
+∂θ
+T
+(∇z˜τ log preal(z˜τ|c) −∇z˜τ log pfake(z˜τ|c)) .
+(6)
+Crucially, the student’s input timestep ti and the teacher’s perturbation timesteps τ, ˜τ are indepen-
+dently sampled from the same continuous distribution over (0, 1]. In expectation, this mechanism
+encourages both the CA and DM gradients in Equations (5) and (6) to regularize the student’s velocity
+field across the continuous time domain, rather than overfitting to sparse discrete anchors. While this
+continuous formulation provides a theoretical intuition for a smoother velocity field, we empirically
+validate its generalization benefits in Figure 2 and our experiments (Section 4).
+3.3
+Continuous-Time Distribution Matching (CDM)
+The dynamic continuous schedule introduced in Section 3.2 provides supervision at randomly sampled
+anchors visited by backward simulation and can in principle cover any point at (0, 1] given enough
+iterations. The supervision is applied to one anchor at a time: at each ti, the loss only constrains
+the student’s prediction Dθ(xti, ti, c) to match the target distribution at that single point. It does
+not constrain the student’s velocity vθ to remain consistent across adjacent time steps. Few-step
+inference, however, depends on this property: each Euler step from tj to tj−1 introduces an error
+of order O((∆t)2 supτ ∥dvθ/dτ∥), where the last term measures how rapidly vθ changes between
+adjacent time steps (see Appendix E for a detailed derivation). Supervising each anchor in isolation
+gives no direct control over this term.
+To reduce this inter-anchor inconsistency, we introduce the CDM loss, which adds supervision on
+intermediate latents between adjacent anchors. Given an on-trajectory latent xti and its predicted
+velocity vti = vθ(xti, ti, c), we sample a paired anchor t′
+i ∼U(0, 1] independent of the integration
+schedule and perform a first-order Euler extrapolation:
+xt′
+i = xti + (t′
+i −ti) vti.
+(7)
+Because the underlying probability flow ODE trajectory is curved, a large stride |t′
+i −ti| along the
+linearized velocity vti produces an intermediate latent xt′
+i that lies between (or beyond) the discrete
+anchors and is not visited by standard backward simulation.
+To supervise xt′
+i, we construct the target latent directly from the local clean data estimate predicted
+at the extrapolated point. Specifically, we pass xt′
+i through the student model to obtain the local
+prediction ˆx(i′)
+= Dθ(xt′
+i, t′
+i, c), and re-noise it to a continuous time ˆτ ∼U(0, 1]:
+zˆτ = (1 −ˆτ) sg[ˆx(i′)
+] + ˆτϵˆτ,
+ϵˆτ ∼N(0, I).
+(8)
+By anchoring the reference target to the local estimate ˆx(i′)
+, we establish a self-consistency constraint
+for the student’s vector field. Due to the Euler extrapolation, xt′
+i naturally drifts off the ideal sampling
+trajectory. Re-noising this drifted prediction yielding zˆτ allows the frozen teacher to evaluate the local
+score matching error. This localized supervision essentially penalizes invalid velocity predictions
+outside the main trajectory, promoting a smoother and more regularized flow for few-step integration.
+The CDM loss is then defined on the extrapolated input and the ˆx(i′)
+-anchored target:
+LCDM = 1
+Dθ(xt′
+i, t′
+i, c) −sg
+h
+Dθ(xt′
+i, t′
+i, c) + wˆτ (Dϕ(zˆτ, ˆτ, c) −Dψ(zˆτ, ˆτ, c))
+|
+{z
+}
+∆real−fake
+cdm
+i
+2
+.
+(9)
+By matching the student’s prediction at the off-trajectory latent xt′
+i to the target distribution, LCDM
+constrains vθ across the continuous interval, reducing the inter-anchor inconsistency.
+Full Training Objective. Our comprehensive training objective unifies these mathematical compo-
+nents into a single sum:
+L = LCA + LDM + LCDM.
+(10)
+Experiments
+4.1
+Experimental Setup
+Experiment Setting. We conduct our main experiments on SD3-Medium [8] at a resolution of
+1024 × 1024. For evaluation, we employ Aesthetic Score (AES) [46], PickScore [19], HPS v3 [33],
+and CLIP Score (ViT-H-14) [11] on 2K prompts sampled from the test split of the PickScore
+dataset [19]. We additionally report fine-grained prompt adherence on DPG-Bench (DPG) [15]
+using 1K prompts. For a comprehensive evaluation, we compare our method against several leading
+few-step generation baselines, including Hyper-SD [41], Flash [1], TDM [32], DMD2 [58], and D-
+DMD [24]. Furthermore, to demonstrate the broad applicability of our approach, we also extend our
+experiments to Longcat-Image [53]. Detailed experiment configurations are provided in Appendix C.
+4.2
+Main Results
+Quantitative Results. As shown in Table 1, CDM achieves competitive performance against existing
+few-step baselines on both SD3-Medium and Longcat-Image with only 4 NFE. On SD3-Medium,
+CDM obtains the best Aesthetic (6.075), DPGBench (85.26), PickScore (21.95), and HPSv3 (9.561),
+while maintaining a highly competitive CLIPScore. Among image-free methods, CDM compares
+favorably with D-DMD [24], achieving consistent improvements across all metrics, notably improving
+HPSv3 from 9.176 to 9.561. A similar trend holds on Longcat-Image, where CDM attains the best
+results on Aesthetic, DPGBench, PickScore, and HPSv3. Interestingly, our 4-NFE student matches
+or even surpasses the 100-NFE pretrained teacher on a range of metrics (e.g., DPGBench and HPSv3)
+on both backbones, suggesting that the proposed continuous-time optimization framework provides
+supervision signals that go beyond merely replicating the teacher’s outputs. More quantitative
+comparisons, including training and inference efficiency, are provided in Appendix G.
+Qualitative Comparison. Figure 5 presents a side-by-side qualitative comparison against representa-
+tive few-step baselines as well as the 100-NFE teacher. Across diverse prompts, CDM consistently
+yields sharper textures and fine-grained details (e.g., background elements and material reflections),
+and stronger semantic adherence to multi-entity compositional prompts, while competing baselines
+often exhibit blurry high-frequency content or missing attributes. Notably, despite operating with
+only 4 NFE, CDM matches or even visually surpasses the 100-NFE teacher in perceptual sharpness
+and aesthetics on many cases, corroborating the quantitative trends in Table 1. Additional visual
+results on both SD3-Medium and Longcat-Image are provided in Appendix J.
+SD3-M (100 NFE)
+An image of a full moon on a starry night.
+Perfume advertisement, backlight, make it realistic with insane details, stunning advertisement ... 
+More Results. (zoom in for better view)
+Hyper-SD (8NFT)
+Flash (4NFE)
+TDM (4NFE)
+DMD2 (4NFE)
+D-DMD (4NFE)
+CDM (4NFE)
+Figure 5: Qualitative comparison on SD3-Medium. CDM produces more photorealistic results
+with richer details than competing methods. All results are generated using the same initial noise and
+random seed for fair comparison.
+Table 1: Quantitative comparison of different methods on SD3-Medium and Longcat-Image. For
+each backbone, the best and second-best results are highlighted in bold and underline, respectively;
+the base model serves as a reference and is excluded from the ranking. Methods marked with ∗
+denote our reproduced results. Image-Free indicates methods that do not rely on real images during
+distillation; Continuous indicates methods whose supervision is applied at arbitrary continuous
+timesteps.
+Method
+NFE Aesthetic↑DPGBench↑PickScore↑HPSv3↑CLIPScore↑Image-Free Continuous
+SD3-Medium
+Base [8]
+5.885
+85.04
+21.73
+8.189
+28.60
+-
+-
+Hyper-SD [41]
+5.180
+80.43
+20.82
+6.054
+27.93
+✗
+✓
+Flash [1]
+5.968
+80.47
+21.69
+8.282
+28.18
+✗
+✗
+TDM [32]
+6.013
+83.12
+21.61
+8.468
+27.63
+✓
+✗
+DMD2* [58]
+6.038
+83.96
+21.58
+8.419
+27.56
+✓
+✗
+D-DMD* [24]
+6.038
+84.52
+21.85
+9.176
+27.69
+✓
+✗
+CDM (Ours)
+6.075
+85.26
+21.95
+9.561
+27.98
+✓
+✓
+Longcat-Image
+Base [53]
+5.926
+87.08
+21.65
+9.450
+26.78
+-
+-
+DMD2* [58]
+5.800
+87.12
+21.07
+8.803
+26.99
+✓
+✗
+D-DMD* [24]
+5.782
+88.04
+21.23
+9.629
+26.57
+✓
+✗
+CDM (Ours)
+5.919
+88.35
+21.53
+10.65
+26.72
+✓
+✓
+4.3
+Ablation Study
+Loss Components. We ablate each loss component in Table 2 and Figure 6. Relying solely on
+LCA leads to structural collapse, whereas using only LDM or LCDM recovers visual quality but
+struggles with prompt adherence (e.g., noticeably lower CLIP scores). Pairing LCA with either
+distribution-matching loss bridges this gap, significantly improving both alignment and aesthetics.
+Ultimately, our full objective (LCA +LDM +LCDM) achieves the best performance across all metrics,
+with HPSv3 peaking at 9.561. This confirms their complementary roles: LCA anchors structure and
+semantic alignment, while LDM and LCDM provide essential on- and off-trajectory distributional
+supervision, respectively.
+Core Mechanism Design. To validate the critical design choices in Continuous-Time Distribution
+Matching, we perform an in-depth ablation on its three core mathematical components in the right
+panel of Table 2: the dynamic time schedule, the off-trajectory perturbation strategy, and the target
+
+
+
+
+
+
+
+
+
+
+Figure 6: Qualitative ablation of loss components across training steps. Left: Individual losses
+(CA, DM, CDM) in isolation. Right: Pairwise and full combinations. Partial combinations suf-
+fer from brightness collapse or degraded local fidelity at later stages, whereas our full objective
+(CA+DM+CDM) effectively preserves both global semantic coherence and local details.
+Table 2: Ablation study on SD3-Medium at 4 NFE. Left: Effect of individual loss components.
+Right: Analysis of core mechanism designs (time schedule, perturbation strategy, and target latent
+construction). The full CDM design achieves the best performance balance.
+Configuration
+AES↑
+DPG↑
+PICK↑
+HPSv3↑
+CLIP↑
+(a) Single Loss Ablation
+w/o LCA
+5.861
+72.87
+21.05
+8.128
+24.78
+w/o LDM
+6.016
+84.57
+21.75
+8.954
+27.66
+w/o LCDM
+6.067
+85.12
+21.85
+9.153
+27.91
+(b) Dual Loss Ablation
+w/o LDM&LCDM
+4.634
+3.45
+17.50
+-10.15
+14.60
+w/o LCA&LCDM
+5.787
+70.60
+20.82
+7.258
+25.31
+w/o LCA&LDM
+5.778
+72.38
+20.80
+7.331
+24.78
+Full CDM
+6.075
+85.26
+21.95
+9.561
+27.98
+Model Variant
+AES↑
+DPG↑
+PICK↑
+HPSv3↑
+CLIP↑
+(a) Time Schedule
+w/ Fixed Schedule
+6.051
+83.84
+21.89
+9.482
+27.75
+(b) Off-trajectory Perturbation
+w/o Perturbation (on-traj)
+6.027
+84.43
+21.94
+9.374
+27.90
+w/ Gaussian Perturb.
+6.040
+84.65
+21.92
+9.516
+27.88
+(c) Target Latent Construction
+w/ Full-trajectory ˆx0 target
+6.026
+85.14
+21.92
+9.346
+27.97
+Full CDM
+6.075
+85.26
+21.95
+9.561
+27.98
+latent construction. First, reverting our dynamic schedule to a standard fixed schedule leads to
+a considerable drop in generation fidelity, confirming that unifying the simulated trajectory and
+continuous distribution matching limits structural discrepancy. Second, replacing our velocity-driven
+extrapolation with a Gaussian noise baseline-implemented by first predicting the clean data x0
+from xt and re-adding noise to yield x′
+t-or removing perturbations entirely, degrades overall
+performance. This indicates that conventional re-noising fails to capture meaningful off-trajectory
+states, whereas our velocity-based extrapolation accurately simulates the exact truncation drift
+encountered during large-step inference. Finally, utilizing the full-trajectory final generation ˆx0
+rather than the intermediate target ˆx(i′)
+as the teacher’s input yields suboptimal results. This validates
+that anchoring the supervision to localized predictions provides a more direct and effective signal for
+error correction than relying on the extended backward simulation.
+Conclusion
+In this paper, we present Continuous-Time Distribution Matching (CDM), a novel distillation frame-
+work for high-quality few-step diffusion generation. Existing discrete-time methods optimize on
+fixed timesteps, leading to accumulated discretization errors and detail degradation during few-step
+inference. To bridge this gap, CDM shifts the optimization into a continuous-time space, leveraging
+dynamic scheduling and an off-trajectory alignment objective (LCDM) to explicitly simulate and
+correct truncation drifts back to the target data manifold. Extensive experiments on SD3-Medium and
+Longcat-Image demonstrate that CDM effectively recovers sharp textures and semantic adherence,
+achieving state-of-the-art 4-step generation. Notably, it accomplishes this purely through robust con-
+tinuous supervision, bypassing the need for adversarial training or costly external reward models. We
+hope this work paves the way for more accessible diffusion distillation and inspires future extensions
+to complex visual synthesis.
+References
+[1] Clement Chadebec, Onur Tasar, Eyal Benaroche, and Benjamin Aubin. Flash diffusion: Accel-
+erating any conditional diffusion model for few steps image generation. In Proceedings of the
+AAAI Conference on Artificial Intelligence, volume 39, pages 15686-15695, 2025.
+[2] Feiyang Chen, Hongpeng Pan, Haonan Xu, Xinyu Duan, Yang Yang, and Zhefeng Wang. Cross-
+resolution distribution matching for diffusion distillation. arXiv preprint arXiv:2603.06136,
+2026.
+[3] Junsong Chen, Shuchen Xue, Yuyang Zhao, Jincheng Yu, Sayak Paul, Junyu Chen, Han Cai,
+Song Han, and Enze Xie. Sana-sprint: One-step diffusion with continuous-time consistency
+distillation, 2025.
+[4] Junying Chen, Zhenyang Cai, Pengcheng Chen, Shunian Chen, Ke Ji, Xidong Wang, Yunjin
+Yang, and Benyou Wang. Sharegpt-4o-image: Aligning multimodal models with gpt-4o-level
+image generation, 2025.
+[5] Zhenglin Cheng, Peng Sun, Jianguo Li, and Tao Lin. Twinflow: Realizing one-step generation
+on large models with self-adversarial flows. arXiv preprint arXiv:2512.05150, 2025.
+[6] Cheng Cui, Ting Sun, Manhui Lin, Tingquan Gao, Yubo Zhang, Jiaxuan Liu, Xueqing Wang,
+Zelun Zhang, Changda Zhou, Hongen Liu, et al. Paddleocr 3.0 technical report. arXiv preprint
+arXiv:2507.05595, 2025.
+[7] Bradley Efron. Tweedie’s formula and selection bias. Journal of the American Statistical
+Association, 106(496):1602-1614, 2011.
+[8] Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini,
+Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, et al. Scaling rectified flow trans-
+formers for high-resolution image synthesis. In Forty-first international conference on machine
+learning, 2024.
+[9] Xiangyu Fan, Zesong Qiu, Zhuguanyu Wu, Fanzhou Wang, Zhiqian Lin, Tianxiang Ren, Dahua
+Lin, Ruihao Gong, and Lei Yang. Phased dmd: Few-step distribution matching distillation via
+score matching within subintervals. arXiv preprint arXiv:2510.27684, 2025.
+[10] Xingtong Ge, Xin Zhang, Tongda Xu, Yi Zhang, Xinjie Zhang, Yan Wang, and Jun Zhang.
+Senseflow: Scaling distribution matching for flow-based text-to-image distillation. arXiv
+preprint arXiv:2506.00523, 2025.
+[11] Jack Hessel, Ari Holtzman, Maxwell Forbes, Ronan Le Bras, and Yejin Choi. Clipscore: A
+reference-free evaluation metric for image captioning. In Proceedings of the 2021 conference
+on empirical methods in natural language processing, pages 7514-7528, 2021.
+[12] Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter.
+Gans trained by a two time-scale update rule converge to a local nash equilibrium. Advances in
+neural information processing systems, 30, 2017.
+[13] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. Advances
+in neural information processing systems, 33:6840-6851, 2020.
+[14] Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Liang
+Wang, Weizhu Chen, et al. Lora: Low-rank adaptation of large language models. Iclr, 1(2):3,
+2022.
+[15] Xiwei Hu, Rui Wang, Yixiao Fang, Bin Fu, Pei Cheng, and Gang Yu. Ella: Equip diffusion
+models with llm for enhanced semantic alignment. arXiv preprint arXiv:2403.05135, 2024.
+[16] Dengyang Jiang, Dongyang Liu, Zanyi Wang, Qilong Wu, Liuzhuozheng Li, Hengzhuang
+Li, Xin Jin, David Liu, Zhen Li, Bo Zhang, et al. Distribution matching distillation meets
+reinforcement learning. arXiv preprint arXiv:2511.13649, 2025.
+[17] Tero Karras, Miika Aittala, Timo Aila, and Samuli Laine.
+Elucidating the design space
+of diffusion-based generative models. Advances in neural information processing systems,
+35:26565-26577, 2022.
+[18] Dongjun Kim, Chieh-Hsin Lai, Wei-Hsiang Liao, Naoki Murata, Yuhta Takida, Toshimitsu
+Uesaka, Yutong He, Yuki Mitsufuji, and Stefano Ermon. Consistency trajectory models:
+Learning probability flow ode trajectory of diffusion. In The Twelfth International Conference
+on Learning Representations, 2024.
+[19] Yuval Kirstain, Adam Polyak, Uriel Singer, Shahbuland Matiana, Joe Penna, and Omer Levy.
+Pick-a-pic: An open dataset of user preferences for text-to-image generation. Advances in
+neural information processing systems, 36:36652-36663, 2023.
+[20] Haoyu Li, Tingyan Wen, Lin Qi, Zhe Wu, Yihuang Chen, Xing Zhou, Lifei Zhu, Xueqian Wang,
+and Kai Zhang. 1. x-distill: Breaking the diversity, quality, and efficiency barrier in distribution
+matching distillation. arXiv preprint arXiv:2604.04018, 2026.
+[21] Shanchuan Lin, Anran Wang, and Xiao Yang. Sdxl-lightning: Progressive adversarial diffusion
+distillation. arXiv preprint arXiv:2402.13929, 2024.
+[22] Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr
+Dollár, and C Lawrence Zitnick. Microsoft coco: Common objects in context. In European
+conference on computer vision, pages 740-755. Springer, 2014.
+[23] Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. Flow
+matching for generative modeling. In The Eleventh International Conference on Learning
+Representations, 2022.
+[24] Dongyang Liu, Peng Gao, David Liu, Ruoyi Du, Zhen Li, Qilong Wu, Xin Jin, Sihan Cao,
+Shifeng Zhang, Hongsheng Li, et al. Decoupled dmd: Cfg augmentation as the spear, distribution
+matching as the shield. arXiv preprint arXiv:2511.22677, 2025.
+[25] Jie Liu, Gongye Liu, Jiajun Liang, Yangguang Li, Jiaheng Liu, Xintao Wang, Pengfei Wan,
+Di Zhang, and Wanli Ouyang. Flow-grpo: Training flow matching models via online rl. arXiv
+preprint arXiv:2505.05470, 2025.
+[26] Xingchao Liu, Chengyue Gong, et al. Flow straight and fast: Learning to generate and transfer
+data with rectified flow. In The Eleventh International Conference on Learning Representations,
+2022.
+[27] Xingchao Liu, Xiwen Zhang, Jianzhu Ma, Jian Peng, et al. Instaflow: One step is enough for
+high-quality diffusion-based text-to-image generation. In The Twelfth International Conference
+on Learning Representations, 2023.
+[28] Cheng Lu and Yang Song. Simplifying, stabilizing and scaling continuous-time consistency
+models. In The Thirteenth International Conference on Learning Representations, 2025.
+[29] Yanzuo Lu, Yuxi Ren, Xin Xia, Shanchuan Lin, Xing Wang, Xuefeng Xiao, Andy J Ma, Xiaohua
+Xie, and Jian-Huang Lai. Adversarial distribution matching for diffusion distillation towards
+efficient image and video synthesis. In Proceedings of the IEEE/CVF International Conference
+on Computer Vision, pages 16818-16829, 2025.
+[30] Simian Luo, Yiqin Tan, Longbo Huang, Jian Li, and Hang Zhao. Latent consistency models:
+Synthesizing high-resolution images with few-step inference. arXiv preprint arXiv:2310.04378,
+2023.
+[31] Weijian Luo, Tianyang Hu, Shifeng Zhang, Jiacheng Sun, Zhenguo Li, and Zhihua Zhang. Diff-
+instruct: A universal approach for transferring knowledge from pre-trained diffusion models.
+Advances in Neural Information Processing Systems, 36:76525-76546, 2023.
+[32] Yihong Luo, Tianyang Hu, Jiacheng Sun, Yujun Cai, and Jing Tang. Learning few-step diffusion
+models by trajectory distribution matching. In Proceedings of the IEEE/CVF International
+Conference on Computer Vision, pages 17719-17728, 2025.
+[33] Yuhang Ma, Xiaoshi Wu, Keqiang Sun, and Hongsheng Li. Hpsv3: Towards wide-spectrum hu-
+man preference score. In Proceedings of the IEEE/CVF International Conference on Computer
+Vision, pages 15086-15095, 2025.
+[34] Chenlin Meng, Robin Rombach, Ruiqi Gao, Diederik Kingma, Stefano Ermon, Jonathan Ho,
+and Tim Salimans. On distillation of guided diffusion models. In Proceedings of the IEEE/CVF
+conference on computer vision and pattern recognition, pages 14297-14306, 2023.
+[35] Weili Nie, Julius Berner, Nanye Ma, Chao Liu, Saining Xie, and Arash Vahdat. Transition
+matching distillation for fast video generation. arXiv preprint arXiv:2601.09881, 2026.
+[36] Mang Ning, Mingxiao Li, Jianlin Su, Albert Ali Salah, and Itir Onal Ertugrul. Elucidating
+the exposure bias in diffusion models. In The Twelfth International Conference on Learning
+Representations, 2024.
+[37] Mang Ning, Enver Sangineto, Angelo Porrello, Simone Calderara, and Rita Cucchiara. Input
+perturbation reduces exposure bias in diffusion models. In International Conference on Machine
+Learning, pages 26245-26265. PMLR, 2023.
+[38] Yansong Peng, Kai Zhu, Yu Liu, Pingyu Wu, Hebei Li, Xiaoyan Sun, and Feng Wu. Facm:
+Flow-anchored consistency models. arXiv preprint arXiv:2507.03738, 2025.
+[39] Ben Poole, Ajay Jain, Jonathan T Barron, and Ben Mildenhall. Dreamfusion: Text-to-3d using
+2d diffusion. In The Eleventh International Conference on Learning Representations, 2023.
+[40] You Qin, Linqing Wang, Hao Fei, Roger Zimmermann, Liefeng Bo, Qinglin Lu, and Chunyu
+Wang. Soar: Self-correction for optimal alignment and refinement in diffusion models, 2026.
+[41] Yuxi Ren, Xin Xia, Yanzuo Lu, Jiacheng Zhang, Jie Wu, Pan Xie, Xing Wang, and Xuefeng Xiao.
+Hyper-sd: Trajectory segmented consistency model for efficient image synthesis. Advances in
+neural information processing systems, 37:117340-117362, 2024.
+[42] Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer. High-
+resolution image synthesis with latent diffusion models. In Proceedings of the IEEE/CVF
+conference on computer vision and pattern recognition, pages 10684-10695, 2022.
+[43] Amirmojtaba Sabour, Sanja Fidler, and Karsten Kreis. Align your flow: Scaling continuous-time
+flow map distillation. In The Thirty-ninth Annual Conference on Neural Information Processing
+Systems, 2025.
+[44] Tim Salimans and Jonathan Ho. Progressive distillation for fast sampling of diffusion models.
+arXiv preprint arXiv:2202.00512, 2022.
+[45] Axel Sauer, Dominik Lorenz, Andreas Blattmann, and Robin Rombach. Adversarial diffusion
+distillation. In European Conference on Computer Vision, pages 87-103. Springer, 2024.
+[46] Christoph
+Schuhmann.
+LAION-Aesthetics.
+
+laion-aesthetics/, Aug 2022. Blog post.
+[47] Christoph Schuhmann, Romain Beaumont, Richard Vencu, Cade Gordon, Ross Wightman,
+Mehdi Cherti, Theo Coombes, Aarush Katta, Clayton Mullis, Mitchell Wortsman, et al. Laion-
+5b: An open large-scale dataset for training next generation image-text models. Advances in
+neural information processing systems, 35:25278-25294, 2022.
+[48] Jiaming Song, Chenlin Meng, and Stefano Ermon. Denoising diffusion implicit models. In
+International Conference on Learning Representations, 2021.
+[49] Yang Song, Prafulla Dhariwal, Mark Chen, and Ilya Sutskever. Consistency models. In
+Proceedings of the 40th International Conference on Machine Learning, pages 32211-32252,
+2023.
+[50] Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and
+Ben Poole. Score-based generative modeling through stochastic differential equations. In
+International Conference on Learning Representations, 2021.
+[51] Nikita Starodubcev, Ilya Drobyshevskiy, Denis Kuznedelev, Artem Babenko, and Dmitry
+Baranchuk. Scale-wise distillation of diffusion models. arXiv preprint arXiv:2503.16397, 2025.
+[52] Yanxiao Sun, Jiafu Wu, Yun Cao, Chengming Xu, Yabiao Wang, Weijian Cao, Donghao Luo,
+Chengjie Wang, and Yanwei Fu. Swiftvideo: A unified framework for few-step video generation
+through trajectory-distribution alignment. In Proceedings of the AAAI Conference on Artificial
+Intelligence, volume 40, pages 9233-9241, 2026.
+[53] Meituan LongCat Team, Hanghang Ma, Haoxian Tan, Jiale Huang, Junqiang Wu, Jun-Yan He,
+Lishuai Gao, Songlin Xiao, Xiaoming Wei, Xiaoqi Ma, et al. Longcat-image technical report.
+arXiv preprint arXiv:2512.07584, 2025.
+[54] Fu-Yun Wang, Zhaoyang Huang, Alexander W Bergman, Dazhong Shen, Peng Gao, Michael
+Lingelbach, Keqiang Sun, Weikang Bian, Guanglu Song, Yu Liu, et al. Phased consistency
+models. Advances in neural information processing systems, 37:83951-84009, 2024.
+[55] Zhengyi Wang, Cheng Lu, Yikai Wang, Fan Bao, Chongxuan Li, Hang Su, and Jun Zhu. Pro-
+lificdreamer: High-fidelity and diverse text-to-3d generation with variational score distillation.
+Advances in neural information processing systems, 36:8406-8441, 2023.
+[56] Hongyang Wei, Hongbo Liu, Zidong Wang, Yi Peng, Baixin Xu, Size Wu, Xuying Zhang,
+Xianglong He, Zexiang Liu, Peiyu Wang, et al. Skywork unipic 3.0: Unified multi-image
+composition via sequence modeling. arXiv preprint arXiv:2601.15664, 2026.
+[57] Sirui Xie, Zhisheng Xiao, Diederik P Kingma, Tingbo Hou, Ying N Wu, Kevin Murphy, Tim
+Salimans, Ben Poole, and Ruiqi Gao. Em distillation for one-step diffusion models. Advances
+in Neural Information Processing Systems, 37:45073-45104, 2024.
+[58] Tianwei Yin, Michaël Gharbi, Taesung Park, Richard Zhang, Eli Shechtman, Fredo Durand, and
+Bill Freeman. Improved distribution matching distillation for fast image synthesis. Advances in
+neural information processing systems, 37:47455-47487, 2024.
+[59] Tianwei Yin, Michaël Gharbi, Richard Zhang, Eli Shechtman, Fredo Durand, William T
+Freeman, and Taesung Park. One-step diffusion with distribution matching distillation. In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages
+6613-6623, 2024.
+[60] Xin Yu, Yuan-Chen Guo, Yangguang Li, Ding Liang, Song-Hai Zhang, and Xiaojuan Qi.
+Text-to-3d with classifier score distillation. arXiv preprint arXiv:2310.19415, 2023.
+[61] Jianbin Zheng, Minghui Hu, Zhongyi Fan, Chaoyue Wang, Changxing Ding, Dacheng Tao, and
+Tat-Jen Cham. Trajectory consistency distillation: Improved latent consistency distillation by
+semi-linear consistency function with trajectory mapping. arXiv preprint arXiv:2402.19159,
+2024.
+[62] Mingyuan Zhou, Yi Gu, and Zhendong Wang. Few-step diffusion via score identity distillation.
+arXiv preprint arXiv:2505.12674, 2025.
+[63] Kai Zou. text-to-image-2m: A high-quality, diverse text-image training dataset, 2024.
+A
+Limitations
+While CDM achieves strong few-step generation quality, it has several limitations that we leave
+for future work. First, although our dynamic continuous schedule and CDM loss do not introduce
+any additional cost at inference time, they do increase per-iteration training cost: the dynamic
+schedule samples a variable simulation length N ∼U{1, Nmax} that prolongs the average backward
+simulation, and the CDM loss requires an extra forward pass of the real and fake teachers on the
+extrapolated off-trajectory latent xt′
+i (see Appendix G for detailed results). Second, as a distillation
+framework, CDM is fundamentally upper-bounded by the teacher: the DM and CDM losses both rely
+on the teacher’s score as the supervision signal, so concepts or compositions that the teacher itself
+handles poorly are unlikely to be recovered through distillation alone, as suggested by the CFG-free
+analysis in Figure 3. Third, our empirical study is restricted to text-to-image generation such as
+SD3-Medium and Longcat-Image; we will explore extending CDM to text-and-image-to-image (TI2I)
+editing and to video diffusion models, where trajectory length and temporal consistency play a larger
+role, in future studies.
+B
+Broader Impact
+CDM offers a more efficient distillation recipe for diffusion models, reducing the inference cost of
+high-quality text-to-image generation by an order of magnitude and thereby improving the accessibil-
+ity of these models on commodity hardware. Since our work only distills a pre-trained teacher and
+does not introduce new generative capabilities or training data, its potential risks-such as the misuse
+of generated imagery for misinformation or copyright infringement-are largely inherited from the
+underlying teacher model rather than amplified by our method. We encourage practitioners deploying
+CDM-distilled models to combine them with established safeguards such as NSFW filtering, invisible
+watermarking, and content provenance standards (e.g., C2PA).
+C
+Experiment Details
+C.1
+Training Hyperparameters
+C.1.1
+SD3-Medium
+We apply our framework to distill the pre-trained SD3-Medium [8] into a 4-step student model. The
+optimization relies on a unified objective comprising CFG Augmentation (CA), Distribution Matching
+(DM), and Continuous-Time Distribution Matching (CDM) regularization, combined with equal
+weights. For the CA loss, we adopt the same teacher timestep sample strategy as in D-DMD [24]. The
+training dataset consists of 200K prompts randomly sampled from the training sets of T2I-2M [63],
+LAION [47], ShareGPT-4o-Image [4], PickScore [19], and OCR [25]. We perform full fine-tuning
+on the student network using the AdamW optimizer with a batch size of 128. The learning rate is set
+to 1 × 10−5 for the student generator and 5 × 10−6 for the fake teacher. The weight decay is set to
+0.001, and β values are (0.9, 0.999). Following the Two Time-scale Update Rule (TTUR), the fake
+teacher is updated 2 times per student generator update. The CFG guidance scale (α) is maintained at
+7.0, and the dynamic schedule length (Nmax) is set to 28. The entire distillation process runs for 4K
+iterations on 16 A100 GPUs, which takes approximately 24 hours.
+C.1.2
+LongCat
+The distillation of our LongCat [53] 4-step generator shares the same basic training settings as
+SD3-Medium. To handle its large model size efficiently, we employ LoRA [14] fine-tuning with rank
+64 and alpha 128. The training utilizes a batch size of 64 and requires 2K iterations on 16 A100
+GPUs, taking approximately 24 hours to achieve optimal convergence.
+C.2
+Baseline Implementation Details
+All baselines use SD3-Medium [8] as the teacher backbone, with the number of function eval-
+uations (NFE) and inference-time hyperparameters kept consistent with each method’s official
+configuration. For TDM [32] ( Hyper-SD [41] (https:
+//huggingface.co/ByteDance/Hyper-SD), and Flash-Diffusion [1] (
+gojasper/flash-diffusion), we directly use their official checkpoints and recommended gen-
+eration settings. For DMD2 [58] and D-DMD [24], since no official SD3-Medium checkpoints are
+publicly available, we re-implement them within our unified framework under the exact same setting
+as our CDM and notably without the GAN-based adversarial loss.
+D
+A Score-Matching Perspective on LCA and LDM
+Tweedie’s formula [7] provides the bridge between a denoiser’s posterior-mean prediction and the
+underlying score function. We first derive its form under the flow-matching interpolation used
+throughout this paper (Section D.1), and then apply it to interpret the gradients of LCA and LDM
+in Equations (3) and (4) (Sections D.2 and D.3). The two derivations together justify the claim in
+Section 3.2 that, under the dynamic continuous schedule, both losses regularize the student’s velocity
+field uniformly over (0, 1].
+Throughout this section, preal(zτ|c) denotes the marginal distribution of the real data (modeled
+by the frozen teacher Dϕ) at continuous noise level τ, and pfake(zτ|c) denotes the corresponding
+distribution implicitly defined by the online-updated fake teacher Dψ.
+D.1
+Tweedie’s Formula under the Flow-Matching Interpolation
+For completeness, we derive Tweedie’s formula under the flow-matching interpolation.
+Proposition 1 (Tweedie’s Formula for Flow Matching). Consider the flow-matching forward process
+that interpolates between clean data x0 ∼pdata and Gaussian noise ϵ ∼N(0, I):
+zτ = (1 −τ)x0 + τϵ,
+τ ∈[0, 1].
+(11)
+Then the posterior mean of the clean data given the noisy observation satisfies
+E[x0|zτ] = zτ + τ 2∇zτ log p(zτ)
+1 −τ
+.
+(12)
+A denoiser D(zτ, τ) trained under the mean-squared-error objective converges to the posterior mean
+E[x0|zτ], so Equation (12) also yields the score-prediction identity used in the main text.
+Proof: Given a clean sample x0, the conditional distribution of zτ is Gaussian:
+p(zτ|x0) = N
+ zτ; (1 −τ)x0, τ 2I
+
+.
+(13)
+The marginal distribution of zτ is obtained by integrating over the data distribution:
+p(zτ) =
+Z
+p(x0) N
+ zτ; (1 −τ)x0, τ 2I
+
+dx0.
+(14)
+Differentiating log p(zτ) with respect to zτ gives
+∇zτ log p(zτ) = ∇zτ p(zτ)
+p(zτ)
+=
+p(zτ)
+Z
+p(x0) ∇zτ N
+ zτ; (1 −τ)x0, τ 2I
+
+dx0.
+(15)
+Using the identity for the derivative of a Gaussian density,
+∇zτ N(zτ; µ, τ 2I) = µ −zτ
+τ 2
+N(zτ; µ, τ 2I),
+with µ = (1 −τ)x0, we obtain
+∇zτ log p(zτ) =
+p(zτ)
+Z
+p(x0) (1 −τ)x0 −zτ
+τ 2
+N
+ zτ; (1 −τ)x0, τ 2I
+
+dx0
+= (1 −τ)E[x0|zτ] −zτ
+τ 2
+,
+(16)
+where the second equality follows from the definition of the posterior mean,
+E[x0|zτ] =
+Z
+x0 p(x0|zτ) dx0.
+Solving for E[x0|zτ] yields
+(1 −τ) E[x0|zτ] = zτ + τ 2∇zτ log p(zτ),
+(17)
+from which Equation (12) follows.
+D.2
+Score-Matching View of the CA Gradient
+Treating the stop-gradient target in Equation (3) as a constant, the chain rule gives
+∇θLCA = −wτα
+∂Dθ(xti, ti, c)
+∂θ
+⊤
+(Dϕ(zτ, τ, c) −Dϕ(zτ, τ, ∅)) .
+(18)
+Applying Proposition 1 to both teacher predictions and using preal(zτ|∅) = preal(zτ), the prediction
+difference reduces to
+Dϕ(zτ, τ, c) −Dϕ(zτ, τ, ∅) =
+τ 2
+1 −τ (∇zτ log preal(zτ|c) −∇zτ log preal(zτ)) .
+(19)
+Bayes’ rule log p(c|zτ) = log p(zτ|c) −log p(zτ) + log p(c), differentiated with respect to zτ,
+eliminates the data-independent prior and gives the implicit-classifier identity
+∇zτ log preal(zτ|c) −∇zτ log preal(zτ) = ∇zτ log preal(c|zτ).
+(20)
+Substituting back into Equation (18),
+∇θLCA = −wτα τ 2
+1 −τ
+∂Dθ(xti, ti, c)
+∂θ
+⊤
+∇zτ log preal(c|zτ),
+(21)
+which matches Equation (5) in the main text. Hence LCA steers θ along the implicit-classifier gradient
+∇zτ log preal(c|zτ), which corresponds to maximizing text-image alignment.
+D.3
+Score-Matching View of the DM Gradient
+The DM loss in Equation (4) aligns the student-induced distribution pfake with the real-data distribu-
+tion preal by minimizing, in expectation, the reverse Kullback-Leibler divergence
+∇θDKL
+ p˜τ
+fake ∥p˜τ
+real
+
+= Ez˜τ
+
+(∇z˜τ log pfake(z˜τ|c) −∇z˜τ log preal(z˜τ|c)) ∂z˜τ
+∂θ
+
+,
+(22)
+at any continuous noise level ˜τ ∈(0, 1]. Following DMD [59], pfake is tracked online by the fake
+teacher Dψ, which provides a tractable estimate of ∇z˜τ log pfake on the fly.
+We now show that the gradient of LDM realizes Equation (22) in score form. Treating the stop-gradient
+target in Equation (4) as a constant, the chain rule gives
+∇θLDM = −w˜τ
+∂Dθ(xti, ti, c)
+∂θ
+⊤
+(Dϕ(z˜τ, ˜τ, c) −Dψ(z˜τ, ˜τ, c)) .
+(23)
+Applying Proposition 1 to Dϕ and Dψ converts the prediction difference into a difference of condi-
+tional scores:
+Dϕ(z˜τ, ˜τ, c) −Dψ(z˜τ, ˜τ, c) =
+˜τ 2
+1 −˜τ (∇z˜τ log preal(z˜τ|c) −∇z˜τ log pfake(z˜τ|c)) .
+(24)
+Substituting into Equation (23),
+∇θLDM = −w˜τ
+˜τ 2
+1 −˜τ
+∂Dθ(xti, ti, c)
+∂θ
+⊤
+(∇z˜τ log preal(z˜τ|c) −∇z˜τ log pfake(z˜τ|c)) ,
+(25)
+which matches Equation (6) in the main text. The bracketed score difference shares the structure of
+the integrand in Equation (22) and, in expectation, drives pfake toward preal at noise level ˜τ.
+Together, Equations (21) and (25) share the same prefactor
+τ 2
+1−τ (∂Dθ/∂θ)⊤and act on a score-valued
+target. Because the dynamic continuous schedule (Section 3.2) draws the student anchor ti and the
+teacher perturbation timesteps τ, ˜τ independently from the same continuous distribution on (0, 1],
+the resulting supervision is applied uniformly over the entire time domain rather than only at sparse
+discrete anchors.
+E
+Local and Global Truncation Error of Euler Sampling
+This appendix derives the local and global truncation error bounds for explicit Euler sampling to
+formally show that the error is controlled by M2 (the supremum of the velocity field’s material
+derivative), which is precisely the quantity suppressed by the CDM loss.
+Setup and Local Error. Consider the probability-flow ODE dxτ/dτ = vθ(xτ, τ, c) for τ ∈[ϵ, 1].
+Discretizing the interval with a schedule 1 = t1 > t2 > · · · > tN = ϵ and step sizes ∆t = hj :=
+tj −tj+1 > 0, a single explicit Euler step from tj down to tj+1 is:
+˜xtj+1 = xtj −hj vθ(xtj, tj, c).
+(26)
+Assuming vθ is sufficiently smooth and L-Lipschitz in x, we follow the standard local-error con-
+vention by comparing a single Euler step against the exact ODE solution passing through the same
+starting point xtj at τ = tj. Expanding the true solution around τ = tj via Taylor’s theorem with
+Lagrange remainder gives:
+xtj+1 = xtj −hj ˙xtj + 1
+2h2
+j ¨xξj,
+ξj ∈(tj+1, tj).
+(27)
+Substituting ˙xτ = vθ(xτ, τ, c) and subtracting Equation (26) yields the local truncation error:
+xtj+1 −˜xtj+1
+ =
+2h2
+j ∥¨xξj∥≤
+2h2
+j · M (j)
+= O
+ 
+(∆t)2
+sup
+τ∈[tj+1,tj]
+dvθ
+dτ
+
+!
+,
+(28)
+where M (j)
+bounds the material derivative dvθ/dτ (the total variation of vθ along the trajectory) over
+the step:
+M (j)
+:=
+sup
+τ∈[tj+1,tj]
+dvθ
+dτ
+ =
+sup
+τ∈[tj+1,tj]
+∂τvθ(xτ, τ, c) + Jxvθ(xτ, τ, c) vθ(xτ, τ, c)
+. (29)
+Global Error. Accumulating this local error over N steps down to τ = ϵ yields the global error
+bound:
+xϵ −ˆxϵ
+ ≤eL(1−ϵ) −1
+L
+· 1
+2 ¯h M2,
+¯h := max
+j
+hj,
+M2 := max
+j
+M (j)
+2 .
+(30)
+This bound shows that the global error is O(¯h) (since accumulating O(1/¯h) steps of O(¯h2) local
+error loses one order), and for a fixed step budget N, M2 is the only factor that can be optimized by
+training.
+How CDM Constrains M2. The CDM loss supervises the student at the extrapolated off-trajectory
+latent:
+xt′
+i = xti + ∆t vθ(xti, ti, c),
+where ∆t = t′
+i −ti.
+(31)
+To understand its regularization effect, consider the first-order Taylor expansion of the velocity field
+at this extrapolated point around (xti, ti):
+vθ(xt′
+i, t′
+i) ≈vθ(xti, ti) + ∂τvθ(xti, ti, c)∆t + Jxvθ(xti, ti, c)(xt′
+i −xti)
+= vθ(xti, ti) + ∆t (∂τvθ + Jxvθ vθ)
+|
+{z
+}
+= dvθ/dτ
+.
+(32)
+Rearranging the terms reveals that the material derivative is functionally approximated by the finite
+difference taking the Euler leap:
+dvθ
+dτ ≈vθ(xt′
+i, t′
+i) −vθ(xti, ti)
+∆t
+.
+(33)
+While standard distillation ensures the student matches the teacher at the anchor xti (i.e., vθ(xti, ti) ≈
+vϕ(xti, ti)), the CDM loss additionally enforces vθ(xt′
+i, t′
+i) ≈vϕ(xt′
+i, t′
+i). Together, they force the
+student’s material derivative to mimic that of the teacher dvθ
+dτ ≈dvϕ
+dτ . Since the pre-trained teacher
+naturally presents a smooth velocity field with bounded variation, CDM effectively transfers this
+smoothness to the student, implicitly regularizing M2 and preventing the sporadic high-frequency
+oscillation typically observed in discretely trained models.
+F
+Training Algorithm
+For completeness, we summarize the full training procedure of CDM in Algorithm 1. The pseudocode
+reflects the implementation details described in Section 3: the dynamic continuous time schedule
+(Section 3.2), the decoupled CA and DM losses on backward-simulation anchors (Section 3.1), and
+the off-trajectory CDM loss anchored to the localized prediction ˆx(i′)
+(Section 3.3). All three student-
+side losses are computed within a single backward simulation per iteration; the intermediate latent
+xti is extracted from the trajectory at a uniformly sampled anchor ti. As established in D-DMD [24],
+this single shared latent xti is used across all objectives to improve training efficiency, and the student
+parameters θ receive a single combined gradient step. The fake teacher ψ is updated on a separate
+optimizer using the standard flow-matching objective on the re-noised one-step student prediction
+ˆx(i)
+0 , sharing the same anchor i with the distillation losses.
+Algorithm 1 Training Procedure of CDM
+Require: Student θ, real teacher ϕ (frozen), fake teacher ψ, max length Nmax, guidance scale α,
+prompt set C
+1: repeat
+2:
+Sample prompt c ∼C, N ∼U{1, . . . , Nmax}, schedule 1 = t1 > t2 > · · · > tN > 0
+3:
+// 1. Backward simulation (no gradient)
+4:
+xt1 ∼N(0, I); run θ for N Euler steps to obtain {xtn}N
+n=1
+5:
+Sample anchor i ∼U{1, . . . , N}
+6:
+// 2. Fake teacher update (on the re-noised one-step student prediction ˆx(i)
+0 )
+7:
+ˆx(i)
+←Dθ(xti, ti, c)
+8:
+Sample τψ ∼U(0, 1]; zτψ ←(1 −τψ) sg[ˆx(i)
+0 ] + τψ ϵψ
+9:
+ψ ←ψ −ηψ ∇ψ
+vψ(zτψ, τψ, c) −(ϵψ −sg[ˆx(i)
+0 ])
+2
+10:
+// 3. CA Loss
+11:
+Sample τ ∼U(0, 1]; zτ ←(1 −τ) sg[ˆx(i)
+0 ] + τ ϵτ
+12:
+Compute LCA
+(Equation (3))
+13:
+// 4. DM Loss
+14:
+Sample ˜τ ∼U(0, 1]; z˜τ ←(1 −˜τ) sg[ˆx(i)
+0 ] + ˜τ ϵ˜τ
+15:
+Compute LDM
+(Equation (4))
+16:
+// 5. CDM Loss
+17:
+Sample t′
+i ∼U(0, 1]; xt′
+i ←xti + (t′
+i −ti) vθ(xti, ti, c)
+18:
+ˆx(i′)
+←Dθ(xt′
+i, t′
+i, c)
+19:
+Sample ˆτ ∼U(0, 1]; zˆτ ←(1 −ˆτ) sg[ˆx(i′)
+] + ˆτ ϵˆτ
+20:
+Compute LCDM
+(Equation (9))
+21:
+// 6. Student update
+22:
+θ ←θ −η ∇θ(LCA + LDM + LCDM)
+(Equation (10))
+23: until converged
+G
+More Quantitative Comparisons
+To further evaluate model performance and training/inference resource consumption, we select the
+strongest baseline from Table 1, namely D-DMD [24], and conduct a more in-depth comparison
+against our CDM along two complementary dimensions: (i) additional quality metrics that are not
+covered by the main table (OCR accuracy for text rendering and FID for distributional fidelity), and
+(ii) training and inference efficiency.
+Evaluation Protocol. For text rendering evaluation, we calculate OCR accuracy using PaddleOCR [6]
+on a test set of 1K OCR prompts from FlowGRPO [25]. Additionally, we compute the Fréchet
+Inception Distance (FID) [12] using 10K prompts from the COCO 2014 validation set [22]. Relative
+training time is normalized to D-DMD, and inference latency is measured at 1024 × 1024 resolution
+with 4 NFE on a single GPU under identical hardware and software conditions across all methods.
+Results. As reported in Table 3, CDM delivers the strongest overall quality among the three configu-
+rations. Across the seven quality metrics, CDM ranks first on six of them (Aesthetic, DPGBench,
+PickScore, HPSv3, CLIPScore, and FID), while remaining closely competitive behind the fixed-
+schedule variant on OCR accuracy. The fixed-schedule variant of CDM consistently ranks second
+across most quality metrics, indicating that our overall framework is already a strong recipe and that
+the dynamic time schedule provides a further, consistent improvement on top of it. On the efficiency
+side, our dynamic continuous-time schedule and CDM loss introduce additional per-iteration training
+overhead-primarily due to the longer average backward simulation length and the extra forward pass
+on the extrapolated off-trajectory latent xt′
+i-resulting in a relative training time of roughly 1.8× that
+of D-DMD with comparable peak memory (62.5 vs. 62.2 GB). Crucially, this overhead is confined to
+the training phase: at inference time, all three configurations share identical computational cost since
+they use the same backbone and the same number of function evaluations, so the per-image latency
+of CDM is on par with D-DMD (246 ms/img).
+Table 3: Extended comparison with the strongest baseline D-DMD on SD3-Medium with 4
+NFE. We report the five main quality metrics (Aesthetic, DPGBench, PickScore, HPSv3, CLIPScore)
+together with two complementary quality metrics (OCR accuracy on 1K FlowGRPO prompts and
+FID on 10K COCO 2014 val prompts), as well as training memory, relative training time (normalized
+to D-DMD), and inference latency. The best and second-best results in each column are highlighted
+in bold and underline, respectively.
+Quality (Main Metrics)
+Quality (Extra)
+Efficiency
+Method
+Aes↑DPG↑Pick↑HPSv3↑CLIP↑OCR↑
+FID↓
+Mem (GB) TrainTime Latency (ms)
+D-DMD∗[24]
+6.038 84.52
+21.85
+9.176
+27.69
+33.47
+31.47
+62.2
+1.0×
+CDM (w/ Fixed Schedule) 6.051 83.84
+21.89
+9.482
+27.75
+37.33
+31.05
+62.5
+1.1×
+CDM
+6.075 85.26
+21.95
+9.561
+27.98
+34.82
+30.30
+62.5
+1.8×
+H
+Quantitative Evaluation of the DM Loss
+As discussed in Section 1 and visually demonstrated in Figure 3, relying solely on the Distribution
+Matching (DM) objective limits the student model to learning a marginal, unguided distribution. To
+quantitatively validate this, we evaluate the performance of the student models distilled exclusively
+with the DM loss and compare them against their respective teacher models running with and without
+Classifier-Free Guidance (CFG).
+The results are summarized in Table 4. When disabling CFG for the teacher (Teacher CFG-free),
+we observe a significant deterioration in both semantic alignment metrics (e.g., DPGBench, HPSv3)
+and visual fidelity. Crucially, the student model distilled with the DM loss alone almost completely
+mirrors this performance drop, attaining metric scores that closely track the CFG-free teacher. As
+shown in Table 4, this highly consistent degradation pattern on both SD3-Medium and Longcat-Image
+confirms that the DM loss accurately aligns the student with the underlying teacher-but strictly with
+its weak, unguided marginal distribution.
+Table 4: Quantitative validation of the DM loss’s alignment with CFG-free distributions. The
+student model distilled exclusively with the DM loss heavily mirrors the performance deterioration of
+the CFG-free teacher across all metrics, confirming our visual observations in Figure 3.
+Method
+NFE
+Aesthetic↑
+DPGBench↑
+PickScore↑
+HPSv3↑
+CLIPScore↑
+SD3-Medium
+Teacher (with CFG)
+5.885
+85.04
+21.73
+8.189
+28.60
+Teacher (CFG-free)
+5.681
+69.65
+20.24
+4.693
+24.32
+Student (DM loss only)
+5.787
+70.60
+20.82
+7.258
+25.31
+Longcat-Image
+Teacher (with CFG)
+5.926
+87.08
+21.65
+9.450
+26.78
+Teacher (CFG-free)
+5.952
+84.72
+21.12
+8.253
+25.63
+Student (DM loss only)
+6.028
+80.53
+20.10
+8.186
+21.69
+8NFE
+6NFT
+4NFT
+3NFT
+Figure 7: Generations from the same CDM checkpoint under varying NFE ∈{3, 4, 6, 8}, using
+identical prompts and random seeds across columns. CDM produces coherent and prompt-aligned
+images across the full range, with finer details emerging as more inference steps are used.
+I
+CDM under Varying Inference Steps
+Although our student is distilled with a target of 4 NFE, the continuous-time training paradigm
+of CDM does not bind the resulting model to any specific inference schedule. On the one hand,
+the dynamic continuous schedule (Section 3.2) randomizes the backward simulation length N ∼
+U{1, Nmax} at every training iteration, so the student is exposed to trajectories of varying lengths
+rather than a single fixed grid. On the other hand, the LCDM loss (Section 3.3) further regularizes
+the student’s velocity field vθ across the continuous time domain, which directly suppresses the per-
+step truncation error of order O((∆t)2 supτ ∥dvθ/dτ∥) that dominates few-step Euler integration.
+As a result, CDM remains usable across a range of NFEs at test time without any retraining or
+schedule-specific tuning. Figure 7 shows samples generated by the same CDM checkpoint under NFE
+∈{3, 4, 6, 8} with identical prompts and seeds, where the model produces coherent and well-aligned
+images throughout the range and progressively recovers finer details as the NFE increases.
+J
+More Qualitative Results
+To complement the main qualitative comparison in Figure 5, we provide additional samples generated
+by CDM on both backbones. Figure 8 shows results on SD3-Medium, covering a diverse set
+of prompts that span photorealistic portraits, complex scenes, stylized illustrations, and text-rich
+compositions. Figure 9 shows the corresponding results on Longcat-Image, demonstrating that the
+proposed continuous-time distribution matching framework generalizes consistently across different
+backbones. All images are generated with 4 NFE.
+Figure 8: Additional qualitative results of CDM on SD3-Medium at 1024 × 1024 resolution with 4
+NFE, covering diverse prompt categories. Zoom in for best view.
+Figure 9: Additional qualitative results of CDM on Longcat-Image at 1024 × 1024 resolution with 4
+NFE, covering diverse prompt categories. Zoom in for best view.

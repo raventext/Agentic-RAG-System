@@ -1,0 +1,1212 @@
+GLAZYBENCH: A BENCHMARK FOR CERAMIC GLAZE
+PROPERTY PREDICTION AND IMAGE GENERATION
+Ziyu Zhai, Siyou Li, Juexi Shao, Juntao Yu
+Queen Mary University of London
+{z.zhai, siyou.li, j.shao, juntao.yu}@qmul.ac.uk
+ABSTRACT
+Developing ceramic glazes is a costly, time-consuming process of trial and error due to complex
+chemistry, placing a significant burden on independent artists. While recent advances in multimodal
+AI offer a modern solution, the field lacks the large-scale datasets required to train these models. We
+propose GlazyBench, the first dataset for AI-assisted glaze design. Comprising 23,148 real glaze
+formulations, GlazyBench supports two primary tasks: predicting post-firing surface properties, such
+as color and transparency, from raw materials, and generating accurate visual representations of the
+glaze based on these properties. We establish comprehensive baselines for property prediction using
+traditional machine learning and large language models, alongside image generation benchmarks
+using deep generative and large multimodal models. Our experiments demonstrate promising yet
+challenging results. GlazyBench pioneers a new research direction in AI-assisted material design,
+providing a standardized benchmark for systematic evaluation.
+Keywords Glaze · Image generation · Molecular property prediction
+Introduction
+The development of ceramic glazes has long relied on empirical paradigms. Complex reactions and phase transitions
+during high-temperature firing determine the final color, surface texture, and transparency [10, 35]. Consequently,
+trial and error remains the standard method for achieving functional and desired results. However, this approach is
+both expensive and time-consuming. It places a significant burden on the development of new glazes, particularly for
+independent ceramic artists who lack the resources of large manufacturers. Furthermore, the traditional trial-and-error
+process is highly sensitive to process disturbances [5, 18]. This sensitivity results in insufficient reproducibility across
+different studios and kilns, thereby limiting the systematic exploration of the design space [42, 27]. Machine learning
+models are increasingly applied in materials science. Despite this progress, the lack of high-quality datasets and
+standardized evaluation methods remains a serious bottleneck [26, 12, 6]. Therefore, building a high-quality dataset and
+utilizing computational modeling to guide the glaze development process remains an open and challenging question.
+Researchers have explored interpretable models, such as the Kubelka-Munk (KM) optical model, to successfully predict
+reflection spectra and CIELAB values for industrial color-matching [4, 28, 29]. In the data-driven domain, neural
+networks have been used to predict post-firing properties from pigment ratios in industrial wall tiles [23]. However,
+most research focuses on highly specific problems or single glaze systems, such as black, brown [35] and bright blue
+glazes [10], or lustrous layers [15]. By relying on fixed raw materials and narrow formula variations, these studies offer
+strong interpretability but limited transferability when components or firing conditions change. Other work optimizes
+formulas by adjusting a few components within a fixed kiln type, often treating complex firing dynamics-such as
+temperature curves and atmospheres-as constants [5]. Across all these domains, the utilized datasets remain too small
+or unevenly distributed to effectively train and evaluate modern machine learning models.
+In contrast to industry-led research, independent ceramic artists typically rely on books and community resources
+to explore new glaze recipes. The Glazy platform [14] is arguably one of the largest publicly available community
+resources, making it an ideal source for creating a large-scale glaze design dataset. Like many community-driven
+platforms, data quality varies significantly between recipes. In this paper, we employ comprehensive data cleaning and
+standardization methods to transform Glazy’s raw data into a high-quality benchmark. We propose a two-step benchmark
+arXiv:2605.06641v1 [cs.AI] 7 May 2026
+
+GlazyBench
+Figure 1: Two-step image generation task
+task that explicitly connects recipe representation, firing context, appearance properties, and image generation. The
+first step extracts the Unity Molecular Formula (UMF) from raw material information. It combines this formula with
+the cone rating and firing atmosphere to predict the surface properties of the glaze, including color, surface texture,
+and transparency. The second step generates a visual representation of the glaze based on these predicted properties.
+This dual approach enables the model to predict properties across heterogeneous firing contexts while converting
+performance data into perceptible visual results. Consequently, it supports visual exploration and modification based on
+specific performance goals. Unlike prior research that primarily focused on single-step composition-to-property tasks,
+this benchmark emphasizes transferable representations across different kiln environments and provides a complete
+validation pipeline from performance metrics to final product visuals. The contributions of this paper are organized as
+follows.
+• First, Dataset and Standardization. We successfully processed Glazy’s recipe and image data by removing
+duplicates, handling outliers, and ensuring consistent data cleaning. We also unified and standardized the cone
+ratings, resulting in a reproducible and scalable glaze dataset.
+• Second, Feature Engineering and Representation. We established a dual representation system spanning
+from the raw material layer to oxide percentages and Unity Molecular Formula (UMF). Additionally, we
+constructed physically motivated ratio features, such as SiO2 :Al2 O3 , to enhance the model’s interpretability
+and generalization capabilities.
+• Third, Multi-task Annotation and Task Setting. We sorted and annotated multi-dimensional properties and
+appearance labels. These annotations cover color families, continuous color coordinates, surface features,
+and transparency, thereby supporting multi-task learning scenarios like color regression and surface state
+classification.
+• Fourth, High-Quality Image Data and Generation Pipeline. We manually extracted and processed a training
+set of 4,047 high-quality images based on the standardized dataset, alongside 331 standardized tile sample
+images. Furthermore, we established a complete image prediction pipeline that translates raw materials and
+properties into a generated image.
+GlazyBench
+Table 1: Data Removal at Each Stage
+Filtering Stage
+Samples
+Initial training samples
+18,245
+Removed samples (by reason):
+Missing recipe data
+1,293
+Model voting inconsistency
+4,438
+Color family borderline
+Retained samples (passed all filters)
+12,175
+Dataset Construction
+2.1
+Data Source and Division
+Data used in this study are obtained from the Glayz website [14]. This open-source ceramic glaze database comprises
+23,148 real-world glaze recipes. It includes automated color annotations extracted from user-uploaded images. Each
+recipe provides complete chemical composition information, firing parameters (cone range and atmosphere), glaze
+surface images, and community-annotated physical properties. The dataset is partitioned into a training set (18,245
+samples) and a test set (4,903 samples). The two subsets are strictly disjoint, with no overlap, to prevent data leakage.
+The authors manually and systematically processed the test set to ensure high data quality.
+In addition to the raw chemical composition, we derive augmented features from the original database. First, we use
+Unity Molecular Formula (UMF) analysis to normalize oxide compositions. This organizes them into flux, stabilizer,
+and glass-former groups. Second, we include the cone range, which defines the minimum and maximum firing
+temperatures. Third, we specify the firing atmosphere, denoting oxidation, reduction, or neutral conditions. These
+features incorporate key ceramic science knowledge. They help capture factors that significantly affect glaze appearance
+and related properties.
+2.2
+Data For Property Prediction
+table 2 summarizes the annotation coverage for different prediction targets in the training and test sets. The annotation
+sources exhibit distinct characteristics. Specifically, transparency and surface labels are collected via enumerated
+fields filled in by the recipe authors on the website. Transparency is divided into four classes: Opaque, Semi-opaque,
+Translucent, and Transparent. Surface is divided into nine classes, including Glossy, Matte, and Satin. This structured
+input promotes label standardization and consistency. In contrast, color annotations are represented by RGB values.
+The website automatically extracts these values to create color swatches based on photos of fired samples. However,
+user-uploaded photos are rarely standardized. Consequently, the automatic extraction often yields two prominent colors:
+the actual glaze color and a background color.
+For the training set, we adopt a model-assisted approach to identify the true glaze color. We evaluated four machine
+learning models on the manually labeled test set to fit the recipe-to-color mapping. We selected the two best-performing
+models, Random Forest and XGBoost. Both models achieved above 94.5% accuracy after filtering, with a combined
+voting accuracy of 95.6% to be used for the final color selection.
+The selected Random Forest and XGBoost models were trained on the manually labeled test set. We then used them to
+predict RGB values for the training samples. We compared the predicted values against the two automatically extracted
+colors. The color with the smaller prediction distance was selected as the true glaze color. In some cases, both colors
+yielded similar distances but belonged to different color families (Color family borderline). We treated these samples as
+unreliable and removed them. The data removal at each stage is summarized in table 1. This filtering process resulted in
+12,175 validated training samples with complete RGB annotations.
+Color family categories are deterministically derived from RGB values via color space conversion into nine classes,
+such as Black and Blue. Consequently, RGB and color family annotations share identical 100% coverage across all
+samples. Community-uploaded photos are typically captured under non-standardized lighting conditions. Using a
+color family classification helps reduce the models’ sensitivity to these illumination variations. Automatic extraction
+often introduces noise, such as background colors, specular highlights, and image artifacts. To avoid this, we manually
+verified all test set color annotations, including both RGB and color families. This ensures the labels reflect the true
+fired glaze color. The test set also exhibits a higher annotation density for the transparency and surface tasks. Across all
+GlazyBench
+Table 2: Dataset statistics for Property Prediction
+Feature Type
+Train Size
+Train %
+Test Size
+Test %
+Prediction Target Features
+Transparency (4-class)
+6,584
+54.1%
+3,322
+67.8%
+Surface (9-class)
+6,844
+56.2%
+3,730
+76.1%
+RGB Color (continuous)
+12,175
+100.0%
+4,903
+100.0%
+Color Family (9-class)
+12,175
+100.0%
+4,903
+100.0%
+Input Features (Recipes)
+Chemical Composition
+11,384
+93.5%
+4,806
+98.0%
+UMF Analysis
+11,474
+94.2%
+4,849
+98.9%
+Cone Range (min-max)
+10,747
+88.3%
+4,784
+97.6%
+Atmosphere
+10,209
+83.9%
+4,729
+96.5%
+Total Samples
+12,175
+-
+4,903
+-
+Figure 2: Image region extraction pipeline.
+tasks, the category distributions remain consistent between the training and test sets, with a KL divergence below 0.12.
+This consistency supports adequate representation and reduces the risk of evaluation bias caused by distribution shifts.
+2.3
+Data For Image Generation
+The data used for image generation were manually re-annotated based on the previous test set. This was followed by
+systematic quality control and screening. Guided by the outcomes of this second round of annotation, we selected the
+highest-quality samples to constitute the image test set. Images satisfying the baseline inclusion criteria from the first
+round of annotation formed the image training set. Ultimately, the image training set contains 4,490 samples, and the
+test set contains 443 samples. Each sample consists of an original image and several key attribute fields.
+The pre-processing pipeline includes integrity verification, region extraction, normalization, and dataset partitioning.
+First, we removed samples with missing image files or incomplete key attribute fields. All retained samples were
+required to contain these necessary fields. This strict requirement prevents missing supervision signals from adversely
+affecting the learning objective. Next, we extracted local regions representing the visual characteristics of the glaze
+surface from the original images, as shown in fig. 2. These regions were uniformly resized to a fixed input resolution.
+This standardization reduces the distribution shift induced by variations in composition and scale during image capture.
+In parallel, we performed image-level validation by checking pixel value ranges and size validity. This step excluded
+failures caused by corrupted files or abnormal encoding.
+Finally, we used GrabCut segmentation [24, 11, 34] and a Quality-based patch extraction algorithm (LBP Texture
+Analysis [21], Sobel Edge Detection [13], etc.) to process this pipeline. table 3 summarizes the filtering statistics.
+Starting from 4,490 raw training samples and 443 test samples, GrabCut achieved a 90.13% segmentation success rate
+for the training data and 98.87% for the test data. Quality-based patch extraction further retained 2,323 training samples
+GlazyBench
+Table 3: Image data automated filtering statistics
+Stage
+Training Set
+Test Set
+Samples
+Retention
+Samples
+Retention
+Raw samples
+4,490
+100.0%
+100.0%
+After GrabCut segmentation
+4,047
+90.13%
+98.87%
+After quality patch extraction
+2,323
+51.74%
+74.04%
+and 328 test samples. The higher retention rate in the test set reflects the superior image quality of the manually curated
+data. The primary reasons for data removal included segmentation failures, insufficient quality scores, incomplete
+metadata fields, and inadequate fill ratios. Specifically, segmentation failed for 443 training samples and 5 test samples.
+The final filtered dataset achieves strong quality metrics. Overall, 83.6% of the samples scored above 0.6. The average
+quality scores were 0.688 for the training set and 0.712 for the test set.
+Task and Evaluation Settings
+Directly generating glaze images from ingredient lists or a unified molecular formula is highly challenging. Therefore,
+we decompose the problem into two sequential tasks. First, we predict key glaze properties, including transparency,
+surface finish, and color. Second, we generate glaze images conditioned on these predicted or given properties.
+3.1
+Property Prediction Task Settings
+The dataset supports four core prediction tasks that cover the major visual and physical properties of ceramic glazes.
+The transparency task employs a four-class classification scheme. This scheme reflects the optical transmission
+characteristics of ceramic glazes. The Opaque family (Opaque and Semi-opaque) accounts for 70.4% of the training
+samples. Whereas Transparent and Translucent categories account for 16.3% and 13.3%, respectively (see table 10 in
+Appendix B for details). The category distributions between the training and test sets remain consistent.
+The surface task contains nine fine-grained labels. These labels reflect different surface finishes, ranging from highly
+reflective to completely matte. This task suffers from severe class imbalance. The Glossy class dominates with 49.1% of
+the samples, while Stony Matte accounts for only 1.8% (see table 11 in Appendix B for details). Despite this imbalance,
+we retain the original nine-class scheme in the benchmark. This preserves fine-grained distinctions that are meaningful
+to ceramic artists. Future baseline experiments may explore class-merging strategies to mitigate this imbalance.
+The color family task categorizes glaze colors into nine semantic categories based on their dominant hue. The
+distribution is moderately imbalanced. Orange is the most common at 36% in training, and Purple is the rarest at 0.6%
+(see table 12 in Appendix B for details). Color family labels are directly derived from RGB values through color space
+conversion, achieving identical 100% coverage. The training set color family assignments rely on validated RGB values.
+Meanwhile, the test set labels are completely manually verified to ensure accurate color classification.
+RGB color regression is a continuous multi-output regression task. It predicts the three-channel RGB values of the
+glaze’s dominant color within the range of [0, 255]. Both the training and test sets achieve 100% RGB coverage. All
+values are validated through either model-based selection for the training set or manual verification for the test set.
+table 4 summarizes the four prediction tasks in the benchmark dataset. All tasks predict the apparent properties of
+glazes after firing based on recipe information, which includes ingredient composition and the normalized chemical
+composition of 47 oxides. The effective sample sizes for each task vary under the fixed train-test split due to differences
+in annotation coverage. Transparency (Task A) and surface (Task B) have a coverage of around 58% to 61%. In contrast,
+the color-related tasks (C1, C2) achieve complete coverage at 100% because samples lacking reliable color annotations
+were excluded from the dataset. This complete color coverage enables a robust evaluation of color prediction models.
+The lower coverage for transparency and surface reflects the inherent difficulty of obtaining consistent annotations for
+these subtle material attributes.
+3.2
+Image Generation Task Settings
+The core task of this study is image generation. This task synthesizes glaze images conditioned on surface type,
+transparency, and target RGB color. We formulate this as learning the conditional distribution p(x | c) , where x denotes
+the generated image and c denotes the condition vector. However, because the first task is highly challenging, our
+GlazyBench
+Table 4: Glayz benchmark task configuration overview
+ID Task
+Type
+Label Space
+Train
+Test Coverage
+A
+Transparency Classification 4 classes
+6,584 3,322
+58.0%
+B
+Surface
+Classification 9 classes
+6,844 3,730
+61.9%
+C1 RGB Color
+Regression
+(r, g, b) \ in [0,255]^ 3 12,175 4,903
+100.0%
+C2 Color Family Classification 9 classes
+12,175 4,903
+100.0%
+Table 5: Image generation dataset statistics.
+Split
+Total
+Effective
+Image Resolution
+Training
+4,490
+2,323
+128×128 RGB
+Test
+328
+128×128 RGB
+image generation task directly uses real properties for training. The model receives surface, transparency, and RGB
+values as input conditions to generate realistic 128x128 glaze appearance images. This generation task represents our
+ultimate goal: enabling virtual glaze design and appearance previews without conducting actual firing experiments. The
+generation task utilizes a vector that combines categorical properties (surface type, transparency, color family) with
+continuous RGB values. The surface condition spans nine fine-grained finish types, such as Glossy, Semi-glossy, and
+Satin. The transparency condition covers four optical states, and the RGB triplet specifies precise color coordinates.
+table 5 shows the final number of samples containing high-quality images. The dataset creation follows a two-stage
+annotation strategy to ensure quality. The first-round annotations, consisting of 4,490 samples, prioritize coverage to
+capture diverse glaze types from validated recipes. The second-round quality selection, consisting of 443 samples,
+applies strict visual quality criteria. This step retains only the samples where the selected color patch accurately
+represents the overall glaze appearance. As shown in table 5, complete attribute coverage for surface, transparency,
+and color is achieved for 2,323 training samples and 328 test samples. Samples with missing attributes are excluded
+from model training to ensure consistent conditioning, although they remain available for semi-supervised extension
+experiments. The "effective" column indicates the final volume of data utilized in our experiments.
+3.3
+Evaluation Metrics
+This benchmark uses a predefined, fixed train-test split without random re-partitioning or cross-validation. This ensures
+evaluation stability and reduces the risk of data leakage. For each task, models are trained on the training set and
+evaluated on the corresponding annotated subset of the test set. The evaluation pipeline enforces basic validity checks.
+These include consistency between predicted labels and the task taxonomy, RGB range constraints of [0, 255], and
+strict mutual exclusivity of train and test IDs.
+The benchmark comprises two complementary tasks to comprehensively evaluate glaze property modeling. The first is
+property prediction from recipes, which predicts visual properties given a chemical composition. The second is image
+generation, which synthesizes realistic glaze images conditioned on target attributes.
+Task 1: Property Prediction. The benchmark includes four prediction tasks: three classification tasks (transparency,
+surface, and color family) and one regression task (RGB color). For the classification tasks, we use micro F1 and
+accuracy to assess overall correctness and class-balanced performance. For the RGB color regression, mean absolute
+error (MAE) was used.
+Task 2: Image Generation. The evaluation framework employs a multi-dimensional system divided into sample-level
+and distribution-level metrics to comprehensively assess generative model performance. Sample-level metrics measure
+individual image quality. This includes perceptual similarity, calculated via the LPIPS distance to real samples, and
+color consistency, calculated via the RGB Euclidean distance dRGB
+= ∥RGB(^x)−RGB
+target
+∥2 between the generated
+and target colors. Distribution-level metrics evaluate overall generation quality. This includes the Fréchet Inception
+Distance (FID) to measure distribution discrepancy in a pretrained Inception feature space. It also includes generation
+diversity, measured by the average pairwise LPIPS under the same condition, to assess the model’s ability to avoid
+mode collapse.
+GlazyBench
+Table 6: Traditional baseline performance
+Task
+Model
+Accuracy
+Micro F1
+Transparency
+(4-class)
+RandomForest
+0.434
+0.262
+LogisticRegression
+0.426
+0.261
+CatBoost
+0.525
+0.530
+LightGBM
+0.431
+0.262
+XGBoost
+0.432
+0.262
+Surface
+(9-class)
+RandomForest
+0.180
+0.152
+LogisticRegression
+0.016
+0.008
+CatBoost
+0.421
+0.444
+LightGBM
+0.097
+0.073
+XGBoost
+0.108
+0.071
+Color Family
+(9-class)
+RandomForest
+0.270
+0.119
+LogisticRegression
+0.225
+0.138
+CatBoost
+0.255
+0.142
+LightGBM
+0.263
+0.129
+XGBoost
+0.258
+0.151
+MAE
+RGB Color
+(regression)
+RandomForest
+40.30
+-
+CatBoost
+42.20
+-
+LightGBM
+40.14
+-
+XGBoost
+40.88
+-
+Baseline Methods and Results
+4.1
+Property Prediction
+We established baseline performance on GlazyBench using two approaches. The first approach utilizes supervised
+learning with traditional machine learning models. The second approach employs zero-shot and few-shot prediction
+with Large Language Models (LLMs). Traditional baselines learn from labeled training data, whereas LLMs make
+predictions directly on the test set.
+4.1.1
+Traditional Machine Learning Baselines and Results
+All traditional baselines use the Unity Molecular Formula (UMF) combined with firing parameters as input. The UMF
+normalizes the glaze composition, while the firing parameters include the cone range and atmosphere.
+Due to the scarcity of glaze datasets and related studies, we selected our baseline models by referring to similar
+research. Specifically, we examined property prediction studies for silicate compounds, such as glass and volcanic
+rocks. Ultimately, we selected five models commonly used in this domain as our baselines: Logistic Regression (LR)
+[31], Random Forest (RF) [41, 1, 30, 20], XGBoost [25, 36], LightGBM [9, 40], and CatBoost [2, 32, 3]. LR provides
+linear and kernel baselines with interpretable decision boundaries. RF, XGBoost, LightGBM, and CatBoost represent
+tree ensemble methods with varying optimization strategies. All models use default scikit-learn or library-specific
+hyperparameters without task-specific tuning, ensuring reproducibility and fair comparison.
+table 6 summarizes the performance across the four prediction tasks. CatBoost achieves the highest accuracy on
+transparency (52.5%) and surface (42.1%) classification, outperforming the linear baselines by substantial margins.
+This gap indicates the presence of nonlinear composition-property relationships that tree ensembles can capture, but
+linear models cannot.
+Color family classification proves challenging across all models. The best accuracy is 27.0% (RF) and the best F1 score
+is 0.15 (XGBoost). For RGB regression, Random Forest and CatBoost perform similarly (MAE 42.20). This suggests
+diminishing returns from gradient boosting on this continuous prediction task. Interestingly, the models’ performance
+in RGB regression appears better than in color family classification. However, this merely reflects that RGB distance
+alone is insufficient for accurately predicting discrete color categories.
+GlazyBench
+Table 7: LLM performance comparison across zero-shot and few-shot settings.
+Task
+Model
+Zero-shot
+Few-shot (5-shot)
+Accuracy
+Micro-F1
+Accuracy
+Micro-F1
+Transparency
+GPT-4o-mini
+0.343
+0.324
+0.394
+0.382
+DeepSeek-v3
+0.326
+0.312
+0.413
+0.409
+Claude-Sonnet-4.5
+0.400
+0.382
+0.380
+0.395
+Surface
+GPT-4o-mini
+0.270
+0.224
+0.402
+0.373
+DeepSeek-v3
+0.195
+0.180
+0.407
+0.392
+Claude-Sonnet-4.5
+0.330
+0.325
+0.486
+0.379
+Color Family
+GPT-4o-mini
+0.199
+0.176
+0.169
+0.141
+DeepSeek-v3
+0.174
+0.137
+0.175
+0.138
+Claude-Sonnet-4.5
+0.179
+0.139
+0.155
+0.121
+Table 8: Color consistency performance of two types of baseline models on the test set (color distance, the lower the
+better)
+Model
+Mean
+SD
+Median
+Pass Rate
+Conditional VAE
+134.49
+102.27
+112.89
+46.6%
+Lightweight GAN
+72.31
+64.92
+46.54
+75.9%
+4.1.2
+Large Language Model Baselines and Results
+To assess the potential of Large Language Models for glaze property prediction, we tested three LLMs on transparency,
+surface, and color family classification using zero-shot and few-shot prompting. We strictly restricted the model outputs,
+requiring them to return the predicted results directly. Because the most advanced models include complex reasoning
+processes that require intricate prompt design, we selected GPT-4o-mini, DeepSeek-V3.2, and Claude Sonnet 4.5. These
+models can directly return the required prediction values. The recipe information is provided as text input, containing
+the chemical composition, UMF ratios, and firing conditions.
+table 7 summarizes the results. In the zero-shot setting, the three models span a range of 32-40% accuracy on
+transparency. Claude Sonnet 4.5 achieves the highest zero-shot transparency accuracy (40.0%), followed by GPT-4o-
+mini (34.3%) and DeepSeek-V3.2 (32.6%). Surface accuracy is lower across the board (19-33%), and color family
+remains the hardest task (17-20%). Few-shot prompting with five examples yields notable gains, particularly on surface
+classification. Here, Claude Sonnet 4.5 reaches 48.6%, surpassing both GPT-4o-mini (40.2%) and DeepSeek-V3.2
+(40.7%). DeepSeek-V3.2 shows the strongest few-shot gain on transparency, while Claude’s performance actually drops
+in the few-shot setting. Color family classification remains highly challenging for all three models, even with few-shot
+learning.
+These results demonstrate that modern LLMs can achieve performance comparable to simple linear baselines through
+in-context learning alone, without any task-specific training. Model rankings shift between tasks and settings. However,
+all the evaluated LLMs failed to achieve highly competitive results. This indicates that domain-specific fine-tuning or
+specialized feature engineering is necessary for strong performance on materials science prediction tasks. Detailed
+prompt designs and implementation specifications are provided in Appendix C.
+4.2
+Image Generation Baseline Methods and Results
+4.2.1
+Traditional Machine Learning Baselines and Results
+We implemented two representative baseline methods for comparative evaluation.
+First is conditional variational autoencoder (cVAE), which introduces a latent variable to model image variability. The
+encoder learns a conditional posterior over latent codes from the image and its condition, and the decoder reconstructs
+the image from sampled codes. Training maximizes the evidence lower bound (ELBO) [38, 37, 33]. cVAE-based
+approaches have been applied to glass damage detection [22] and quantitative studies of cement paradigm transformation
+[19].
+Another is lightweight GAN based on WGAN-GP. The generator produces images from noise conditioned on target
+attributes, while the discriminator assesses the realism of image-condition pairs. The Wasserstein objective with a
+GlazyBench
+Figure 3: LLM’s image generation results under three different prompt conditions
+gradient penalty enforces Lipschitz continuity and stabilizes training [8, 16, 17]. Related applications include glaze-wear
+analysis [39] and stylistic glaze image generation [7].
+Both models use convolutional architectures with approximately 128×128 resolution outputs. The condition vector
+encodes surface type, transparency, target RGB color, and firing atmosphere as a 25-dimensional feature. Detailed
+architecture specifications, mathematical formulations, hyperparameter configurations, and training procedures are
+provided in Appendix D.
+In terms of color consistency, the Lightweight GAN markedly outperforms the conditional VAE on the test set (table 8).
+The mean color distance decreases from 134.49 to 72.31, the median from 112.89 to 46.54, and the standard deviation
+from 102.27 to 64.92, indicating both improved accuracy and reduced variability. Using a color-distance threshold of
+100, the GAN achieves a 75.9% excellent rate versus 46.6% for the VAE. But despite these quantitative gains, visual
+inspection shows that generated images remain low quality and fall short of the fidelity required for production-level
+tile prediction.
+4.2.2
+Large Multimodal Model Baselines
+As shown in fig. 3, we used three types of prompts as conditional inputs for Large Multimodal Models (LMMs): (1)
+Raw material information (wt%), (2) Normalized UMF features, and (3) Surface attributes (transparency, gloss, and
+RGB color). We evaluated the latest versions of three current LMMs for comparison. A very obvious phenomenon
+emerged during testing. When the input consists of the raw material formula or UMF, the outputs generally fall into
+a coarse-grained color and style space. There is a significant deviation from real glazed tiles regarding color tone,
+transparency, and gloss reflection characteristics. It is highly difficult for the models to stably infer the final appearance
+from chemical composition alone.
+Conversely, when the surface attributes are provided directly, the generated results are significantly closer to the real
+samples in both dominant color and highlight texture. This indicates that current general-purpose models excel at
+rendering generation based on high-level visual semantics and explicit appearance constraints. However, they struggle
+with predictive generation based on underlying material mechanisms. This phenomenon reveals that current LMMs lack
+a reliable, causal understanding of the "recipe-to-appearance" process. The key reason for this shortfall is the scarcity
+of training data that strictly pairs professional variables with real ceramic tile images. Therefore, constructing datasets
+that rigorously align recipes, UMFs, process conditions, standardized imaging, and quantifiable appearance labels is a
+GlazyBench
+critical foundation. Such datasets are essential for moving models away from prior-driven schematic generation and
+toward verifiable, prediction-based generation grounded in material science.
+Conclusion and Future Work
+We have proposed the first benchmark for glaze design, named GlazyBench. This benchmark collates 23,148 real glaze
+formulations. It covers two core tasks: property prediction and image generation. Among these, 4,903 test samples
+were strictly selected by human annotators to maintain a balanced distribution in the train/test split. This careful
+curation supports repeatable and comparable system evaluations. Based on this dataset, we constructed a two-step
+prediction pipeline and systematically compared two representative methods: traditional machine learning models and
+large language/multimodel models (LLMs/LMMs). For the property prediction task, we implemented and evaluated
+traditional baselines, including Random Forest and XGBoost, alongside LLMs. For the image generation task, we
+provided deep generative model baselines and large multimodal model (LMM) example schemes. These comparisons
+effectively illustrate the capability boundaries of different AI paradigms.
+Experimental results show that general multimodal models suffer from significant conditional interpretability collapse
+during condition mapping. Consequently, their outputs are rarely stable or verifiably constrained by the formula
+conditions. Simultaneously, we verified the feasibility of predicting glaze properties directly from formula components.
+We also revealed key limitations in existing methods regarding data representation, feature engineering, and model
+architectures. These findings emphasize the importance of constructing standardized datasets. Such datasets must
+include formulas, Unity Molecular Formulas (UMFs), firing conditions, and quantifiable appearance labels that strictly
+match the corresponding glaze images. We hope that GlazyBench will drive this field from suggestive generation toward
+verifiable prediction and generation. It provides a unified and reliable foundation for future model design, evaluation
+protocols, and interpretability research.
+Despite these contributions, the current release has several limitations, primarily concerning data coverage and
+generalization. Although GlazyBench covers a large number of real recipes and process records, the data source
+inevitably influences the recipes, firing conditions, and collection methods. This influence may introduce biases toward
+specific geographical regions or material systems. Therefore, the models’ generalization capabilities across different
+kilns, recipe families, and firing conditions require more systematic verification. This is especially true for novel raw
+material systems and extreme firing parameters.
+Additionally, noise exists within the appearance labels and image observations. Labels indicating transparency, surface
+type, and color range are frequently affected by measurement errors, lighting variations, camera differences, and
+inconsistent naming standards. These issues are particularly prevalent in community-sourced data. Currently, there is
+insufficient rigorous verification to guarantee the absolute precision of the data, which inherently caps the upper limit of
+achievable model performance. We aim to address this issue in the next release of the dataset by incorporating more
+standardized sources, such as published books and professional material archives.
+References
+[1] Ahmmad, S.K., Jabeen, N., Ahmed, S.T.U., Ahmed, S.A., Rahman, S.: Artificial intelligence density model for
+oxide glasses. Ceramics international 47(6), 7946-7956 (2021)
+[2] Belciu, M.I., Velea, A.: Ensemble machine learning for the prediction and understanding of the refractive index in
+chalcogenide glasses. Molecules 30(8), 1745 (2025)
+[3] Bo, Y., Liu, Q., Huang, X., Pan, Y.: Real-time hard-rock tunnel prediction model for rock mass classification using
+catboost integrated with sequential model-based optimization. Tunnelling and underground space technology 124,
+104448 (2022)
+[4] Bondioli, F., Manfredini, T., Romagnoli, M.: Color matching algorithms in ceramic tile production. Journal of the
+european ceramic society 26(3), 311-316 (2006)
+[5] Castela, A., Fonseca, A., Mantas, P.: Development of coloured glazes for tile applications using taguchi’s method.
+Journal of the European Ceramic Society 30(12), 2451-2455 (2010)
+[6] Chakraborty, S., Björk, J., Dahlqvist, M., Rosen, J., Heintz, F.: A survey of ai-supported materials informatics.
+Computer Science Review 59, 100845 (2026)
+[7] Chen, S.S.C., Cui, H., Tan, P., Sun, X., Ji, Y., Duh, H.: Cantonese porcelain image generation using user-guided
+generative adversarial networks. IEEE Computer Graphics and Applications 40(5), 100-107 (2020)
+GlazyBench
+[8] Ding, X., Wang, Y., Xu, Z., Welch, W.J., Wang, Z.J.: Ccgan: Continuous conditional generative adversarial
+networks for image generation. In: International conference on learning representations (2021)
+[9] FENG, H., ZHANG, G., CAO, J., REN, H., WAN, W., LIU, D.: Application of woa optimized lightgbm in
+lithology identification of igneous logging. Progress in Geophysics 40(1), 230-242 (2025)
+[10] Feng, L., Wang, F., Luo, H., Zhu, J., Wang, M., Yang, C., Sun, J., Wang, T.: Phase-separated tenmoku "blue"
+glaze: Microstructure and coloring mechanism. Journal of the European Ceramic Society 43(14), 6581-6589
+(2023)
+[11] Fu, Z.: Digital color enhancement in ceramic imagery using graph-guided residual learning and adaptive scattering
+models. Journal of Computational Methods in Sciences and Engineering p. 14727978251391297 (2025)
+[12] Fujinuma, N., DeCost, B., Hattrick-Simpers, J., Lofland, S.E.: Why big data and compute are not necessarily the
+path to big materials science. Communications Materials 3(1), 59 (2022)
+[13] Gao, W., Zhang, X., Yang, L., Liu, H.: An improved sobel edge detection. In: 2010 3rd International conference
+on computer science and information technology. vol. 5, pp. 67-71. IEEE (2010)
+[14] Glazy Contributors: Glazy.  (2026),  accessed: 2026-02-01
+[15] Imer, C., Günay, E., Öveço˘glu, M.: Effects of firing temperatures and compositions on the formation of nano
+particles in lustre layers on a lead-alkali glaze. Ceramics International 42(15), 17222-17228 (2016)
+[16] Jin, Q., Luo, X., Shi, Y., Kita, K.: Image generation method based on improved condition gan. In: 2019 6th
+international conference on systems and informatics (ICSAI). pp. 1290-1294. IEEE (2019)
+[17] Li, Y., Fu, R., Meng, X., Jin, W., Shao, F.: A sar-to-optical image translation method based on conditional
+generation adversarial network (cgan). Ieee Access 8, 60338-60343 (2020)
+[18] Liu, H., Fu, Z., Yang, K., Xu, X., Bauchy, M.: Machine learning for glass science and engineering: A review.
+Journal of Non-Crystalline Solids 557, 119419 (2021)
+[19] Mao, L.x., He, F., Li, L., Xu, W., Wang, Y., Liu, Q.f.: A quantitative study of phase assemblage in cement-fly
+ash-slag ternary systems using machine learning-assisted bse-eds image analysis. Construction and Building
+Materials 498, 143712 (2025)
+[20] Mues, M., Kraemer, D., Styn, D.M.E.: Using machine learning classifiers together with discrimination diagrams
+for validation of rock classification labels. Applied Computing and Geosciences p. 100288 (2025)
+[21] Ojala, T., Pietikainen, M., Maenpaa, T.: Multiresolution gray-scale and rotation invariant texture classification
+with local binary patterns. IEEE Transactions on pattern analysis and machine intelligence 24(7), 971-987 (2002)
+[22] Riedel, H., Mokdad, S., Schulz, I., Kocer, C., Rosendahl, P.L., Schneider, J., Kraus, M.A., Drass, M.: Automated
+quality control of vacuum insulated glazing by convolutional neural network image classification. Automation in
+Construction 135, 104144 (2022)
+[23] Romagnoli, M., Bondioli, F., Barattini, M., et al.: Neural network approach for color matching of ceramic glazes.
+In: International Congress of Ceramic Materiali. vol. 1, pp. xx-xx. ECERS (2008)
+[24] Rother, C., Kolmogorov, V., Blake, A.: " grabcut" interactive foreground extraction using iterated graph cuts.
+ACM transactions on graphics (TOG) 23(3), 309-314 (2004)
+[25] Ruiyi, H., Zhuwen, W., Wenhua, W., Fanghui, X., Xinghua, Q., Yitong, C.: Lithology identification of igneous
+rocks based on xgboost and conventional logging curves, a case study of the eastern depression of liaohe basin.
+Journal of Applied Geophysics 195, 104480 (2021)
+[26] Rumble Jr, J.R.: Accessing materials data: challenges and directions in the digital era. Integrating Materials and
+Manufacturing Innovation 6(2), 172-186 (2017)
+[27] Santos, T., Hennetier, L., Costa, V.A., Costa, L.C.: Temperature assessment through decal color in microwave-fired
+porcelain. Journal of Manufacturing and Materials Processing 9(7), 213 (2025)
+[28] Schabbach, L., Bondioli, F., Fredel, M.: Colouring of opaque ceramic glaze with zircon pigments: Formulation
+with simplified kubelka-munk model. Journal of the European Ceramic Society 31(5), 659-664 (2011)
+[29] Schabbach, L., Bondioli, F., Fredel, M.: Color prediction with simplified kubelka-munk model in glazes containing
+fe2o3-zrsio4 coral pink pigments. Dyes and pigments 99(3), 1029-1035 (2013)
+[30] Trott, M., Leybourne, M., Hall, L., Layton-Matthews, D.: Random forest rock type classification with integration
+of geochemical and photographic data. Applied Computing and Geosciences 15, 100090 (2022)
+[31] Ueki, K., Hino, H., Kuwatani, T.: Geochemical discrimination and characteristics of magmatic tectonic settings:
+A machine-learning-based approach. Geochemistry, Geophysics, Geosystems 19(4), 1327-1347 (2018)
+GlazyBench
+[32] Vasi´c, M.V., Awoyera, P.O., Fadugba, O.G., Bariši´c, I., Grubeša, I.N.: Advanced machine learning models for the
+prediction of ceramic tiles’ properties during the firing stage. Scientific reports 15(1), 31397 (2025)
+[33] Wang, Y., Zhang, G.: Lightweight text-to-image generation model based on contrastive language-image pre-
+training embeddings and conditional variational autoencoders. Electronics 14(11), 2185 (2025)
+[34] Wei, J., Hao, Y., Fu, Y., Yang, L., Gan, J., Li, H.: Experimental study on glaze icing detection of 110 kv composite
+insulators using fiber bragg gratings. Sensors 20(7), 1834 (2020)
+[35] Wu, B., Zhao, W., Ren, X., Liu, X., Li, B., Feng, S., Feng, X., Zhao, H.: Firing process and colouring mechanism
+of black glaze and brown glaze porcelains from the yuan and ming dynasties from the qingliang temple kiln in
+baofeng, henan, china. Ceramics International 47(23), 32817-32827 (2021)
+[36] Xie, Y., Wang, X.: Prediction of thermal and optical properties of oxyfluoride glasses based on interpretable
+machine learning. Nanomaterials 15(11), 860 (2025)
+[37] Yamagiwa, A., Goto, M., et al.: An analytical model using cvae-based image generation from product descriptions
+and image data. Industrial Engineering & Management Systems 24(4), 650-662 (2025)
+[38] Yan, X., Yang, J., Sohn, K., Lee, H.: Attribute2image: Conditional image generation from visual attributes. In:
+European conference on computer vision. pp. 776-791. Springer (2016)
+[39] Zhang, C., Neu, R.W.: Understanding the role of glaze layer with aligned images from multiple surface characteri-
+zation techniques. Wear 477, 203837 (2021)
+[40] Zhang, P., Xi, X., Wang, B.C.: Geochemical signatures and element interactions of volcanic-hosted agates:
+Insights from interpretable machine learning. Minerals 15(9), 923 (2025)
+[41] Zhang, Y., Li, A., Deng, B., Hughes, K.K.: Data-driven predictive models for chemical durability of oxide glass
+under different chemical conditions. npj Materials Degradation 4(1), 14 (2020)
+[42] Zhao, L., Zhang, Y.: Revealing the individual effects of firing temperature and chemical composition on raman
+parameters of celadon glaze. Ceramics 6(2), 1263-1276 (2023)
+GlazyBench
+A
+Appendix A: Data Preprocessing Details
+A.1
+Color Annotation Methodology
+Transparency and surface-texture labels are obtained directly from structured dropdown menus on the Glazy website
+and therefore require no additional post-validation. In contrast, the dataset contains two automatically recognized
+color-related fields whose accuracy cannot be reliably quantified. We therefore apply additional processing to construct
+a higher-confidence color annotation set for both training and evaluation.
+Test set (manual curation).
+We first collected 8,000 candidate samples. For each sample, we manually selected the
+most representative glaze photograph (when multiple images were available) and assigned the corresponding glaze color.
+This process produced 4,903 manually labeled test samples. The remaining 3,097 samples were judged as uncertain
+(ambiguous color) or por quality (e.g., lighting/coverage issues) and were excluded from the test set; instead, they
+were moved to the training pool to assess whether our training-set filtering procedure could remove them automatically.
+Training set (model-assisted filtering).
+Using the manually labeled subset as a reference, we filter color annotations
+in the training set as follows:
+1. Reference model (ensemble construction). We train and compare four machine-learning models to learn the
+recipe-to-color mapping from the manually labeled data. The two best-performing models-Random Forest
+and XGBoost-are retained and combined into an ensemble for downstream color selection.
+2. RGB-based agreement and selection. The two models independently predict an RGB color. Let the two
+predicted candidates be \p r ot e ct \mathbf {c}_1,\mathbf {c}_2\in \mathbb {R}^3 , and let \protect \bar {\mathbf {c}}_{\mathrm {pred}}
+denote their centroid. We compute Euclidean distances
+ d
+_k =\ b igl \|
+\m
+a t
+h b f { c}_
+k-\ bar {\ mat hbf
+ 
+{c}}_{\mathrm {pred}}\bigr \|_2,\quad k\in \{1,2\}, \qquad \text {and select } \arg \min _k d_k. 
+Intuitively, this step prefers the candidate closer to the consensus of the two predictors.
+3. Ambiguity filtering. If |d_ 1 -d _2| < 10 , the two candidates are considered equally plausible and the sample
+is marked as ambiguous and discarded. After filtering, 12,175 training samples remain with validated color
+annotations.
+Sanity check.
+All 3,097 samples previously marked as uncertain during manual curation are removed by the above
+filtering pipeline, supporting the effectiveness of the ambiguity criteria.
+A.2
+Feature Representation
+The two benchmark categories-property prediction and image generation-operate on different input spaces. Accord-
+ingly, we use task-specific feature representations.
+A.2.1
+Property Prediction Tasks (Tasks A, B, C1, C2): Recipe Feature Vector
+All property prediction models take a 22-dimensional recipe feature vector \ p r otect \mathbf {x}_i\in \mathbb {R}^{22}
+as input, encoding glaze chemistry
+and firing conditions. The vector consists of three parts:
+UMF oxides (18 dimensions).
+Recipes are represented in UMF notation (flux group normalized to unity). We track
+18 oxides: SiO2 , Al2 O3 , B2 O3 , Li2 O, Na2 O, K2 O, MgO, CaO, SrO, BaO, ZnO, TiO2 , Fe2 O3 , P2 O5 , SnO2 , Cr2 O3 ,
+ZrO2 , and PbO. This oxide set is derived from the UMF keys observed in the dataset. Missing oxides are represented as
+zeros.
+Cone range (2 dimensions).
+The firing temperature range is encoded as cone_min and cone_max. A single cone
+specification sets the two values equal.
+Atmosphere (2 dimensions).
+Atmosphere is encoded with two binary indicators: Oxidation and Reduction. Missing
+or non-standard atmosphere entries are encoded as all zeros.
+A.2.2
+Image Generation Task (Task D): Visual Condition Vector
+For Task D, the conditional generative models (cVAE and cGAN) do not use recipe chemistry. Instead, they condition
+image synthesis on a 25-dimensional visual attribute vector \p r otect \mathbf {c}_i\in \mathbb {R}^{25}
+, formed by concatenating four components
+(Table 9).
+GlazyBench
+Table 9: Composition of the 25-dimensional condition vector for Task D
+Component
+Encoding
+Dim.
+Value range
+Surface texture
+One-hot (9 classes)
+\if mmode \lbrace \else \textbraceleft \fi 0,1\}^9
+Transparency
+One-hot (4 classes)
+\if mmode \lbrace \else \textbraceleft \fi 0,1\}^4
+Color family
+One-hot (9 classes)
+\if mmode \lbrace \else \textbraceleft \fi 0,1\}^9
+RGB color
+Normalized continuous
+[0, 1]^3
+Total
+RGB values are normalized by dividing by 255. Samples used for image-generation training must have all four attributes
+available; consequently, the effective training set corresponds to the intersection of surface, transparency, color-family,
+and RGB annotations.
+GlazyBench
+B
+Appendix B: Task Statistics
+B.1
+Transparency Category Distribution
+The transparency attribute partitions samples into four mutually exclusive categories: Opaque, Semi-opaque, Translucent,
+and Transparent. This attribute is typically associated with a material’s degree of light transmission and scattering, and
+is therefore a key factor in appearance understanding tasks. table 10 reports the transparency-category distribution in
+the train and test sets. We can observe that: (1) Opaque is the dominant category, accounting for 48.6\ % of the training
+set and 43.3\ % of the test set, indicating that the dataset is overall biased toward opaque materials; (2) the remaining
+three categories constitute 21.8\ %, 13.3\ %, and 16.3\ % of the training set, and 22.8\ %, 17.9\ %, and 15.9\ % of the test set,
+respectively, reflecting a moderately imbalanced distribution; and (3) while the overall distributional patterns are largely
+consistent between training and testing, the test set contains a relatively higher proportion of Translucent samples
+(17.9\ % vs. 13.3\ %), suggesting that evaluation involves more translucent cases and thus places greater demands on
+model generalization.
+Table 10: Transparency category distribution
+Category
+Train Count
+Train Ratio
+Test Count
+Test Ratio
+Opaque
+3,200
+48.6%
+1,440
+43.3%
+Semi-opaque
+1,438
+21.8%
+22.8%
+Translucent
+13.3%
+17.9%
+Transparent
+1,072
+16.3%
+15.9%
+Total
+6,584
+100.0%
+3,322
+100.0%
+B.2
+Surface Category Distribution
+The surface attribute characterizes material surfaces in terms of specular versus diffuse reflectance under illumination,
+as well as differences in microscopic roughness. It comprises nine categories, including Glossy, Semi-glossy, Matte,
+and Satin, etc. This dimension is more fine-grained, with category boundaries closer to a perceptual continuum;
+consequently, it is often more sensitive to data coverage and annotation consistency. table 11 reports the distribution
+of surface categories in the train and test sets. We observe that: (1) Glossy is the dominant category, accounting for
+nearly half of the training set (49.1\ %) and remaining the most prevalent in the test set (45.4\ %), indicating a bias toward
+specular or highly reflective surfaces; (2) mid-frequency categories (e.g., Semi-glossy, Matte, and Satin) each fall in the
+8\%\sim 15\%
+range, providing a reasonable degree of diversity for learning; and (3) tail categories (e.g., Dry Matte and
+Stony Matte) each comprise less than 2\%, exhibiting a long-tailed distribution that may lead to lower recall or unstable
+decision boundaries for these classes. The training and test splits follow similar trends for the major categories, while
+several fine-grained classes appear slightly more frequent in the test set (e.g., Semi-glossy, Matte, and Satin-matte),
+suggesting that evaluation difficulty is not determined solely by head classes.
+Table 11: Surface category distribution
+Category
+Train Count
+Train Ratio
+Test Count
+Test Ratio
+Glossy
+3,360
+49.1%
+1,692
+45.4%
+Semi-glossy
+12.5%
+14.5%
+Matte
+10.7%
+12.4%
+Satin
+9.1%
+8.7%
+Satin-matte
+5.8%
+7.6%
+Semi-matte
+5.6%
+6.0%
+Smooth Matte
+3.5%
+3.3%
+Dry Matte
+2.0%
+0.9%
+Stony Matte
+1.8%
+1.4%
+Total
+6,844
+100.0%
+3,730
+100.0%
+GlazyBench
+B.3
+Color Family Category Distribution
+The color-family attribute captures the dominant chromatic family of a material or object, covering nine categories
+such as Orange, Gray, and Blue, etc. Since color is strongly coupled with imaging conditions, including illumination,
+white balance, and background interference. Its statistics are useful for diagnosing potential color bias in data
+collection/annotation and for identifying distribution shifts between training and testing. table 12 summarizes the
+counts and ratios of color-family categories in the training and test sets. We can observe clear category bias: (1)
+Orange and Gray are over-represented in the training set (36.0\ % and 20.3\ %, respectively), indicating that the data are
+more concentrated in warm and neutral tones; (2) in the test set, the proportion of Orange drops to 27.1\ %, whereas
+Blue increases to 20.2\ % (vs. 16.1\ % in training). Meanwhile, categories such as White/Black/Red/Green also rise to
+varying degrees, reflecting a noticeable train-test distribution shift; and (3) Purple is rare in both splits (below 1\%),
+constituting a typical tail class. These characteristics suggest that if a model over-relies on color priors during training,
+its generalization may degrade when the test distribution changes. Therefore, in the experiments, it is advisable to
+incorporate class-balancing strategies, color-based augmentation, or stratified metrics to more comprehensively assess
+model performance.
+Table 12: Color Family category distribution
+Category
+Train Count
+Train Ratio
+Test Count
+Test Ratio
+Orange
+4,377
+36.0%
+1,327
+27.1%
+Gray
+2,469
+20.3%
+15.8%
+Blue
+1,959
+16.1%
+20.2%
+Yellow
+1,203
+9.9%
+9.4%
+Green
+6.5%
+7.8%
+Red
+5.5%
+7.6%
+White
+4.1%
+7.3%
+Black
+1.1%
+4.1%
+Purple
+0.6%
+0.8%
+Total
+12,175
+100.0%
+4,903
+100.0%
+GlazyBench
+C
+Appendix C: Implementation Details of LLM Baselines
+This appendix details the implementation of the LLM baselines used for three classification tasks: transparency, surface
+texture, and color family. We describe the API setup, input serialization, prompt design (zero-shot and few-shot),
+few-shot example selection, and response parsing.
+C.1
+Model and API Configuration
+All experiments are executed through the OpenRouter API using an OpenAI-compatible SDK. We evaluate three
+models: GPT-4o-mini, DeepSeek-v3, and Claude Sonnet 4.5. Unless otherwise stated, all models share the same
+inference and runtime settings:
+• Decoding: temperature = 0.0 (deterministic decoding), max_tokens = 500 .
+• Reliability: per-request timeout = 60 seconds; up to 3 retries with exponential backoff (waiting 1, 2, and 4
+seconds).
+• Throughput:
+for each task,
+predictions over all test samples are issued concurrently using
+ThreadPoolExecutor with up to 20 worker threads.
+• Checkpointing: intermediate outputs are saved every 10 predictions to enable resumable execution.
+All models are used as-is (no fine-tuning, no additional training, and no task-specific adaptation).
+C.2
+Input Representation
+Each test sample is serialized into three textual blocks and injected into the prompt:
+1. Chemical composition (wt.% oxides). All oxide weight percentages larger than 0.01\% are listed in the format
+Oxide:
+value% (comma-separated), e.g., SiO2:
+45.20%, Al2O3:
+12.80%, CaO: 8.50%, ....
+2. UMF formula.
+All UMF entries larger than 0. 01 are listed as Oxide:
+value and prefixed by UMF
+Formula:.
+3. Firing parameters. If available, we include cone information (Cone:
+N or Cone Range:
+N-M) and atmo-
+sphere (Oxidation or Reduction). Otherwise, the field is set to No additional firing parameters
+available.
+C.3
+Prompt Design
+For each task, we use a unified prompt template that supports both zero-shot and few-shot evaluation. The template
+consists of:
+1. a role declaration and task instruction;
+2. an explicit, enumerated label set with short descriptions;
+3. domain rules connecting oxides/firing conditions to visual properties;
+4. an optional few-shot block {few_shot_examples};
+5. the query sample (three input blocks as above);
+6. a strict output constraint: output exactly one label from the alowed set.
+For zero-shot evaluation (K = 0 ), the few-shot block is omitted. For K -shot evaluation, the block is populated as
+described in Section C.4.
+Task-specific instantiations.
+The three tasks share the same structure but differ in label sets and domain rules:
+• Transparency (4 classes). Labels: Transparent, Translucent, Semi-opaque, Opaque. Rules emphasize that
+higher SiO2 tends to increase transparency, while TiO2 /SnO2 /ZrO2 are commonly associated with opacity.
+• Surface texture (9 classes). Labels: Glosy, Semi-glosy, Satin, Satin-mate, Mate, Semi-mate, Smoth Mate,
+Dry Mate, Stony Mate. Rules relate higher SiO
+2 relative to fluxes to glossier surfaces, higher Al2 O3 /MgO to
+matte characteristics, and ZnO to satin-like surfaces.
+GlazyBench
+• Color family (9 classes). Labels: Black, Blue, Gray, Gren, Orange, Purple, Red, White, Yelow. Rules map
+typical colorants to hues, e.g., Fe2 O3 \rightarrow red/brown (oxidation) or blue/gray (reduction); CoO \rightarrow blue; CuO \rightarrow 
+green (oxidation) or red (reduction); MnO \rightarrow purple; Cr2 O3 \rightarrow green; TiO2 \rightarrow white.
+C.4
+Few-shot Example Selection
+For K -shot evaluation, we set K = 5 . Few-shot examples are selected from the training set using a stratified round-robin
+strategy:
+1. Collect training samples that (i) have valid labels for the target task and (ii) contain non-empty chemical
+composition data. Group them by class.
+2. Iterate classes in insertion order and draw one example per class in sequence until K examples are obtained.
+Classes with no remaining samples are removed from the rotation.
+3. Serialize each selected example using the same three-block format as the query, followed by Answer:
+{label}.
+This procedure encourages class coverage in-context, ensuring up to \qopna me \relax m{min}(K, |\mathcal {C}|) distinct classes appear in the prompt.
+This is particularly relevant for imbalanced tasks (e.g., surface texture, where Glosy accounts for 49% of samples).
+Few-shot block format.
+Each example follows the structure below:
+Example i:
+Chemical Composition: SiO2: 45.20%, Al2O3: 12.80%, CaO: 8.50%, ...
+UMF Formula: SiO2: 3.21, Al2O3: 0.43, CaO: 0.55, ...
+Firing Cone: 6
+Firing Atmosphere: Oxidation
+Answer: Translucent
+C.5
+Response Parsing
+We parse model outputs using case-insensitive label matching on the first line of the response:
+1. Strip leading/trailing whitespace and quotation characters, then extract the first line.
+2. Iterate through the ordered list of valid labels and return the first label whose lowercase form appears as a
+substring of the lowercase response line.
+3. For multi-word labels (e.g., Semi-opaque, Satin-mate, Smoth Mate), we accept both hyphenated and
+space-separated variants.
+4. Outputs that match none of the valid labels are recorded as parsing failures and excluded from metric
+computation.
+GlazyBench
+D
+Appendix D: Specifications of Image-Generation Baselines
+This appendix reports the technical specifications of two baseline models for the conditional glaze image generation
+task (Task D), including the problem formulation, model architectures, training objectives, hyperparameters, and data
+preprocessing.
+D.1
+Problem Formulation
+We learn a conditional generative model of the form p_ {\ t heta }(\mathbf {x}\mid \mathbf {c}) , where \ p r otect \mathbf {x}\in \mathbb {R}^{3\times 128\times 128}
+denotes the generated glaze
+surface image and \ p r otect \mathbf {c}\in \mathbb {R}^{25}
+denotes the condition vector encoding visual attributes only. Specifically,
+ 
+\
+m
+athb
+f {c} = \
+B
+i
+gl [
+ \underbrace {
+\
+m
+athb
+f {s} }_{\tex t
+ 
+{s
+urfa
+ce, }
+} ,\;
+ \underbrace {\mathbf {t}}_{\text {transparency, }4},\; \underbrace {\mathbf {f}}_{\text {color family, }9},\; \underbrace {\tilde {\mathbf {r}}}_{\text {RGB, }3} \Bigr ]\in \mathbb {R}^{25}, 
+where \protect \mathbf {s}, \protect \mathbf {t} , and \protect \mathbf {f} are one-hot vectors, and \p r otect \ti lde {\mathbf {r}}=\mathbf {r}/255\in [0,1]^ 3 is the normalized RGB value. Firing parameters (cone
+and atmosphere) are not used in Task D, since generation is conditioned solely on the target visual appearance.
+D.2
+Baseline Models
+We evaluate two parametric conditional generative baselines: a conditional variational autoencoder (cVAE) and a
+lightweight conditional GAN (cGAN).
+D.2.1
+Conditional Variational Autoencoder (cVAE)
+Architecture.
+The encoder maps an image-condition pair (\m athbf {x},\mathbf {c}) to a Gaussian posterior q_ {\ p hi }(\mathbf {z}\mid \mathbf {x},\mathbf {c}) . The image
+branch applies four strided convolutional blocks (3 \ to 32 \ to 64\to 128\to 256 channels; kernel 4\times 4, stride 2, padding
+1; each followed by BatchNorm and ReLU), yielding a 256 \times 8\times 8
+feature map. The feature map is flattened to 16,384
+dimensions. The condition vector \protect \mathbf {c} is embedded by an MLP layer (25 \to 128, ReLU). The concatenated representation
+(16{,}3 8 4+1 2 8=16{,}512 dims) is mapped to \ p r otect \boldsymbol {\mu }\in \mathbb {R}^{64}
+and \qo p n a me \relax o{log}\boldsymbol {\sigma }^2\in \mathbb {R}^{64}
+via two independent linear heads.
+The decoder takes [\m at h bf {z};\mathbf {c}]\in \mathbb {R}^{89}
+, projects it to 256 \times 8\times 8
+through a linear layer, and then applies four transposed
+convolutional blocks (256 \ to 1 28 \ to 64\to 32\to 3, same kernel/stride/padding as above). A final Tanh activation
+produces outputs in [-1, 1].
+Objective.
+Training maximizes the evidence lower bound (ELBO), implemented as an MSE reconstruction term plus
+a weighted KL regularizer:
+ \ma
+t
+h
+c
+a
+l
+ {L
+}_ { \ ma thr
+m
+ {
+c
+VAE}} = \under brace
+ { \
+f
+r
+a
+c
+ {1
+}{N
+}\s
+u
+m _{i =
+}^ { N }
+\| \ m a
+th
+b
+f
+ {
+x
+}_ i- \hat { \math
+bf {x}}_i\|^2}_{\text {reconstruction (MSE)}} - \beta \cdot \underbrace {\frac {1}{N}\sum _{i=1}^{N}\sum _{j=1}^{64} \bigl (1+\log \sigma _{ij}^2-\mu _{ij}^2-\sigma _{ij}^2\bigr )}_{\mathrm {KL}\;\text {to }p(\mathbf {z})=\mathcal {N}(\mathbf {0},\mathbf {I})}. 
+We set \ b et a =10^{-4}
+to mitigate posterior collapse under limited training data.
+Hyperparameters.
+Table 13 summarizes the cVAE configuration.
+Table 13: Hyperparameter configuration for cVAE
+Parameter
+Value
+Latent dimension d_z
+Condition dimension d_c
+KL weight \beta 
+10^{-4}
+Optimizer
+Adam
+Learning rate
+5 \ times 10^{-4}
+LR scheduler
+ReduceLROnPlateau (factor 0.5, patience 10)
+Batch size
+Training epochs
+19
+
+GlazyBench
+D.2.2
+Lightweight Conditional GAN (cGAN)
+Generator.
+The generator G : \ ma
+t hb
+ {R}^{64}\times \mathbb {R}^{25}\to \mathbb {R}^{3\times 128\times 128}
+concatenates noise \ p rote ct \mathbf {z}\sim \mathcal {N}(\mathbf {0},\mathbf {I}) and condition \protect \mathbf {c} into
+an 89-dimensional vector. It is projected to 128 \times 8\times 8
+via a linear layer and upsampled through four transposed
+convolutional blocks (128 \ to 64 \ to 32\to 16\to 3; kernel 4 \times 4, stride 2, padding 1) with BatchNorm and ReLU
+activations. The output layer uses Tanh to match the [-1, 1]normalized image range.
+Discriminator (critic).
+The discriminator D : \ mathb {R
+} ^{3
+\ times 128\times 128}\times \mathbb {R}^{25}\to \mathbb {R} injects conditioning by expanding \protect \mathbf {c} to a
+spatial map: a linear layer (25 \to 128\times 128
+) reshaped to 1 \times 128\times 128
+, concatenated with the input image to form a
+4 \times 128\times 128
+tensor. The critic then applies four strided convolutions (4 \ to 16 \ to 32\to 64\to 128 channels; kernel
+4 \times 4, stride 2) with LeakyReLU(0.2), reducing to an 8 \times 8 feature map. A final 8 \times 8 convolution produces a scalar
+score. We omit BatchNorm in the critic to improve stability under small batch sizes.
+Objective (WGAN-GP).
+We adopt WGAN-GP. The critic minimizes
+ \ ma t hcal {L} _ D = -\mat hbb {E } _
+{\
+mat
+hb
+f {x }} [D( \ma t h b
+f {
+x},\mathbf {c})] +\mathbb {E}_{\mathbf {z}}[D(G(\mathbf {z},\mathbf {c}),\mathbf {c})] +\lambda _{\mathrm {gp}}\, \mathbb {E}_{\hat {\mathbf {x}}}\Bigl [\bigl (\|\nabla _{\hat {\mathbf {x}}}D(\hat {\mathbf {x}},\mathbf {c})\|_2-1\bigr )^2\Bigr ], 
+where \p r o t
+ect 
+\ ha t {
+\mathbf {x}}=\epsilon \,\mathbf {x}_{\mathrm {real}}+(1-\epsilon )\,\mathbf {x}_{\mathrm {fake}}
+, \ e psilon \sim \mathrm {Uniform}(0, 1) , and \ lambda _{\mathrm {gp}}
+= 10 .
+The generator minimizes \p
+r
+otect \mat hca l {L}_G=-\mathbb {E}_{\mathbf {z}}[D(G(\mathbf {z},\mathbf {c}),\mathbf {c})] .
+Hyperparameters.
+Table 14 lists the cGAN configuration.
+Table 14: Hyperparameter configuration for cGAN
+Parameter
+Value
+Noise dimension d_z
+Condition dimension d_c
+Gradient penalty \ lambda _{\mathrm {gp}}
+Critic steps per generator step n_{\mathrm {critic}}
+Optimizer
+Adam (\ b e ta _1=0.5 , \ b e ta _2=0.999 )
+Learning rate (G and D)
+2 \ times 10^{-4}
+Batch size
+Training epochs
+D.3
+Training Data and Preprocessing
+The image generation subset includes samples with complete annotations for all four conditioning components (surface,
+transparency, color family, and RGB). We use a 90/10 random split within the training portion, resulting in approximately
+3,640 training samples and 400 validation samples; the test set contains 438 held-out samples.
+Images are preprocessed as follows:
+1. Resize to 128 \times 128 using Lanczos resampling.
+2. Normalize pixel values to [-1, 1]via (x/255-0.5)/0.5
+.
+3. Apply random horizontal flipping (probability 0.5) to training images only.

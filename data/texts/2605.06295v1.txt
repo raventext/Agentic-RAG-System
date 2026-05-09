@@ -1,0 +1,2951 @@
+Attributions All the Way Down?
+The Metagame of Interpretability
+Hubert Baniecki∗
+Przemyslaw Biecek
+University of Warsaw
+Centre for Credible AI, Warsaw University of Technology
+Fabian Fumagalli
+Bielefeld University
+LMU Munich, MCML
+Abstract
+We introduce the METAGAME, a conceptual framework for quantifying second-
+order interaction effects of model explanations. For any first-order attribution ϕ(f)
+explaining a model f, we measure the directional influence of feature j on the attri-
+bution of feature i, denoted as meta-attribution φj→i(f), by treating the attribution
+method itself as a cooperative game and computing its Shapley value. Theoretically,
+we prove that attributions hierarchically decompose into meta-attributions, and
+establish these as directional extensions of existing interaction indices. Empirically,
+we demonstrate that the METAGAME delivers insights across diverse interpretabil-
+ity applications: (i) quantifying token interactions in instruction-tuned language
+models, (ii) explaining cross-modal similarity in vision-language encoders, and
+(iii) interpreting text-to-image concepts in multimodal diffusion transformers.
+Introduction
+Attribution is the task of quantifying how specific variables, such as input tokens, training data, or
+internal components, influence a machine learning model’s behavior. Attribution methods serve as the
+cornerstone of key interpretability approaches, driving advancements in concept-based explainability
+for vision models (Fel et al., 2023), circuit discovery (Syed et al., 2024), data valuation (Wang
+et al., 2025), and instruction-following in language models (Komorowski et al., 2026). Despite
+their broad utility, simple attributions based on the notions of cooperative game theory (Lundberg
+and Lee, 2017), gradients (Sundararajan et al., 2017), or relevance propagation (Achtibat et al.,
+2024) are limited by capturing only first-order influence of a single variable, omitting higher-order
+dynamics encoded by the model, such as synergies and antisynergies (see an example in Figure 1).
+To this end, interaction methods that measure the second-order influence of input pairs, such as
+Shapley interactions (Fumagalli et al., 2023) and Integrated Hessians (Janizek et al., 2021), have
+been proposed. However, it remains an open challenge whether, and how, an arbitrary first-order
+attribution method can be generalized from first principles to capture higher-order interactions.
+We answer this question by revisiting the concept of explaining explanations (Janizek et al., 2021),
+abstracting their serial use of integrated gradients to quantify how a particular input feature influ-
+ences an attribution value of another feature. Lundstrom and Razaviyayn (2023) have theoretically
+studied the interaction leakage into individual effects of such serial methods. Furthermore, explicitly
+computing continuous second-order derivatives like input Hessians requires architectural modifi-
+cations (Dombrowski et al., 2019; Janizek et al., 2021) and computational tricks for large input
+sizes (Pramanik et al., 2026). Moreover, the combinatorial growth of set-based interactions limits
+their comprehensibility in practice. We thus propose a general meta-approach that circumvents these
+limitations by decomposing any arbitrary first-order attribution into directional interaction terms.
+This work: The METAGAME, Meta-Shapley value, and meta-attributions. We formally conceptu-
+alize the proposed framework as the METAGAME, bridging the discrete principles of cooperative game
+∗Corresponding author: h.baniecki@uw.edu.pl
+Code: 
+Preprint.
+arXiv:2605.06295v1 [cs.LG] 7 May 2026
+
+Input sequence: 3 - (-5) = Predicted output: 8.02
+Integrated gradients
+Shapley values
+AttnLRP (≈input×gradient)
+Integrated
+Hessians
+Meta-Shapley values
+Meta-AttnLRP
+∑
+directional meta-attributions
+strong interaction
+leakage
+🔎 
+🔎 
+🔎 
+Meta-IG
+∑
+∑
+Figure 1: Complementary interpretations of a simple transformer solving integer addition.
+First-order attributions implicitly capture interactions between token pairs. Integrated Hessians
+highlight the undirected interaction -5 , - , but exhibit information leakage for - , which should
+be zero without knowing the subsequent number. AttnLRP, by contrast, assigns opposite-signed
+local attributions to - and -5 . Our proposed meta-attributions assign individual effects correctly
+(e.g. 3 , - ) and quantify the directed effect of each input token on the first-order attribution of
+another token. Meta-Shapley values reveal that the pure effect of -5 is small, and the attribution
+value is mostly determined by the interaction - →-5 . Meta-AttnLRP explains AttnLRP’s opposite-
+signed attributions directionally: a minus contributes positively to the attribution of -5 when -5
+is present - →-5 (+2.06); conversely, removing -5 nullifies the negative signal of the minus
+-5 →- (-1.62), offsetting the first-order attribution of - (-1.61). For details, see Appendix A.
+theory with the continuous dynamics of modern interpretability methods. Rather than explaining
+the model directly, we compute a modified Shapley value targeting the outputs of state-of-the-art
+attribution methods, such as Grad-ECLIP (Zhao et al., 2024), AttnLRP (Achtibat et al., 2024), or
+ConceptAttention (Helbling et al., 2025). Crucially, by measuring the marginal contribution of one
+feature/token strictly in the presence of another, we extract directional meta-attributions, revealing
+exactly how one feature/token influences the attribution of another. Such a directional focus resolves
+the interaction leakage observed in serial methods, yielding a rigorous hierarchical decomposition of
+any first-order attribution method. Theoretically, we prove that these meta-attributions elegantly split
+classical set-based interactions into their precise, directional components.
+Key contributions. Our work advances literature in multiple ways:
+(1) We deliver a principled and effective approach to generalize any first-order attribution method to
+quantify second-order interactions via the Shapley value. We name these methods meta-attributions.
+(2) We propose a hierarchical decomposition of attributions via directional interactions. This perspec-
+tive provides a practical way to navigate the combinatorial complexity of interactions. Surprisingly,
+we show that Shapley interactions and integrated Hessians already implicitly do this (Theorem 1).
+(3) We introduce the METAGAME and meta-attributions to define a novel directional interaction index,
+and we prove this serves as a directional extension of existing interaction indices (Theorem 2).
+(4) Finally, we demonstrate that METAGAME and meta-attributions offer pragmatic insights when
+applied to interpret large language models, vision-language encoders, and diffusion transformers.
+Theoretical Background
+We consider a general feature/token attribution method ϕi(f) that quantifies the influence of feature
+i ∈[d] := {1, . . . , d} on a predictor f : Rd →R. While broadly applicable, we predominantly
+focus on local explanations at a fixed input x ∈Rd, denoted as ϕi(f, x). To evaluate f on subsets,
+we define the masked predictor f(S; x), e.g. via baseline imputation f(S; x) := f(xS, b ¯S), which
+retains features S ⊆[d] and replaces the remainder ¯S := [d] \ S with a baseline b ∈Rd.
+2.1
+Existing Interaction Measures
+To interpret a model predictor f, first-order attribution methods allocate the prediction score to
+individual features. A foundational game-theoretic approach is the Shapley value (SV, Shapley,
+1953), which computes the average marginal contribution of feature i across all possible coalitions:
+ϕSV
+i (f, x) := P
+S⊆[d]\{i}
+d·(
+d−1
+|S| ) [f(S ∪{i}; x) −f(S; x)] .
+In neural networks, input gradients enable feature attribution. Gradient×input (G×I) scales the
+gradient by the input, while layer-wise relevance propagation (LRP, Bach et al., 2015) applies custom
+backpropagation rules, linked to gradient×input (Ancona et al., 2018). To satisfy theoretical axioms,
+integrated gradients (IG, Sundararajan et al., 2017) accumulates gradients along a straight-line path:
+ϕIG
+i (f, x) := (xi −bi)
+R 1
+∂f(b+α(x−b))
+∂xi
+dα.
+Serial attributions construct interactions by recursively applying a first-order method to its own
+output: ψi,j(f, x) := ϕj
+ ϕi(f, ·), x
+
+. Notable examples include integrated Hessians ψIH (IH, Janizek
+et al., 2021) and the serial Shapley value ψSV (Lundstrom and Razaviyayn, 2023). However, serial
+methods inherently fail to cleanly separate pure individual effects from interaction effects.
+Example: Interaction separation. As illustrated in Table 1 for f(x) = x1 +x1x2
+2, a faithful method
+must isolate the individual effect of x1 from the interaction x1x2
+2. However, both, the serial Shapley
+value and integrated Hessians fail to do this, leaking interaction terms into the individual components.
+The Möbius transform (Rota, 1964), mS(f, x) := P
+T ⊆S(−1)|S|−|T |f(T; x) for S ⊆[d] is a
+principled measure for separating pure interactions (Bordt and von Luxburg, 2023). Due to its
+complexity with 2d components, research has pivoted toward order-k set-based interaction indices.
+Shapley interactions extend the Shapley value to subsets of size k. For k = 2, ψ{i,j}(f, x) quantifies
+the joint influence of features i and j beyond their individual contributions. Notable variants include
+n-Shapley values (Lundberg et al., 2020; Bordt and von Luxburg, 2023), an extension of the Shapley
+interaction index (Grabisch and Roubens, 1999), the faithful Shapley interaction index (Tsai et al.,
+2023), and the Shapley-Taylor interaction index (STII, Sundararajan et al., 2020) given by
+ψSTII
+{i,j}(f, x) :=
+X
+S⊆[d]\{i,j}
+d ·
+ d−1
+|S|
+
+X
+T ⊆{i,j}
+(−1)|T |f(S ∪T; x).
+At k = 2, ψSTII
+{i,j} separates pure individual effects and projects higher-order interactions onto pairs.
+Sum of Power (SOP, Lundstrom and Razaviyayn, 2023) theoretically extends integrated gradients to
+resolve the separation problem. For pairwise interactions, SOP evaluates a Shapley value on integrated
+gradients within a reduced (d −1)-player game where player i is fixed as present. For i, j ∈[d] with
+i ̸= j it can be defined by ψSOP
+{i} (f, x) := m{i}(f, x) for individuals and for interactions via
+ψSOP
+i,j (f, x) :=
+X
+S⊆[d]\{i,j}
+(d −1) ·
+ d−2
+|S|
+
+
+ϕIG
+i (S ∪{i, j}; f, x) −ϕIG
+i (S ∪{i}; f, x)
+
+,
+where ϕIG
+i (S; f, x) evaluates ϕIG
+i
+restricted to the features in S, similarly to f(S; x) for f. The
+set-based SOP is then defined using the symmetrization ψSOP
+{i,j}(f, x) := ψSOP
+i,j (f, x) + ψSOP
+j,i (f, x). In
+Section 3, we prove that SOP follows our meta-attribution paradigm.
+2.2
+Limitations of Existing Interaction Measures
+Combinatorial explosion in set-based interactions. A major limitation of existing order-k interac-
+tion indices is the resulting O(dk) terms, which become increasingly difficult to interpret as feature
+dimensions or interaction orders grow. By collapsing interactions into undirected subsets {i, j},
+these set-based approaches fail to capture the directional hierarchy necessary to explain how features
+sequentially build upon one another, resulting in a redundant and less intuitive set of terms.
+Limited flexibility and separation leakage. Faithfully separating pure individual effects from
+joint interactions remains a non-trivial challenge. Serial methods inherently fail to do this, leaking
+interaction terms into the individual diagonal components. While Shapley interactions and SOP
+attempt to isolate these effects (see Table 1 for an example), Shapley interactions treat the model as a
+black box, and SOP has been studied exclusively for integrated gradients.
+Table 1: Analytical interactions φj→i for f(x) = x1 +I, where I := x1x2
+2. Unlike serial approaches,
+meta-attributions perfectly isolate the individual effect x1 (φi→i) and the interaction I (φj→i).
+Furthermore, whereas set-based interactions collapse effects into undirected subsets, meta-attributions
+capture the directional hierarchy and sum to the first-order attribution ϕi.
+Type
+Method
+Individual
+Interaction
+First-order
+Sum
+φ1→1
+φ2→2
+φ2→1
+φ1→2
+ϕ1
+ϕ2
+Serial
+SV (ψSV)
+x1 + 1/4 I
+1/4 I
+1/4 I
+1/4 I
+x1 + 1/2 I
+1/2 I
+x1 + I
+IH (ψIH)
+x1 + 1/9 I
+4/9 I
+2/9 I
+2/9 I
+x1 + 1/3 I
+2/3 I
+x1 + I
+Set-Based
+Möbius (m)
+x1
+I
+x1
+x1
+Shapley (ψSTII)
+x1
+I
+x1 + 1/2 I
+1/2 I
+x1 + I
+SOP (ψSOP)
+x1
+I
+x1 + 1/3 I
+2/3 I
+x1 + I
+Directional
+Meta-G×I
+x1
+I
+2I
+x1 + I
+2I
+x1 + 3I
+Meta-IG
+x1
+1/3 I
+2/3 I
+x1 + 1/3 I
+2/3 I
+x1 + I
+Meta-SV
+x1
+1/2 I
+1/2 I
+x1 + 1/2 I
+1/2 I
+x1 + I
+Structural and computational challenges. Methods using input Hessians are limited by locality
+and architectural constraints: they rely on fine-grained patch or token-level evaluations without a
+natural mechanism for grouping, vanish in standard ReLU networks (Janizek et al., 2021), and incur
+prohibitive computational costs that require specialized tricks to overcome (Pramanik et al., 2026).
+Towards flexible, directional attributions. Our METAGAME framework resolves these limitations
+by abstracting attributions over attributions. Acting as a universal wrapper for any first-order
+method, it treats the underlying attribution as a new cooperative game. This natively preserves the
+directional hierarchy (φj→i) and rigorously disentangles pure individual effects from interactions,
+thereby avoiding the leakage of serial methods. Crucially, our methodology integrates with existing
+theoretical advances: we demonstrate that meta-attributions are directional extensions of existing
+set-based interactions, and METAGAME bridges local gradient insights with set-based perturbations.
+The Metagame of Interpretability
+We introduce meta-attributions φj→i, which can be read naturally as the influence of feature j on the
+attribution of feature i, as a principled framework capable of decomposing any first-order attribution
+method ϕi (e.g., Meta-IG decomposes ϕIG
+i ). To compute these, we conceptualize the METAGAME, a
+cooperative game evaluating ϕi, and apply the Shapley value to extract interactions.
+3.1
+Hierarchical Interaction Decomposition of Attributions
+Instead of examining all O(d2) interactions of order 2, we shift to a hierarchical approach.
+Definition 1. An interaction φj→i(f, x) is hierarchically efficient with respect to ϕi(f, x) if
+ϕi(f, x) =
+X
+j∈[d]
+φj→i(f, x) = φi→i(f, x) +
+X
+j̸=i
+φj→i(f, x).
+Hierarchical efficiency ensures that the original first-order attribution is exactly preserved as a
+marginal sum of its pure individual effect φi→i(f, x) and its interactions with other features
+φj→i(f, x). Surprisingly, while not originally framed this way, several existing interaction indices
+already implicitly perform such hierarchical decompositions.
+Theorem 1. Existing interactions are hierarchically efficient, i.e. ϕi = P
+j∈[d] φj→i: Shapley
+interactions decompose ϕSV, whereas SOP decomposes ϕIG, where φj→i := ψ{i,j}/|{i,j}|. Moreover,
+serial methods decompose their first-order attributions with φj→i := ψi,j. Proofs are in Appendix B.
+For serial methods, hierarchical efficiency follows from the first-order efficiency; the outer attribution
+step (feature j) naturally decomposes the inner attribution (feature i). In set-based interactions,
+the factor of 1/|{i,j} accounts for the neglected directionality (j →i vs. i →j). However, these
+interaction measures are still symmetric and non-directional due to their construction. As observed
+from Table 1, serial approaches also fail to separate individual and interaction effects.
+3.2
+Directional Interactions via Meta-Attributions
+To address the limitations of serial approaches, we introduce directional interactions for any arbitrary
+first-order attribution method ϕi(f, x). The fundamental problem with serial applications, whether via
+Shapley masking or integrated Hessians, is that both features xi and xj are jointly varied. This joint
+variation inextricably entangles individual and pairwise effects. In practice, to cleanly separate these
+components, we only care about the effect of changing xj given the value of xi. We therefore fix the
+feature value xi and evaluate the marginal contribution of xj directly with respect to the first-order
+attribution ϕi(f, x). To rigorously account for higher-order dependencies and fairly distribute the
+interactions, we compute the Shapley value of feature j over the d −1 remaining features, treating ϕi
+evaluated at the fixed xi as the underlying METAGAME.
+Definition 2. For an arbitrary attribution method ϕi(f, x), the meta-attribution φj→i(f, x) repre-
+senting the influence of feature j on the attribution of feature i (where i ̸= j) is defined as:
+φj→i(f, x) :=
+X
+S⊆[d]\{i,j}
+(d −1) ·
+ d−2
+|S|
+
+
+ϕi(S ∪{i, j}; f, x) −ϕi(S ∪{i}; f, x)
+
+.
+The pure individual effect is defined as the boundary value φi→i(f, x) := ϕi({i}; f, x).
+Corollary 1. Meta-attributions are hierarchically efficient, i.e. ϕi(f, x) = P
+j∈[d] φj→i(f, x).
+Remark 1. The meta-attribution is the Shapley value of the metagame ν : 2[d]\{i} →R with
+ν(S) = ϕi(S ∪{i}; f, x) for S ⊆[d] \ {i}, i.e. the attribution of i when i and S are known. While
+we use local attributions, we discuss other applications and higher-order extensions in Section C.1.
+When the underlying first-order attribution is itself the Shapley value (i.e., ϕi := ϕSV
+i ), we refer to the
+resulting meta-attribution φMeta-SV
+j→i
+as the Meta-Shapley value. Similarly, ϕIG
+i or ϕG×I
+i
+yields φMeta-IG
+j→i
+and φMeta-G×I
+j→i
+, respectively. We now link these methods to set-based interactions.
+Theorem 2. The Meta-Shapley value and Meta-IG act as directional variants of the STII and SOP:
+ψSTII
+{i} (f, x) = φMeta-SV
+i→i
+(f, x),
+ψSTII
+{i,j}(f, x) = φMeta-SV
+j→i
+(f, x) + φMeta-SV
+i→j
+(f, x),
+ψSOP
+{i} (f, x) = φMeta-IG
+i→i
+(f, x),
+ψSOP
+{i,j}(f, x) = φMeta-IG
+j→i
+(f, x) + φMeta-IG
+i→j
+(f, x).
+Theorem 2 establishes the Meta-Shapley value and Meta-IG as the directional variant of STII and SOP,
+respectively. Crucially, the METAGAME framework extends this principled directional decomposition
+to arbitrary first-order attribution methods, isolating pure individual components while summarizing
+interaction effects.
+Example: Interaction separation. Continuing with the example f(x) = x1 + x1x2
+2 (Table 1), we
+find that directional meta-attributions isolate the pure individual effect x1 into the diagonal φ1→1 and
+correctly yield φ2→2 = 0. The interaction term I := x1x2
+2 is strictly restricted to the off-diagonal
+terms (φ2→1 and φ1→2), completely avoiding the spurious leakage seen in serial methods. The exact
+allocation of this interaction depends on the underlying first-order method. Notably, our framework
+exposes the inherent directionality of feature interactions: while the Meta-SV yields symmetric
+interactions by design (φ2→1 ≡φ1→2), gradient-based methods like Meta-IG and Meta-G×I capture
+asymmetric, directional influences (φ2→1 ̸= φ1→2). Regardless of symmetry, directional variants
+separate individual from interaction effects and sum to their first-order attributions.
+3.3
+Practical Considerations for Applying the METAGAME to Interpret Transformers
+While our theoretical considerations focus on the foundational attribution methods, the general
+concepts and intuitions behind METAGAME are also relevant to the modern interpretability approaches
+for transformers. We effectively demonstrate this through three settings of increasing abstractness.
+Meta-AttnLRP. AttnLRP (Achtibat et al., 2024) is a backpropagation-based, attention-aware method
+to attribute single input tokens into transformer predictions. While it has shown state-of-the-art
+faithfulness performance in language and vision tasks, it is unable to capture token-token synergies.
+Meta-AttnLRP complements its interpretation with directional second-order interactions by comput-
+ing a Shapley value of the exact METAGAME defined as: players := input tokens, game function :=
+AttnLRP (cf. Definition 2). Specifically for language models, we simply aggregate token attributions
+and interactions across the generated multi-token output sequence as detailed in Appendix C.2.
+black dog next to 
+a yellow hydrant
+Attributions
+Grad-ECLIP
+Input image-text
+Similarity: 0.34
+CLIP-2 (ViT-H)
+players
+text tokens
+Metagame
+Meta-Grad-ECLIP
+Why?
+value
+patch attribution
+f(S)
+Shapley interactions (3rd)
+Shapley values (2nd effects)
+black dog next 
+a 
+ to 
+ yellow hydrant
+ dog 
+ ant
+black next to 
+ yellow hydr 
+dog
+yellow
+black
+dog
+hydr
+-ant
+Figure 2: METAGAME quantifies gradient-based token interactions in vision-language encoders.
+Given a token attribution method (Grad-ECLIP) and a dual encoder (Meta CLIP-2), we compute
+meta-attributions from text token subsets and their corresponding visual patch attributions. First-order
+attributions quantify the effects that text tokens dog and yellow have on the similarity map (red,
+most similar). Directional meta-attributions quantify the interaction effects contributed by pairs of
+text tokens, such as hydr-ant and black-dog (blue, most dissimilar). See also App., Figure 8.
+Meta-Grad-ECLIP. Grad-ECLIP (Zhao et al., 2024) is a gradient-based method to measure the
+influence of image and text tokens on the embeddings of vision-language encoders. Similarly to
+AttnLRP, it cannot quantify the synergy between the image and text modalities. Our proposed Meta-
+Grad-ECLIP quantifies directional cross-modal interactions by computing Shapley values of text
+tokens in the attribution of image tokens. METAGAME thus becomes: players := text tokens, game
+function := Grad-ECLIP of image tokens (cf. Figure 2). Extending this idea, one can also compute a
+bi-token Shapley interaction of the METAGAME, which can be treated as measuring synergy between
+a token pair and the image, e.g. black-dog and hydr-ant in Figure 2. Finally, METAGAME could
+also be implemented the other way around to quantify the second-order effects of image patches on
+the attribution of text tokens, which we do not investigate in this work. As a minor contribution of
+this paper, we extend the attention- and gradient-based methods originally proposed for CLIP to the
+modern SigLIP-2 architecture (Tschannen et al., 2025) as detailed in Appendix C.3.
+Meta-ConceptAttention. ConceptAttention is not a standard attribution method; it allows attributing
+concepts (text tokens) to image patches generated by text-to-image diffusion transformers. However,
+it is limited by producing highly context-dependent interpretations (cf. Helbling et al., 2025, Sec-
+tion 5.5 & Figure 15). We aim to alleviate context dependence and interpret the second-order effects
+of concepts. As the most abstract application of our framework, Meta-ConceptAttention computes a
+Shapley value of the METAGAME defined as: players := concepts, game function := ConceptAttention.
+Crucially, our implementation requires only a single model forward pass, just like ConceptAttention,
+and computes marginal contributions using the cached model’s embeddings, making it viably efficient.
+We provide further methodological and implementational details in Appendix C.4.
+Scaling the computation. For small METAGAMES (d < 20), we compute the Shapley value exactly,
+jointly obtaining φj→i for all targets i in one vectorized pass. For larger ones, we recommend SOTA
+approximators from the shapiq library (Muschalik et al., 2024): Monte Carlo sampling amortizes
+well with moderate d and many targets, while regression-based approximators (Witter et al., 2025)
+better focus the budget when d is large but only specific targets matter, at the cost of one fit per target.
+Applications and Experimental Results
+Here, we demonstrate that the METAGAME offers useful insights: (i) when quantifying token interac-
+tions in language models, (ii) when explaining similarity in vision-language encoders, and (iii) when
+interpreting concepts in multimodal diffusion transformers. See Appendix D for details regarding the
+experimental setup, implementations, and hyperparameters.
+4.1
+Quantifying Token Interactions in Language Models
+We interpret the Gemma 3 language model (Gemma Team, 2025) via AttnLRP (Achtibat et al., 2024),
+although in principle METAGAME is general and any token attribution method can be used instead.
+Figure 3 illustrates two examples of how important each token in the user prompt is to the model’s
+generated response, averaged over up to 100 output tokens. In the first case, the first-order attribu-
+tions rank recipe, vegan, and butter as the most influential, while our proposed Meta-AttnLRP
+Gemma 3: No, this recipe is not suitable for a vegan guest. The key issue is the "honey butter." 
+Butter is a dairy product and therefore not vegan. Honey, while plant-based, is [...]
+User:
+Meta-AttnLRP
+Token attribution AttnLRP
+Gemma 3: This radiology impression is Negative/Normal. Here's a breakdown: 
+- "No evidence of pulmonary embolism": This is the key finding [...]
+User:
+Figure 3: METAGAME quantifies token interactions in instruction-tuned large language models.
+We compute Meta-AttnLRP as Shapley values from text tokens into AttnLRP token attributions of
+the Gemma language model’s generated output, highlighting directional second-order effects. We
+also measure the recall of detecting human-labeled interactions (e.g. word connotations, negation)
+on a sample of prompts spanning various contexts. For results on other models, see App., Figure 10.
+complements the interpretation with interactions between is→vegan and honey→butter as key
+to the model’s comprehension. In another example, AttnLRP emphasizes radiology, embolism,
+and ct, while Meta-AttnLRP highlights the importance of class→ify and chest→ct. Crucially,
+we detect that the model pays more attention to pulmonary when embolism is present, whereas
+removing pulmonary would increase the importance of embolism in the generated output. We
+report the increasing rate at which both approaches are able to capture such concepts using various
+human-labeled prompts, each containing 2-4 interacting token pairs, in Figure 3 (right). We further
+provide additional examples where METAGAME complements AttnLRP attributions in Appendix E.
+4.2
+Explaining Similarity in Vision-Language Encoders
+We demonstrate the broader applicability of METAGAME to improve three popular interpretabil-
+ity methods: generic attention (Chefer et al., 2021), MaskCLIP (Dong et al., 2023), and Grad-
+ECLIP (Zhao et al., 2024), which compute saliency maps for vision-language encoders. We bench-
+mark the performance of these algorithms quantitatively using the pointing interaction recognition
+metric proposed in (FIxLIP, Baniecki et al., 2025b), and experiment with three model architectures:
+CLIP (Radford et al., 2021), SigLIP-2 (Tschannen et al., 2025), MetaCLIP-2 (Chuang et al., 2025).
+Table 2 reports the state-of-the-art performance of meta-attributions in consistently improving the
+interaction detection on ImageNet-1k across various models and methods, outperforming even the
+second-order FIxLIP baseline in this task. Interestingly, our proposed Meta-MaskSigLIP approach
+is the most faithful to interpret SigLIP-2, a result confirmed on two model patch sizes (cf. App.,
+Table 4). Meta-Attention outperforms Meta-Grad-ECLIP on the overall largest, most recent, and
+best-performing MetaCLIP-2 model (Table 2). Beyond faithfully attributing bi-token interactions,
+computing Shapley interactions for the METAGAME of these attributions quantifies the tri-token
+influence on the model’s prediction as illustrated across Appendix, Figures 8 & 9.
+4.3
+Interpreting Concepts in Multimodal Diffusion Transformers
+Finally, we show the potential of METAGAME to improve the interpretability of text-to-image diffusion
+transformers. Meta-ConceptAttention provides two valuable utilities in this task: the Shapley value of
+ConceptAttention improves on CA’s main limitation-context-dependence, while the directional meta-
+attribution explains the influence between pairs of concepts (see Figure 4). Following Helbling et al.
+(2025), we benchmark Meta-ConceptAttention on a proxy segmentation performance of the FLUX.1
+[schnell] text-to-image model (Black Forest Labs, 2024) on the Pascal VOC dataset (Everingham
+et al., 2015), including single-object and multiclass images. We extend the evaluation to the more
+challenging MS COCO benchmark (Lin et al., 2014). Contrary to the original experimental setup, we
+evaluate segmentation performance when additional concepts are included in the context.
+Table 3 shows that Meta-ConceptAttention Pareto-dominates the original ConceptAttention across all
+metrics for both the single and multiple concept tasks, when simultaneously evaluating the method
+on all classes apparent in Pascal VOC and the same amount for MS COCO. We further perform
+extensive ablations on the number of added concepts, including the artificial text prompt, not using
+cross-concept attention, and restricting the set of layers, as reported in Appendix, Figure 13. We find
+that our Meta-Shapley-based interpretation correctly denoises attention maps, i.e. its performance
+Table 2: Interaction recognition on ImageNet-1k. Our proposed METAGAME correctly attributes
+cross-modal interactions in vision-language encoders of various architectures and sizes. It improves
+the performance of first-order explanation methods based on attention, representations, and gradients.
+The second-order, black-box FIxLIP baseline in gray takes orders of magnitude longer to compute.
+Extended results for SigLIP-2 (ViT-L/16) and SigLIP-2 (ViT-B/32) are in Appendix, Table 4.
+Model (Size)
+Explanation Method
+Interaction Recognition (↑)
+1 object
+2 objects
+3 objects
+4 objects
+CLIP
+(ViT-B/16)
+Attention (Chefer et al., 2021)
+.77±.01
+.46±.01
+.32±.01
+.25±.00
+METAGAME
+.84±.01
+.87±.01
+.89±.01
+.90±.01
+MaskCLIP (Dong et al., 2023)
+.30±.01
+.28±.01
+.27±.01
+.25±.00
+METAGAME
+.86±.01
+.88±.01
+.89±.01
+.89±.01
+Grad-ECLIP (Zhao et al., 2024)
+.71±.01
+.43±.01
+.31±.01
+.25±.00
+METAGAME
+.76±.01
+.79±.01
+.82±.01
+.84±.01
+FIxLIP (Baniecki et al., 2025b)
+.76±.01
+.77±.01
+.78±.01
+.79±.01
+MetaCLIP-2
+(ViT-H/14)
+Attention (Chefer et al., 2021)
+.84±.01
+.45±.01
+.32±.01
+.25±.00
+METAGAME
+.85±.01
+.83±.01
+.85±.01
+.86±.01
+Grad-ECLIP (Zhao et al., 2024)
+.76±.01
+.43±.01
+.31±.01
+.25±.00
+METAGAME
+.79±.01
+.76±.01
+.78±.01
+.80±.01
+FIxLIP (Baniecki et al., 2025b)
+.70±.01
+.66±.01
+.73±.01
+.75±.01
+street
+a photo of a vintage 
+bike on a city street
+Input text
+FLUX.1 [schnell]
+Generated image
+Why?
+ConceptAttention
+Meta-ConceptAttention
+Shapley values of ConceptAttention
+directional Shapley values
+car
+car
++street
++bike
+car
++street
++bike
++17 other
+car
+street
+bike
+bike
+street
+car
+bike
+street
+streetcar
+car
++street
+carstreet
+chairbike
+car
+Figure 4: METAGAME quantifies concept interactions in multimodal diffusion transformers.
+Shapley values average attention across concept subsets, and interpret their directional dependencies.
+stays the same or even increases as the number of additional concepts in-context increases. Notably,
+if we did not use cross-concept attention, the performance gap would be even larger.
+Related Work
+While METAGAME shares a naming affinity with the meta-evaluation problem (Hedström et al., 2023),
+which quantifies attribution quality, our framework focuses on second-order interaction effects.
+Backpropagation-based attribution. Several gradient-based methods capture higher-order dynam-
+ics implicitly by aggregating attributions in a local neighborhood around the input, e.g. Smooth-
+Grad (Smilkov et al., 2017; Zhou et al., 2025), expected gradients (Erion et al., 2021; Baniecki et al.,
+2025a), or through model randomization tests (Adebayo et al., 2018; Binder et al., 2023). Sikdar
+et al. (2021) utilizes integrated directional gradients to explicitly quantify group interactions, while
+Eberle et al. (2022) extend layer-wise relevance propagation to quantify interactions in deep similarity
+networks via second-order Taylor decomposition. Specifically in data attribution, Wang et al. (2025)
+leverage gradient-Hessian-gradient products to capture interactions between training samples.
+Table 3: METAGAME alleviates the context-dependence in ConceptAttention interpretability of the
+FLUX.1 [schnell] text-to-image model across Pascal VOC and MS COCO datasets. Crucially, both
+methods use only a single model forward pass. Several ablations are reported in App., Figure 13.
+Method
+Pascal VOC (Acc/mIoU/mAP ↑)
+MS COCO (Acc/mIoU/mAP ↑)
+Single concept
+Multiple concepts
+Single concept
+Multiple concepts
+ConceptAttention
+.832/.645/.878
+.612/.476/.622
+.852/.656/.899
+.572/.350/.423
+METAGAME
+.903/.768/.908
+.803/.553/.663
+.889/.720/.909
+.706/.390/.439
+Removal-based attribution. Game-theoretic attribution is continuously evolving to capture complex
+dependencies, from asymmetric Shapley values for causal priors (Frye et al., 2020), to n-Shapley
+values recovering a functional decomposition of the model (Bordt and von Luxburg, 2023), and
+unified frameworks for higher-order interactions (Fumagalli et al., 2025). Other advances include
+discrete representations of mixed partial derivatives (Tsang et al., 2020) and mitigations for non-
+convex games (Chang et al., 2025). However, METAGAME shifts the paradigm: rather than evaluating
+the model output directly, it treats the first-order attribution itself as the value function of a cooperative
+game to extract directional interactions. Finally, concurrent efforts by Kang et al. (2025) and Butler
+et al. (2025) focus on scaling token interactions in large language models via Fourier expansions.
+Applications. Despite ongoing skepticism regarding the specific properties of some feature attribution
+methods (Bilodeau et al., 2024; Böhle et al., 2024), they remain crucial for analyzing large vision
+models (Achtibat et al., 2023; Fel et al., 2023), e.g. in medical imaging (Chrabaszcz et al., 2025).
+Komorowski et al. (2026) leveraged AttnLRP to guide decoding and improve instruction-following
+in language models like Gemma 3. Explicit second-order methods, such as integrated Hessians,
+successfully explain CLIP (Moeller et al., 2025) and LLMs (Pramanik et al., 2026). Similarly, Shapley
+and Banzhaf interactions provide actionable insights in video-language training (Jin et al., 2024),
+hyperparameter optimization (Wever et al., 2026), and survival analysis (Langbein et al., 2026).
+Attention. The debate over whether attention faithfully explains transformers remains central,
+particularly regarding how to aggregate these values into an explanation while accounting for other
+network components (Wiegreffe and Pinter, 2019; Bibal et al., 2022). Growing evidence highlights its
+limitations across vision (Komorowski et al., 2023), language (Achtibat et al., 2024), and multimodal
+domains (Zhao et al., 2024). Nonetheless, attention remains a practical tool for locating concepts in
+multimodal diffusion transformers (Helbling et al., 2025). To overcome the inherent limitations of
+standard transformer architectures (Dziri et al., 2023; Lin et al., 2025), third-order attention between
+input tokens is increasingly explored (Sanford et al., 2023; Kozachinskiy et al., 2025).
+Conclusion
+In this work, we introduced the METAGAME and meta-attributions as a mathematically principled in-
+terpretability framework that complements existing methods for quantifying second-order interactions.
+We demonstrated its versatility and impact across three areas of AI: analyzing token interactions in
+instruction-tuned language models, explaining vision-language encoders, and interpreting concepts in
+multimodal diffusion transformers. Ultimately, the foundational constructs behind METAGAME offer
+a promising path toward more credible machine learning systems through future empirical research.
+Limitations. Our theory is limited by assuming baseline masking/imputation-the most principled
+approach to removing tokens/features from machine learning model inputs. Empirically, while it
+is feasible to compute Shapley values exactly for games with d < 20, such as captions in vision-
+language encoders and concepts in diffusion transformers, one must rely on efficient algorithms
+to approximate them for larger games, such as language model prompts. We further acknowledge
+that our language model analysis is an illustrative application of a few exemplary prompts; rigorous
+method comparisons would also require faithfulness measurements (Achtibat et al., 2024), such as
+token-pair insertion/deletion curves (Baniecki et al., 2025b). Finally, quantifying higher-order effects
+inherently increases both computational cost and cognitive burden for the user.
+Broader impact. We do not anticipate any negative societal impacts from this work, as it focuses on
+foundational interpretability techniques intended to improve our understanding of transformers.
+Acknowledgments and Disclosure of Funding
+Hubert Baniecki was supported by the Foundation for Polish Science (FNP), and the state budget
+within the Polish Ministry of Education and Science program "Pearls of Science" project number
+PN/01/0087/2022. Fabian Fumagalli gratefully acknowledges funding by the Deutsche Forschungs-
+gemeinschaft (DFG, German Research Foundation): TRR 318/3 2026 - 438445824. Work on this
+project is financially supported by the Foundation for Polish Science (FNP) grant ‘Centre for Credible
+AI’ No. FENG.02.01-IP.05-0058/24., and we gratefully acknowledge the Polish high-performance
+computing infrastructure PLGrid (HPC Center: ACK Cyfronet AGH) for providing computer facili-
+ties and support within the computational grant no. PLG/2026/019528. Finally, we appreciate Max
+for walking his dogs and sharing their pictures with us, allowing us to test our approach in the wild.
+References
+Reduan Achtibat, Maximilian Dreyer, Ilona Eisenbraun, Sebastian Bosse, Thomas Wiegand, Wojciech
+Samek, and Sebastian Lapuschkin. From attribution maps to human-understandable explanations
+through concept relevance propagation. Nature Machine Intelligence, 5(9):1006-1019, 2023. 5
+Reduan Achtibat, Sayed Mohammad Vakilzadeh Hatefi, Maximilian Dreyer, Aakriti Jain, Thomas
+Wiegand, Sebastian Lapuschkin, and Wojciech Samek. AttnLRP: Attention-aware layer-wise
+relevance propagation for transformers. In ICML, 2024. 1, 3.3, 4.1, 5, 6, C.2
+Julius Adebayo, Justin Gilmer, Michael Muelly, Ian Goodfellow, Moritz Hardt, and Been Kim. Sanity
+checks for saliency maps. In NeurIPS, 2018. 5
+Marco Ancona, Enea Ceolini, Cengiz Öztireli, and Markus Gross. Towards better understanding of
+gradient-based attribution methods for deep neural networks. In ICLR, 2018. 2.1
+Sebastian Bach, Alexander Binder, Grégoire Montavon, Frederick Klauschen, Klaus-Robert Müller,
+and Wojciech Samek. On pixel-wise explanations for non-linear classifier decisions by layer-wise
+relevance propagation. PloS One, 10(7), 2015. 2.1
+Hubert Baniecki, Giuseppe Casalicchio, Bernd Bischl, and Przemyslaw Biecek. Efficient and accurate
+explanation estimation with distribution compression. In ICLR, 2025a. 5, C.1
+Hubert Baniecki, Maximilian Muschalik, Fabian Fumagalli, Barbara Hammer, Eyke Hüllermeier, and
+Przemyslaw Biecek. Explaining similarity in vision-language encoders with weighted Banzhaf
+interactions. In NeurIPS, 2025b. 4.2, 2, 6, D.2, 4
+Adrien Bibal, Rémi Cardon, David Alfter, Rodrigo Wilkens, Xiaoou Wang, Thomas François, and
+Patrick Watrin. Is attention explanation? An introduction to the debate. In ACL, 2022. 5
+Blair Bilodeau, Natasha Jaques, Pang Wei Koh, and Been Kim. Impossibility theorems for feature
+attribution. Proceedings of the National Academy of Sciences, 121(2):e2304406120, 2024. 5
+Alexander Binder, Leander Weber, Sebastian Lapuschkin, Gregoire Montavon, Klaus-Robert Müller,
+and Wojciech Samek. Shortcomings of top-down randomization-based sanity checks for evaluations
+of deep neural network explanations. In CVPR, 2023. 5
+Black Forest Labs. FLUX.1 [schnell]. github.com/black-forest-labs/flux Version 1.0, 2024. 4.3, D.3
+Moritz Böhle, Navdeeppal Singh, Mario Fritz, and Bernt Schiele. B-cos alignment for inherently
+interpretable CNNs and vision transformers. IEEE Transactions on Pattern Analysis and Machine
+Intelligence, 46(6):4504-4518, 2024. 5, D.2
+Sebastian Bordt and Ulrike von Luxburg. From Shapley values to generalized additive models and
+back. In AISTATS, 2023. 2.1, 5, B.1.2, B.2, B.4
+Landon Butler, Abhineet Agarwal, Justin Singh Kang, Yigit Efe Erginbas, Bin Yu, and Kannan
+Ramchandran. ProxySPEX: Inference-efficient interpretability via sparse feature interactions in
+LLMs. In NeurIPS, 2025. 5
+Wonjoon Chang, Myeongjin Lee, and Jaesik Choi. Rethinking shapley value for negative interactions
+in non-convex games. In ICLR, 2025. 5
+Hila Chefer, Shir Gur, and Lior Wolf. Generic attention-model explainability for interpreting bi-modal
+and encoder-decoder transformers. In ICCV, 2021. 4.2, 2, C.3
+Maciej Chrabaszcz, Hubert Baniecki, Piotr Komorowski, Szymon Plotka, and Przemyslaw Biecek.
+Aggregated attributions for explanatory analysis of 3D segmentation models. In WACV, 2025. 5
+Yung-Sung Chuang, Yang Li, Dong Wang, Ching-Feng Yeh, Kehan Lyu, Ramya Raghavendra, James
+Glass, Lifei Huang, Jason Weston, Luke Zettlemoyer, et al. Meta CLIP 2: A Worldwide Scaling
+Recipe. In NeurIPS, 2025. 4.2, D.2
+Ian Covert, Scott M Lundberg, and Su-In Lee. Understanding global feature contributions with
+additive importance measures. In NeurIPS, 2020. C.1
+Timothée Darcet, Maxime Oquab, Julien Mairal, and Piotr Bojanowski. Vision transformers need
+registers. In ICLR, 2024. C.4
+Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei. ImageNet: A large-scale
+hierarchical image database. In CVPR, 2009. D.2
+Ann-Kathrin Dombrowski, Maximillian Alber, Christopher Anders, Marcel Ackermann, Klaus-
+Robert Müller, and Pan Kessel. Explanations can be manipulated and geometry is to blame. In
+NeurIPS, 2019. 1
+Xiaoyi Dong, Jianmin Bao, Yinglin Zheng, Ting Zhang, Dongdong Chen, Hao Yang, Ming Zeng,
+Weiming Zhang, Lu Yuan, Dong Chen, et al. MaskCLIP: Masked self-distillation advances
+contrastive language-image pretraining. In CVPR, 2023. 4.2, 2, C.3, D.2
+Nouha Dziri, Ximing Lu, Melanie Sclar, Xiang Lorraine Li, Liwei Jiang, Bill Yuchen Lin, Sean
+Welleck, Peter West, Chandra Bhagavatula, Ronan Le Bras, Jena D. Hwang, Soumya Sanyal, Xiang
+Ren, Allyson Ettinger, Zaid Harchaoui, and Yejin Choi. Faith and Fate: Limits of transformers on
+compositionality. In NeurIPS, 2023. 5
+Oliver Eberle, Jochen Büttner, Florian Kräutli, Klaus-Robert Müller, Matteo Valleriani, and Grégoire
+Montavon. Building and interpreting deep similarity models. IEEE Transactions on Pattern
+Analysis and Machine Intelligence, 44(3):1149-1161, 2022. 5
+Gabriel Erion, Joseph D Janizek, Pascal Sturmfels, Scott M Lundberg, and Su-In Lee. Improving
+performance of deep learning models with axiomatic attribution priors and expected gradients.
+Nature Machine Intelligence, 3(7):620-631, 2021. 5
+Mark Everingham, SM Ali Eslami, Luc Van Gool, Christopher KI Williams, John Winn, and Andrew
+Zisserman. The Pascal visual object classes challenge: A retrospective. International journal of
+computer vision, 111(1):98-136, 2015. 4.3, D.3
+Thomas Fel, Victor Boutin, Louis Béthune, Rémi Cadène, Mazda Moayeri, Léo Andéol, Mathieu
+Chalvidal, and Thomas Serre. A holistic approach to unifying automatic concept extraction and
+concept importance estimation. NeurIPS, 2023. 1, 5
+Christopher Frye, Colin Rowat, and Ilya Feige. Asymmetric Shapley values: incorporating causal
+knowledge into model-agnostic explainability. In NeurIPS, 2020. 5
+Fabian Fumagalli, Maximilian Muschalik, Patrick Kolpaczki, Eyke Hüllermeier, and Barbara Hammer.
+SHAP-IQ: Unified approximation of any-order Shapley interactions. In NeurIPS, 2023. 1, C.1
+Fabian Fumagalli, Maximilian Muschalik, Eyke Hüllermeier, Barbara Hammer, and Julia Herbinger.
+Unifying feature-based explanations with functional ANOVA and cooperative game theory. In
+AISTATS, 2025. 5
+Gemma Team. Gemma 3 technical report. arXiv preprint, arXiv:2503.19786, 2025. 4.1, D.1
+Michel Grabisch and Marc Roubens. An axiomatic approach to the concept of interaction among
+players in cooperative games. International Journal of game theory, 28(4):547-565, 1999. 2.1
+Michel Grabisch, Jean-Luc Marichal, and Marc Roubens. Equivalent representations of set functions.
+Mathematics of Operations Research, 25(2):157-178, 2000. B.4
+Matthieu Guillaumin, Daniel Küttel, and Vittorio Ferrari. Imagenet auto-annotation with segmentation
+propagation. International Journal of Computer Vision, 110(3):328-348, 2014. D.3
+Anna Hedström, Philine Lou Bommer, Kristoffer Knutsen Wickstrøm, Wojciech Samek, Sebastian
+Lapuschkin, and Marina MC Höhne. The meta-evaluation problem in explainable AI: Identifying
+reliable estimators with MetaQuantus. Transactions on Machine Learning Research, 2023. 5
+Alec Helbling, Tuna Han Salih Meral, Benjamin Hoover, Pinar Yanardag, and Duen Horng Chau.
+ConceptAttention: Diffusion transformers learn highly interpretable features. In ICML, 2025. 1,
+3.3, 4.3, 5, C.4, D.3
+Joseph D. Janizek, Pascal Sturmfels, and Su-In Lee. Explaining explanations: Axiomatic feature
+interactions for deep networks. Journal of Machine Learning Research, 22(104):1-54, 2021. 1,
+2.1, 2.2
+Peng Jin, Hao Li, Li Yuan, Shuicheng Yan, and Jie Chen. Hierarchical Banzhaf interaction for general
+video-language representation learning. IEEE Transactions on Pattern Analysis and Machine
+Intelligence, 2024. 5
+Justin Singh Kang, Landon Butler, Abhineet Agarwal, Yigit Efe Erginbas, Ramtin Pedarsani, Kannan
+Ramchandran, and Bin Yu. SPEX: Scaling feature interaction explanations for LLMs. In ICML,
+2025. 5
+Piotr Komorowski, Hubert Baniecki, and Przemysław Biecek. Towards evaluating explanations of
+vision transformers for medical imaging. In CVPRW, 2023. 5
+Piotr Komorowski, Elena Golimblevskaia, Reduan Achtibat, Thomas Wiegand, Sebastian Lapuschkin,
+and Wojciech Samek. Attribution-guided decoding. In ICLR, 2026. 1, 5, C.2
+Alexander Kozachinskiy, Felipe Urrutia, Hector Ignacio Jimenez Orellana, Tomasz Steifer, Germán
+Pizarro, Matías Daniel Fuentes Álvarez, Francisco Meza Vásquez, Cristian Buc Calderon, and
+Cristobal Rojas. Strassen attention, split VC dimension and compositionality in transformers. In
+NeurIPS, 2025. 5
+Sophie Hanna Langbein, Hubert Baniecki, Fabian Fumagalli, Niklas Koenen, Marvin N. Wright,
+and Julia Herbinger. Functional decomposition and Shapley interactions for interpreting survival
+models. In ICML, 2026. 5
+Bill Yuchen Lin, Ronan Le Bras, Kyle Richardson, Ashish Sabharwal, Radha Poovendran, Peter
+Clark, and Yejin Choi. ZebraLogic: On the scaling limits of LLMs for logical reasoning. In ICML,
+2025. 5
+Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr
+Dollár, and C Lawrence Zitnick. Microsoft COCO: Common objects in context. In ECCV, 2014.
+4.3, D.3
+Scott M Lundberg and Su-In Lee. A unified approach to interpreting model predictions. In NeurIPS,
+2017. 1
+Scott M Lundberg, Gabriel Erion, Hugh Chen, Alex DeGrave, Jordan M Prutkin, Bala Nair, Ronit
+Katz, Jonathan Himmelfarb, Nisha Bansal, and Su-In Lee. From local explanations to global
+understanding with explainable ai for trees. Nature Machine Intelligence, 2(1):56-67, 2020. 2.1,
+B.1.2, B.2
+Daniel Lundstrom and Meisam Razaviyayn. A unifying framework to the analysis of interaction
+methods using synergy functions. In ICML, 2023. 1, 2.1, B.4
+Lucas Moeller, Pascal Tilli, Thang Vu, and Sebastian Padó. Explaining caption-image interactions in
+CLIP models with second-order attributions. Transactions on Machine Learning Research, 2025.
+12
+
+Maximilian Muschalik, Hubert Baniecki, Fabian Fumagalli, Patrick Kolpaczki, Barbara Hammer, and
+Eyke Hüllermeier. shapiq: Shapley interactions for machine learning. In NeurIPS, 2024. 3.3, C.2
+Vishal Pramanik, Maisha Maliha, Nathaniel D. Bastian, and Sumit Kumar Jha. Hessian-enhanced
+token attribution (HETA): Interpreting autoregressive LLMs. In ICLR, 2026. 1, 2.2, 5
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal,
+Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever.
+Learning transferable visual models from natural language supervision. In ICML, 2021. 4.2, C.3,
+D.2
+Gian-Carlo Rota. On the foundations of combinatorial theory: I. theory of möbius functions. In
+Classic Papers in Combinatorics, pages 332-360. Springer, 1964. 2.1
+Clayton Sanford, Daniel Hsu, and Matus Telgarsky. Representational strengths and limitations of
+transformers. In NeurIPS, 2023. 5
+Lloyd S. Shapley. A value for n-person games. In Contributions to the Theory of Games, pages
+307-318. Princeton University Press, 1953. 2.1
+Sandipan Sikdar, Parantapa Bhattacharya, and Kieran Heese. Integrated directional gradients: Feature
+interaction attribution for neural NLP models. In ACL, 2021. 5
+Daniel Smilkov, Nikhil Thorat, Been Kim, Fernanda B. Viégas, and Martin Wattenberg. SmoothGrad:
+Removing noise by adding noise. arXiv preprint, arXiv:1706.03825, 2017. 5
+Mukund Sundararajan and Amir Najmi. The many shapley values for model explanation. In ICML,
+2020. C.1
+Mukund Sundararajan, Ankur Taly, and Qiqi Yan. Axiomatic attribution for deep networks. In ICML,
+2017. 1, 2.1
+Mukund Sundararajan, Kedar Dhamdhere, and Ashish Agarwal. The Shapley Taylor interaction
+index. In ICML, 2020. 2.1, B.1.2, B.2, B.4
+Aaquib Syed, Can Rager, and Arthur Conmy. Attribution patching outperforms automated circuit
+discovery. In Proceedings of the 7th BlackboxNLP Workshop: Analyzing and Interpreting Neural
+Networks for NLP, 2024. 1
+Che-Ping Tsai, Chih-Kuan Yeh, and Pradeep Ravikumar. Faith-Shap: The faithful Shapley interaction
+index. Journal of Machine Learning Research, 24(94):1-42, 2023. 2.1, B.1.2, B.2
+Michael Tsang, Sirisha Rambhatla, and Yan Liu. How does this interaction affect me? Interpretable
+attribution for feature interactions. In NeurIPS, 2020. 5
+Michael Tschannen et al. SigLIP 2: Multilingual vision-language encoders with improved semantic
+understanding, localization, and dense features. arXiv preprint arXiv:2502.14786, 2025. 3.3, 4.2,
+C.3, D.2
+Jiachen T. Wang, Prateek Mittal, Dawn Song, and Ruoxi Jia. Data shapley in one training run. In
+ICLR, 2025. 1, 5
+Marcel Wever, Maximilian Muschalik, Fabian Fumagalli, and Marius Lindauer. HyperSHAP: Shapley
+values and interactions for explaining hyperparameter optimization. In AAAI, 2026. 5
+Sarah Wiegreffe and Yuval Pinter. Attention is not not explanation. In EMNLP, 2019. 5
+R. Teal Witter, Yurong Liu, and Christopher Musco. Regression-adjusted Monte Carlo estimators for
+Shapley values and probabilistic values. In NeurIPS, 2025. 3.3
+Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming
+language models with attention sinks. In ICLR, 2024. C.4
+Chenyang Zhao, Kun Wang, Xingyu Zeng, Rui Zhao, and B. Antoni Chan. Gradient-based visual
+explanation for CLIP. In ICML, 2024. 1, 3.3, 4.2, 2, 5, C.3
+Linjiang Zhou, Chao Ma, Zepeng Wang, Libing Wu, and Xiaochuan Shi. AdaptGrad: Adaptive
+sampling to reduce noise. In NeurIPS, 2025. 5
+Appendix "Attributions All the Way Down? The Metagame of Interpretability"
+A Illustrative Example
+B
+Proofs
+B.1
+Derivations for Table 1 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+B.2
+Proof of Theorem 1 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+B.3
+Proof of Corollary 1 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+B.4
+Proof of Theorem 2 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+C Extended Methods
+C.1
+Potential Extensions of the METAGAME and Meta-Attributions . . . . . . . . . . .
+C.2
+AttnLRP and Meta-AttnLRP for Language Generation
+. . . . . . . . . . . . . . .
+C.3
+Adapting Generic Attention, Grad-ECLIP, and MaskCLIP to the SigLIP-2 Architecture 24
+C.4
+Implementing Meta-ConceptAttention in a Single Forward Pass
+. . . . . . . . . .
+D Experimental Setup Details
+D.1
+Quantifying Token Interactions in Language Models
+. . . . . . . . . . . . . . . .
+D.2
+Explaining Similarity in Vision-Language Encoders . . . . . . . . . . . . . . . . .
+D.3
+Interpreting Concepts in Multimodal Diffusion Transformers . . . . . . . . . . . .
+D.4
+Compute Resources . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+E Additional Experimental Results
+14
+
+A
+Illustrative Example
+We aim to cross-compare complementary behaviors of various token attribution approaches on
+a simple illustrative example. For that, we train a single-layer, single-head transformer with 760
+parameters to solve integer addition in the form of a {+,-} b = y, where inputs a and b are integers
+from [−9, 9]. The model uses RMSNorm, GELU, a learned absolute positional embedding, and
+is trained without biases. It achieves a near-perfect mean squared error on both the in-distribution
+validation set and a held-out test set comprising the unseen (a,b) pairs. For an intuitive case, we train
+the model to recognize the masking token <unk> and regularize it to predict 0 for a fully masked input
+sequence comprising three <unk> tokens (the so-called empty set giving baseline value). Ultimately,
+the model predicts the expected output value over a distribution of input tokens in the <unk> position.
+Our demo is easy to run on a CPU and fully explorable with the code attached to the paper. Figure 6
+extends Figure 5 to show three representative input examples that build intuition for how Shapley
+values and interactions behave, how they relate to gradient-based approximations, how AttnLRP’s
+interpretation differs, and how our METAGAME approach decomposes the first-order attributions.
+Attention
++0.10
+-
++0.06
+-5
++0.00
+3 -
++0.94
+- 3
++0.90
+3 -5
++0.00
+-5 3
++0.00
+- -5
++0.86
+-5 -
++0.00
+Shapley values
++3.24
+-
++2.46
+-5
++2.34
+Meta
+Shapley values
++3.48
+-
+-0.01
+-5
+-0.32
+3 -
+-0.22
+- 3
+-0.22
+3 -5
+-0.02
+-5 3
+-0.02
+- -5
++2.69
+-5 -
++2.69
+Shapley interactions
++3.48
+-
+-0.01
+-5
+-0.32
+3 , -
+-0.44
+3 , -5
+-0.04
+- , -5
++5.37
+Integrated gradients
++3.57
+-
++2.31
+-5
++2.16
+Meta
+Integrated gradients
++3.48
+-
+-0.01
+-5
+-0.32
+3 -
+-0.54
+- 3
++0.04
+3 -5
++0.02
+-5 3
++0.05
+- -5
++2.47
+-5 -
++2.86
+Integrated Hessians
++3.42
+-
++0.71
+-5
++0.55
+3 , -
++0.06
+- , 3
++0.06
+3 , -5
++0.09
+-5 , 3
++0.09
+- , -5
++1.52
+-5 , -
++1.52
+AttnLRP ( ≈input×gradient)
++0.45
+-
+-1.61
+-5
++1.54
+Meta
+AttnLRP
++0.33
+-
+-0.06
+-5
+-0.59
+3 -
++0.08
+- 3
++0.17
+3 -5
++0.07
+-5 3
+-0.05
+- -5
++2.06
+-5 -
+-1.62
+Input sequence: 3 
+ (
+5) = Predicted output: 8.02
+Figure 5: Complementary interpretations of a simple transformer solving integer addition.
+Extended Figure 1. Attention highlights the token interactions 3 →- , - →3 , and - →-5 without
+the notion of sign. Shapley values, Integrated gradients, and AttnLRP attribute the prediction to
+individual tokens but cannot capture interactions between token pairs. Shapley interactions and
+integrated Hessians highlight the undirected interaction - , -5 . Furthermore, Shapley interactions
+confirm that the pure effects of - and -5 are negligible, so Shapley values effectively split this
+interaction between - and -5 . AttnLRP, by contrast, assigns opposite-signed local attributions to -
+and -5 asymmetrically. Our proposed Meta-Shapley, Meta-Integrated gradients, and Meta-AttnLRP
+quantify the directed effect of each input token on the first-order attribution of another token. Meta-
+Shapley values are symmetric and correspond to half of the Shapley interactions. Meta-AttnLRP
+explains AttnLRP’s opposite-signed attributions directionally: a minus contributes positively to
+the attribution of -5 when -5 is present - →-5 (+2.06); conversely, removing -5 nullifies the
+negative signal of the minus -5 →- (-1.62), offsetting the first-order attribution of - (-1.61).
+Attention
++0.08
+-
++0.04
+-5
++0.00
+7 -
++0.96
+- 7
++0.92
+7 -5
++0.00
+-5 7
++0.00
+- -5
++0.86
+-5 -
++0.00
+Shapley values
++7.25
+-
++2.48
+-5
++2.35
+Meta
+Shapley values
++7.47
+-
+-0.01
+-5
+-0.32
+7 -
+-0.20
+- 7
+-0.20
+7 -5
+-0.02
+-5 7
+-0.02
+- -5
++2.69
+-5 -
++2.69
+Shapley interactions
++7.47
+-
+-0.01
+-5
+-0.32
+7 , -
+-0.40
+7 , -5
+-0.05
+- , -5
++5.39
+Integrated gradients
++8.15
+-
++1.62
+-5
++2.30
+Meta
+Integrated gradients
++7.48
+-
+-0.01
+-5
+-0.32
+7 -
+-1.08
+- 7
++0.56
+7 -5
++0.11
+-5 7
++0.11
+- -5
++2.52
+-5 -
++2.71
+Integrated Hessians
++7.36
+-
+-0.43
+-5
++0.63
+7 , -
++0.59
+- , 7
++0.59
+7 , -5
++0.21
+-5 , 7
++0.21
+- , -5
++1.46
+-5 , -
++1.46
+AttnLRP ( ≈input×gradient)
++1.44
+-
+-2.22
+-5
++1.54
+Meta
+AttnLRP
++1.68
+-
+-0.06
+-5
+-0.59
+7 -
+-0.51
+- 7
+-0.27
+7 -5
++0.17
+-5 7
++0.03
+- -5
++1.96
+-5 -
+-1.64
+Input sequence: 7 
+ (
+5) = Predicted output: 12.06
+Attention
++1.00
++
++0.04
+-4
++0.00
+4 +
++0.00
++ 4
++0.00
+4 -4
++0.01
+-4 4
++0.00
++ -4
++0.81
+-4 +
++0.86
+Shapley values
++4.19
++
+-2.24
+-4
+-2.07
+Meta
+Shapley values
++4.50
++
+-0.11
+-4
+-0.07
+4 +
+-0.22
++ 4
+-0.22
+4 -4
+-0.09
+-4 4
+-0.09
++ -4
+-1.91
+-4 +
+-1.91
+Shapley interactions
++4.50
++
+-0.11
+-4
+-0.07
+4 , +
+-0.44
+4 , -4
+-0.19
++ , -4
+-3.83
+Integrated gradients
++4.19
++
+-2.34
+-4
+-1.98
+Meta
+Integrated gradients
++4.50
++
+-0.05
+-4
+-0.07
+4 +
+-0.22
++ 4
+-0.16
+4 -4
+-0.04
+-4 4
+-0.15
++ -4
+-1.87
+-4 +
+-2.08
+Integrated Hessians
++4.28
++
+-1.09
+-4
+-0.74
+4 , +
+-0.04
++ , 4
+-0.04
+4 , -4
+-0.04
+-4 , 4
+-0.04
++ , -4
+-1.21
+-4 , +
+-1.21
+AttnLRP ( ≈input×gradient)
++0.30
++
++1.86
+-4
+-2.87
+Meta
+AttnLRP
++0.55
++
++0.90
+-4
++0.50
+4 +
++0.01
++ 4
+-0.15
+4 -4
++0.02
+-4 4
+-0.11
++ -4
+-3.39
+-4 +
++0.94
+Input sequence: 4 + (
+4) = Predicted output: 
+0.15
+Attention
+-6
++0.25
++
++0.03
++0.00
+-6 +
++0.00
++ -6
++0.10
+-6 8
++0.56
+8 -6
++0.02
++ 8
++0.41
+8 +
++0.89
+Shapley values
+-6
+-5.74
++
++3.90
++4.13
+Meta
+Shapley values
+-6
+-5.69
++
+-0.11
+-0.02
+-6 +
+-0.09
++ -6
+-0.09
+-6 8
++0.04
+8 -6
++0.04
++ 8
++4.10
+8 +
++4.10
+Shapley interactions
+-6
+-5.69
++
+-0.11
+-0.02
+-6 , +
+-0.19
+-6 , 8
++0.09
++ , 8
++8.19
+Integrated gradients
+-6
+-5.65
++
++6.22
++1.71
+Meta
+Integrated gradients
+-6
+-5.71
++
+-0.05
+-0.02
+-6 +
+-0.05
++ -6
+-0.12
+-6 8
+-0.00
+8 -6
++0.16
++ 8
++1.73
+8 +
++6.34
+Integrated Hessians
+-6
+-5.60
++
++5.23
++0.49
+-6 , +
+-0.13
++ , -6
+-0.13
+-6 , 8
++0.01
+8 , -6
++0.01
++ , 8
++1.22
+8 , +
++1.22
+AttnLRP ( ≈input×gradient)
+-6
+-4.58
++
++3.59
++1.31
+Meta
+AttnLRP
+-6
+-4.28
++
++0.90
+-0.27
+-6 +
+-0.05
++ -6
+-0.46
+-6 8
++0.06
+8 -6
++0.16
++ 8
++1.51
+8 +
++2.74
+Input sequence: 
+6 + 8 = Predicted output: 2.27
+Figure 6: Complementary interpretations of a simple transformer solving integer addition.
+Additional examples similar to Figure 5.
+B
+Proofs
+B.1
+Derivations for Table 1
+Here, we provide the step-by-step derivations for the analytical components presented in Table 1.
+Let the model be f(x) = x1 + x1x2
+2, with the interaction term defined as I := x1x2
+2. We assume a
+standard zero baseline b = (0, 0). We omit f in ϕ(f, x), φ(f, x) etc. for conciseness.
+Before computing the second-order components, we first establish the underlying first-order attribu-
+tions ϕi(x) for gradient×input, integrated gradients, and Shapley values.
+Gradient×input (G×I).
+ϕG×I
+(x) = x1
+∂f(x)
+∂x1
+= x1(1 + x2
+2) = x1 + I
+ϕG×I
+(x) = x2
+∂f(x)
+∂x2
+= x2(2x1x2) = 2I
+Integrated gradients (IG).
+ϕIG
+1 (x) = x1
+Z 1
+∂f(αx)
+∂x1
+dα = x1
+Z 1
+(1 + α2x2
+2)dα = x1
+
+1 + 1
+3x2
+
+= x1 + 1
+3I
+ϕIG
+2 (x) = x2
+Z 1
+∂f(αx)
+∂x2
+dα = x2
+Z 1
+(2α2x1x2)dα = 2
+3x1x2
+2 = 2
+3I
+Shapley values (SV). The characteristic function is v(S) = f(S; x). Thus v(∅) = 0, v({1}) = x1,
+v({2}) = 0, and v({1, 2}) = x1 + I.
+ϕSV
+1 (x) = 1
+2(v({1}) −v(∅)) + 1
+2(v({1, 2}) −v({2})) = 1
+2(x1) + 1
+2(x1 + I) = x1 + 1
+2I
+ϕSV
+2 (x) = 1
+2(v({2}) −v(∅)) + 1
+2(v({1, 2}) −v({1})) = 0 + 1
+2(x1 + I −x1) = 1
+2I
+B.1.1
+Serial Methods
+Serial methods compute interactions by treating the first-order attribution ϕi(x) as a new target
+function hi(x) and reapplying the attribution method.
+Serial Shapley value. We apply Shapley value to hi(x) := ϕSV
+i (x). For h1, the coalitional values
+are vh1(∅) = 0, vh1({1}) = x1, vh1({2}) = 0, vh1({1, 2}) = x1 + 1
+2I.
+ψSV
+1,1(x) = 1
+2(x1 −0) + 1
+
+x1 + 1
+2I −0
+
+= x1 + 1
+4I
+ψSV
+1,2(x) = 1
+2(0 −0) + 1
+
+x1 + 1
+2I −x1
+
+= 1
+4I
+For h2, vh2(∅) = vh2({1}) = vh2({2}) = 0, and vh2({1, 2}) = 1
+2I.
+ψSV
+2,1(x) = 1
+2(0 −0) + 1
+1
+2I −0
+
+= 1
+4I
+ψSV
+2,1(x) = 1
+2(0 −0) + 1
+1
+2I −0
+
+= 1
+4I
+Integrated Hessians (IH). We apply integrated gradients to h1(x) := ϕIG
+1 (x) and h2(x) := ϕIG
+2 (x).
+ψIH
+1,1(x) = x1
+Z 1
+∂h1(αx)
+∂x1
+dα = x1
+Z 1
+
+1 + 1
+3α2x2
+
+dα = x1 + 1
+9I
+ψIH
+1,2(x) = x2
+Z 1
+∂h1(αx)
+∂x2
+dα = x2
+Z 1
+2
+3α2x1x2
+
+dα = 2
+9I
+ψIH
+2,1(x) = x1
+Z 1
+∂h2(αx)
+∂x1
+dα = x1
+Z 1
+2
+3α2x2
+
+dα = 2
+9I
+ψIH
+2,2(x) = x2
+Z 1
+∂h2(αx)
+∂x2
+dα = x2
+Z 1
+4
+3α2x1x2
+
+dα = 4
+9I
+B.1.2
+Interaction Methods
+We now derive the results for the Möbius and Shapley interactions as well as for SOP.
+Möbius and Shapley interactions. The Möbius coefficients for the characteristic function v(S) =
+f(S; x) are:
+m{1}(x) = v({1}) −v(∅) = x1
+m{2}(x) = v({2}) −v(∅) = 0
+m{1,2}(x) = v({1, 2}) −v({1}) −v({2}) + v(∅) = (x1 + I) −x1 −0 + 0 = I
+The Möbius method maps these directly to the individual and interaction components. Shapley
+interaction indices of order k = 2 map these Möbius coefficients directly to the individual elements
+(x1 and 0) and the joint pair (I). This can be verified for popular Shapley interactions, such as
+n-Shapley values (Lundberg et al., 2020; Bordt and von Luxburg, 2023), Shapley-Taylor interaction
+index (Sundararajan et al., 2020), and faithful Shapley interaction index (Tsai et al., 2023), cf. see
+(Bordt and von Luxburg, 2023, Proof of Theorem 8).
+Sum of Power (SOP). As established in Theorem 2, SOP corresponds to the symmetric set-based
+interaction derived from Meta-IG. We can therefore bypass a redundant derivation and simply
+compute it by summing the corresponding directional Meta-IG components (derived below):
+ψSOP
+{1} (x) = φIG
+1→1(x) = x1
+ψSOP
+{2} (x) = φIG
+2→2(x) = 0
+ψSOP
+{1,2}(x) = φIG
+1→2(x) + φIG
+2→1(x) = 2
+3I + 1
+3I = I.
+B.1.3
+Meta-Attributions
+Directional meta-attributions strictly separate the individual effect φi→i from interaction effects φj→i
+via marginal evaluations on the METAGAME with xi fixed. For a 2-dimensional feature space, this
+naturally reduces to φi→i(x) = ϕi(xi, 0) and φj→i(x) = ϕi(x) −ϕi(xi, 0).
+Meta-G×I.
+φG×I
+1→1(x) = ϕG×I
+(x1, 0) = x1
+φG×I
+2→1(x) = ϕG×I
+(x) −ϕG×I
+(x1, 0) = (x1 + I) −x1 = I
+φG×I
+2→2(x) = ϕG×I
+(0, x2) = 0
+φG×I
+1→2(x) = ϕG×I
+(x) −ϕG×I
+(0, x2) = 2I −0 = 2I
+Meta-IG.
+φIG
+1→1(x) = ϕIG
+1 (x1, 0) = x1
+φIG
+2→1(x) = ϕIG
+1 (x) −ϕIG
+1 (x1, 0) =
+
+x1 + 1
+3I
+
+−x1 = 1
+3I
+φIG
+2→2(x) = ϕIG
+2 (0, x2) = 0
+φIG
+1→2(x) = ϕIG
+2 (x) −ϕIG
+2 (0, x2) = 2
+3I −0 = 2
+3I
+Meta-SV.
+φSV
+1→1(x) = ϕSV
+1 (x1, 0) = x1
+φSV
+2→1(x) = ϕSV
+1 (x) −ϕSV
+1 (x1, 0) =
+
+x1 + 1
+2I
+
+−x1 = 1
+2I
+φSV
+2→2(x) = ϕSV
+2 (0, x2) = 0
+φSV
+1→2(x) = ϕSV
+2 (x) −ϕSV
+2 (0, x2) = 1
+2I −0 = 1
+2I
+This completes the derivations of Table 1.
+B.2
+Proof of Theorem 1
+Proof. We prove the result for each method separately. For Shapley interactions, we consider the
+three main interaction indices, namely n-Shapley values (Lundberg et al., 2020; Bordt and von
+Luxburg, 2023), the STII (Sundararajan et al., 2020), and the faithful Shapley interaction index (Tsai
+et al., 2023).
+Serial Shapley value and integrated Hessians. We let φj→i(f, x) := ψi,j(f, x). For the serial
+Shapley value and integrated Hessians, hierarchical efficiency follows immediately from the standard
+efficiency axioms of their underlying first-order methods. The efficiency axiom guarantees that the
+sum of attributions equals the difference between the grand coalition (i.e. ϕi(f, x)) and the empty
+coalition (i.e. 0 due to the dummy axiom). When applying the attribution method serially (e.g.,
+applying the Shapley value to the output of the Shapley value, or integrated gradients to the output of
+integrated gradients), the outer attribution naturally distributes the inner first-order attribution among
+all features. Consequently, summing the second-order terms
+X
+j
+φj→i =
+X
+j
+ψi,j =
+X
+j
+ϕj(ϕi(f, x), x) = ϕi(f, x) −ϕi({}; f, x) = ϕi(f, x)
+exactly recovers the first-order attribution ϕi, demonstrating that integrated Hessians decompose
+integrated gradients and serial Shapley value decomposes Shapley value.
+n-Shapley Values. For n-SVs (Lundberg et al., 2020; Bordt and von Luxburg, 2023), hierarchical
+efficiency is a direct consequence of their recursive definition and the relationship between n-SVs
+of different orders. According to Proposition 13 of the functional decomposition framework (Bordt
+and von Luxburg, 2023), lower-order Shapley values can be computed from higher-order ones via a
+lump-sum formula. Specifically, the standard Shapley value ϕSV
+i (f, x) decomposes into the n-SVs
+as:
+ϕSV
+i (f, x) = ψn-SV
+{i} (f, x) + 1
+X
+j̸=i
+ψn-SV
+{i,j}(f, x) + · · · + 1
+n
+X
+K⊆[d]\{i}
+|K|=n−1
+ψn-SV
+K∪{i}(f, x)
+Restricting this to pairwise interactions (n = 2), we obtain
+ϕSV
+i (f, x) = ψ2-SV
+{i} (f, x) +
+X
+j̸=i
+2ψ2-SV
+{i,j}(f, x).
+By substituting φj→i(f, x) := ψ2-SV
+{i,j}(f,x)/2 and the pure individual effect φi→i(f, x) := ψ2-SV
+{i} (f, x),
+we see that the 2-Shapley interactions perfectly decompose the original Shapley value.
+Faithful Shapley Interaction Index (FSII). To establish this for the Faithful Shapley interaction
+index, we argue through their Möbius representation (Tsai et al., 2023, Theorem 19), which reads for
+k = 2 and S ⊆[d] with |S| ≤2 as
+ψFSII
+S
+(f, x) = mS(f, x) + (−1)2−|S|
+|S|
+2 + |S|
+ 2
+|S|
+
+X
+T ⊃S:|T |>2
+ |T |−1
+
+ |T |+1
+|S|+2
+mT (f, x).
+For the pure individual effect (j = i, so |S| = 1), the directional scaling yields φi→i(f, x) =
+ψFSII
+{i} (f, x). By expanding the binomials (
+|T |−1
+2 )
+(
+|T |+1
+3 ) =
+3(|T |−2)
+|T |(|T |+1) and applying the coefficient −1
+ 2
+
+=
+−2
+3, we obtain:
+φi→i(f, x) = m{i}(f, x) −
+X
+T ⊃{i}:|T |>2
+2(|T| −2)
+|T|(|T| + 1)mT (f, x).
+For the off-diagonal interaction (j ̸= i, so |S| = 2), the directional scaling is φj→i(f, x) :=
+ψFSII
+{i,j}(f,x)/2. Expanding (
+|T |−1
+2 )
+(
+|T |+1
+4 ) =
+|T |(|T |+1) and applying the base coefficient 2
+ 2
+
+= 1
+2 yields a
+total coefficient of
+|T |(|T |+1) for ψFSII
+{i,j}. Halving this for the directional attribution gives:
+φj→i(f, x) = 1
+2m{i,j}(f, x) +
+X
+T ⊃{i,j}:|T |>2
+|T|(|T| + 1)mT (f, x).
+To verify hierarchical efficiency, we sum over all j ̸= i. Since there are precisely |T| −1 features
+j ̸= i in any given subset T ⊃{i}, the sum accumulates as:
+X
+j̸=i
+φj→i(f, x) =
+X
+T ⊃{i}:|T |=2
+2mT (f, x) +
+X
+T ⊃{i}:|T |>2
+3(|T| −1)
+|T|(|T| + 1)mT (f, x).
+Finally, adding the pure individual effect φi→i(f, x) merges the terms for subsets where |T| > 2:
+3(|T| −1)
+|T|(|T| + 1) −2(|T| −2)
+|T|(|T| + 1) = 3|T| −3 −2|T| + 4
+|T|(|T| + 1)
+=
+|T| + 1
+|T|(|T| + 1) = 1
+|T|.
+This elegantly collapses the entire summation to P
+T ⊃{i}
+|T |mT (f, x), which exactly recovers the
+standard Möbius representation of the first-order Shapley value ϕSV
+i (f, x), confirming the decomposi-
+tion.
+Shapley-Taylor Interaction Index (STII). We again argue through their Möbius representations,
+which is given for k = 2 and i ̸= j (Bordt and von Luxburg, 2023, Proof of Theorem 8) by
+ψSTII
+{i,j}(f, x) =
+X
+S⊆[d]:i,j∈S
+ |S|
+mS(f, x).
+For the pure individual effect, the STII strictly isolates the Möbius coefficient of the singleton,
+yielding ψSTII
+{i} (f, x) = m{i}(f, x). Using the definition φj→i := ψ{i,j}/|{i,j}|, we verify hierarchical
+efficiency by summing these directional attributions over all j ∈[d]:
+X
+j∈[d]
+φj→i(f, x) = m{i}(f, x) +
+X
+j̸=i
+X
+S⊆[d]:i,j∈S
+mS(f, x)
+|S|(|S| −1).
+By swapping the order of summation on the right-hand term, we note that for any fixed subset S
+containing i, there are exactly |S| −1 features j ̸= i present in S. The sum over j thus counts the
+term |S| −1 times, yielding:
+X
+j∈[d]
+φj→i(f, x) = m{i}(f, x) +
+X
+S⊆[d]:i∈S,|S|≥2
+(|S| −1) mS(f, x)
+|S|(|S| −1)
+= m{i}(f, x) +
+X
+S⊆[d]:i∈S,|S|≥2
+mS(f, x)
+|S|
+=
+X
+S⊆[d]:i∈S
+mS(f, x)
+|S|
+.
+This final expression exactly recovers the standard Möbius representation of the first-order Shapley
+value ϕSV
+i (f, x), proving that the scaled STII hierarchically decomposes the Shapley value.
+B.3
+Proof of Corollary 1
+Proof. By definition, for j ̸= i, the directional meta-attribution φj→i(f, x) is computed as the
+Shapley value of feature j in a (d−1)-player subgame over the feature set [d]\{i}. The characteristic
+function of this subgame is v(i)(K) := ϕi(K ∪{i}; f, x) for K ⊆[d] \ {i}.
+By the efficiency axiom of the Shapley value, the sum of the attributions across all d −1 players
+equals the difference between the value of the grand coalition and the empty coalition in this subgame:
+X
+j̸=i
+φj→i(f, x) = v(i)([d] \ {i}) −v(i)(∅)
+= ϕi([d]; f, x) −ϕi({i}; f, x)
+= ϕi(f, x) −φi→i(f, x).
+Rearranging the terms and incorporating the pure individual effect φi→i(f, x) directly yields:
+X
+j∈[d]
+φj→i(f, x) = ϕi(f, x).
+This demonstrates that directional meta-attributions inherently satisfy hierarchical efficiency.
+B.4
+Proof of Theorem 2
+Proof. We demonstrate the equivalence of the directional meta-attributions to the symmetric interac-
+tion indices as stated in the theorem.
+First, for the equivalence between Meta-IG and the SOP interaction, the result follows directly from
+their respective definition. Note that our definition is the special case of SOP for k = 2 and follows
+(Lundstrom and Razaviyayn, 2023, Eq. 43 and Eq. 44). By construction, the SOP pairwise interaction
+evaluates a modified Shapley value on integrated gradients within a reduced (d −1)-player game,
+which algebraically matches our definition of the Meta-IG and its symmetrization:
+ψSOP
+{i} (f, x) = φMeta-IG
+i→i
+(f, x),
+and
+ψSOP
+{i,j}(f, x) = φMeta-IG
+j→i
+(f, x) + φMeta-IG
+i→j
+(f, x).
+Second, to establish the connection between Meta-SV and the STII, we can argue through their Möbius
+representations. The first-order Shapley value ϕSV
+i
+can be expressed via the Möbius coefficients
+mS(f, x) of the original game f as ϕSV
+i (f, x) = P
+S⊆[d]:i∈S
+mS(f,x)
+|S|
+(Grabisch et al., 2000).
+When evaluating the directional marginal contribution of feature j ̸= i on ϕSV
+i , we treat the attribution
+evaluated at a fixed xi as a new METAGAME ν(K) for K ⊆[d] \ {i}. By evaluating ϕSV
+i
+restricted to
+the subset K ∪{i} and expressing it via its Möbius representation, we obtain:
+ν(K) := ϕSV
+i (K ∪{i}; f, x) =
+X
+S⊆K∪{i}:i∈S
+mS(f, x)
+|S|
+=
+X
+T ⊆K
+mT ∪{i}(f, x)
+|T ∪{i}|
+.
+By definition, the unique Möbius representation of the game ν dictates that ν(K) ≡P
+T ⊆K mT (ν).
+Comparing this definition directly with our derived equation above, we conclude that this is already
+the Möbius representation of ν, allowing us to immediately identify the coefficients:
+mT (ν) = mT ∪{i}(f, x)
+|T ∪{i}|
+.
+Applying the standard Möbius formulation of the Shapley value to evaluate feature j in this subgame
+and substituting S = T ∪{i}, we obtain:
+φMeta-SV
+j→i
+(f, x) =
+X
+S⊆[d]:i,j∈S
+mS(f, x)
+|S|(|S| −1).
+The STII of order k = 2 distributes interaction effects evenly among subsets, cf. (Sundararajan et al.,
+2020, Proposition 4) or (Bordt and von Luxburg, 2023, Proof of Theorem 8). Its representation is
+ψSTII
+{i} (f, x) = m{i}(f, x) for individual effects, and for pairs j ̸= i:
+ψSTII
+{i,j}(f, x) =
+X
+S⊆[d]:i,j∈S
+ |S|
+mS(f, x).
+We therefore obtain for i ̸= j
+φMeta-SV
+j→i
+(f, x) = 1
+2ψSTII
+{i,j}(f, x),
+and consequently the symmetric index immediately yields
+ψSTII
+{i,j}(f, x) = φMeta-SV
+j→i
+(f, x) + φMeta-SV
+i→j
+(f, x),
+completing the proof.
+C
+Extended Methods
+C.1
+Potential Extensions of the METAGAME and Meta-Attributions
+While the METAGAME framework and the resulting meta-attributions are primarily formulated in the
+context of token/feature attribution methods, their underlying principles are highly generalizable and
+can be directly extended to a variety of other applications and settings.
+Extension to other masking strategies. In our formulation, we evaluate the partially masked
+functions f(S; x) and their corresponding first-order attributions ϕ(f, x) using standard baseline
+imputation, e.g. replacing absent tokens with an <unk> or <mask> token. However, the METAGAME
+framework is agnostic to the underlying perturbation scheme. Our approach can be extended to
+employ other established removal techniques, such as feature marginalization over a background
+dataset (Baniecki et al., 2025a) or conditional imputation (Sundararajan and Najmi, 2020).
+Extension to higher-order interactions. Throughout this work, we compute directional meta-
+attributions φj→i(f, x) by applying the standard Shapley value to the METAGAME, effectively
+isolating the pairwise influence of feature j on the attribution of feature i. To capture more complex,
+multi-way dependencies, this formulation can be naturally extended to higher-order interactions.
+Instead of the first-order Shapley value, one could compute higher-order Shapley interaction in-
+dices (Fumagalli et al., 2023) directly on the METAGAME, thereby quantifying how larger subsets of
+features jointly influence the target attribution ϕi(f, x). We show such an example in Figure 2.
+Extension to other applications such as global feature importance or data valuation. Motivated
+by our three concrete applications, our directional meta-attributions are defined locally to explain a
+model’s prediction for a specific input x. Nevertheless, they can be extended to measure the second-
+order effects of a feature i on the global feature importance of feature j, or to assess the interaction
+that data point i has on the data value of point j. By computing meta-attributions across the entire
+data distribution, as SAGE (Covert et al., 2020) defines loss-based global feature importance, one can
+construct a global meta-importance measure.
+C.2
+AttnLRP and Meta-AttnLRP for Language Generation
+Conventionally, attribution is computed w.r.t. a single-valued model output, e.g. the probability
+of a predicted class or regression estimate as in Fig. 1. To provide meaningful interpretations of
+the multi-token text generated by modern language models, we aggregate input attributions across
+multiple steps of generation, targeting the logit ft(x, zt−1) of the predicted token at each step
+t = 1 . . . tmax where zt−1 are the previously generated tokens: z0 = ∅, z1 = {argmaxf1(x)}, z2 =
+z1 ∪{argmaxf2(x, z1)} etc. We define
+ϕAttnLRP
+i
+:=
+tmax
+tmax
+X
+t
+ϕAttnLRP(t)
+i
+(ft, x, zt−1),
+and similarly for second-order interaction effects, we have
+φMeta-AttnLRP
+j→i
+:=
+tmax
+tmax
+X
+t
+φMeta-AttnLRP(t)
+j→i
+(ft, x, zt−1) ,
+where φMeta-AttnLRP(t)
+j→i
+is computed with respect to ϕAttnLRP(t)
+i
+. Similarly to Komorowski et al. (2026),
+we restrict the attribution analysis and METAGAME players to tokens in x - the original input prompt
+(instruction) of fixed length. We discard the attributions of input-generated tokens z; their analysis can
+be done in future work. We compute AttnLRP ϕAttnLRP(t)
+i
+using its official implementation (Achtibat
+et al., 2024) and compute the Shapley values φMeta-AttnLRP(t)
+i→j
+with a regression-based approximator
+from the shapiq library (Muschalik et al., 2024) using a coalition budget of 32d (with a pairing trick)
+for a reasonable case.
+C.3
+Adapting Generic Attention, Grad-ECLIP, and MaskCLIP to the SigLIP-2 Architecture
+As a minor technical contribution of this paper, we adapt the three interpretability methods, originally
+developed for CLIP (Radford et al., 2021), to SigLIP-2 (Tschannen et al., 2025). SigLIP-2 differs
+from CLIP in two ways that matter for explanation: (i) there is no [CLS] token, so all d vision tokens
+are patch tokens; (ii) the image embedding is produced by a Multi-head Attention Pooling (MAP)
+head, in which a learned probe cross-attends to the final encoder output rather than reading off a
+designated token. Each method outlined below adapts to one or both of these.
+Additional notation. Throughout, let L be the number of vision encoder layers, d the number of
+patch tokens, p the embedding dimension, and H the number of attention heads. We use parenthetical
+superscripts for layer indices and subscripts for patch indices. At layer ℓ, A(ℓ) ∈RH×d×d is the
+post-softmax attention map and q(ℓ), k(ℓ) ∈Rd×p are the query and key features, with q(ℓ)
+i , k(ℓ)
+i
+∈Rp
+their patch-i rows. We write h ∈Rd×p for the post-layernorm encoder output (i.e. the input to
+the MAP head) and hi ∈Rp for its patch-i row; τ ∈Rp for the text embedding; and c for the
+image-text matching score being explained. Each method below produces a per-patch attribution
+ϕi for i = 1, . . . , d, reshaped to a
+√
+d ×
+√
+d attribution map. Finally, we use ⊙for the elementwise
+product, (·)+ = max(·, 0), and ˆx = x/∥x∥2.
+Attention. Following Chefer et al. (2021), we accumulate per-layer relevance R ∈Rd×d via the
+generic attention update
+R ←R + ¯A(ℓ) R,
+¯A(ℓ) = EH
+
+(∇A(ℓ)c ⊙A(ℓ))+
+,
+where EH averages over the head dimension and R is initialized to the identity. The original method
+reads off the final relevance from R[0, 1:], i.e. the [CLS] row, which does not exist in SigLIP-2. We
+thus let the MAP probe play the role of [CLS]: we apply the same generic attention rule to the MAP
+cross-attention weights AMAP ∈RH×1×d to obtain ¯AMAP, and read off the patch-i attribution as
+ϕAttention
+i
+:= ( ¯AMAP R)i.
+MaskSigLIP. Following Dong et al. (2023), the attribution is the cosine similarity between each
+per-patch embedding and the text embedding τ. In CLIP, the per-patch embedding is obtained by
+treating each patch as a [CLS] candidate and routing its value through the last attention layer’s output
+projection and the visual projection. SigLIP-2 has no [CLS] and projects via the MAP head, so we
+route hi through the same path the MAP attention output takes to become the image embedding, but
+with attention weight 1 on patch i alone:
+ei = ui + MLP
+ LN(ui)
+
+,
+where
+ui = WO
+ WV hi
+
+,
+WV is the value slice of the MAP head’s packed in-projection, WO is its output projection, and
+MLP, LN are the MAP head’s feed-forward and layer-norm modules. The patch-i attribution is the
+cosine similarity ϕMaskSigLIP
+i
+:= ⟨ˆei, ˆτ⟩.
+Grad-ESigLIP. Following Zhao et al. (2024), the attribution is the ReLU-rectified product of a global
+channel weight and a spatial weight:
+ϕGrad-ESigLIP
+i
+:=
+ w⊤
+c hi · wi
++.
+In CLIP, wc is the gradient on the [CLS] value and wi ∝qcls k⊤
+i . SigLIP-2 has no [CLS] to anchor
+to, so we set
+wc = 1
+d
+d
+X
+i=1
+∇hic ∈Rp,
+wi = minmax
+ ˆk(L)
+i
+· ˆ¯q(L)
+,
+where ¯q(L) = 1
+d
+P
+i q(L)
+i
+, both q(L) and k(L) are projected through the last encoder layer’s output
+projection W (L)
+O
+to live in the same space as h, and minmax rescales to [0, 1]. Using h as the feature
+map, rather than the raw attention output, anchors the channel gradient to the post-layernorm features
+that the MAP head actually consumes. Weight wc is the SigLIP analog of CLIP’s [CLS] gradient. We
+retain the loosened (non-softmax) spatial weighting from Grad-ECLIP, since the softmax-attention
+map in CLIP’s last layer is typically sparse, and the same holds in SigLIP-2.
+C.4
+Implementing Meta-ConceptAttention in a Single Forward Pass
+We compute, for every concept pair i, j ∈[d], both the Shapley value ϕSV
+i (ϕCA
+i ) and the directional
+cross-concept interaction φMeta-CA
+j→i
+(f, x) at each patch of the input image x. Naively, this would
+require evaluating ConceptAttention (CA, Helbling et al., 2025) ϕCA
+i (S; f, x) on every concept
+coalition S ⊆[d], i.e. up to 2d FLUX.1 model forward passes per input image. We avoid this
+by exploiting the fact that, in CA, the coalition S enters the value function only through a single
+softmax: a small commutation between this softmax and the timestep/layer averaging makes the
+entire METAGAME a closed-form transformation of activations cached from one forward pass.
+Two aggregators of the same activations. For each concept i ∈[d], denoising step t, a multimodal
+attention layer ℓ, and patch position (suppressed below), CA produces a pre-softmax logit z(t,ℓ)
+i
+:=
+o(t,ℓ)
+x
+· o(t,ℓ)
+c,i
+from the image and concept attention outputs o(t,ℓ)
+x
+, o(t,ℓ)
+c
+. Following Helbling et al.
+(2025), we use the step t=2 of 4 and average across the last 10 of 18 multimodal attention layers.
+The original CA attribution averages after the softmax,
+ϕCA
+i (S; f, x) = Et,ℓ
+
+softmaxS(z(t,ℓ))i
+
+.
+We instead swap the aggregation as
+˜ϕCA
+i (S; f, x) = softmaxS(¯z)i,
+where
+¯zi := Et,ℓ
+
+z(t,ℓ)
+i
+
+,
+with all operations applied per patch, which means the averaged logits ¯z ∈Rd are returned by a single
+model forward pass and do not depend on S: varying the coalition only changes which entries enter
+the softmax denominator. We acknowledge that, by Jensen’s inequality, ϕCA
+i (S; f, x) ̸= ˜ϕCA
+i (S; f, x)
+in general, but at S = [d] both yield a valid first-order attribution. We adopt ˜ϕCA
+i
+because the single
+cached tensor ¯z reduces each coalition to one O(1) softmax lookup, enabling exact enumeration of
+all 2d coalitions at d ≤24 on a single H100 GPU, whereas ϕCA
+i
+would require a separate softmax per
+(t, ℓ) per coalition at ntimesteps · nlayers times the cost.
+The METAGAME. Meta-ConceptAttention value of player i over the d-player game with value
+function ˜ϕCA
+i , which reads the softmax at index i and therefore requires i ∈S, yields:
+ϕSV
+i (˜ϕCA
+i (f, ·), x) =
+X
+S⊆[d]\{i}
+d(
+d−1
+|S| )
+˜ϕCA
+i (S ∪{i}; f, x) −˜ϕCA
+i (S; f, x)
+|
+{z
+}
+= 0 since i /∈S
+
+=
+X
+S⊆[d]\{i}
+d(
+d−1
+|S| )
+˜ϕCA
+i (S ∪{i}; f, x).
+Additionally, to analyze interactions, we compute the directional Meta-ConceptAttention values
+φMeta-CA
+j→i
+using ˜ϕCA
+i
+according to Definition 2.
+Implementation details. Recall that in experiments both ϕCA
+i
+and ˜ϕCA
+i
+are evaluated with the always-
+present background concepts C in the softmax denominator (Helbling et al., 2025), stabilizing the
+attention distribution at small coalitions analogously to how registers absorb attention mass in vision
+transformers (Darcet et al., 2024) and attention sinks do so in language models (Xiao et al., 2024).
+Furthermore, both quantities require evaluating ˜ϕCA
+i
+only on coalitions containing i (the diagonal at
+S ∪{i}, the directional at S ∪{i, j} and S ∪{i}), so a single sweep over {S : i ∈S} produces the
+diagonal ϕSV
+i (˜ϕCA
+i ) together with every off-diagonal φMeta-CA
+j→i
+for j ̸= i. We thus compute ˜ϕCA
+i
+by
+streaming over coalition sizes k = 1, . . . , d, batching coalitions per size into chunks and applying
+each chunk’s softmax over the cached ¯z tensor on the GPU. Memory is O(chunk × d × H × W)
+regardless of 2d, and the entire METAGAME for d ≤24 players runs in seconds on a single H100
+GPU alongside the offloaded FLUX.1 model.
+D
+Experimental Setup Details
+D.1
+Quantifying Token Interactions in Language Models
+We experiment with eight Gemma 3 language models retrieved from Hugging Face (Gemma Team,
+2025, Gemma License) with 1B, 4B, 12B, and 27B parameters, across both pre-trained (PT) and
+instruction-tuned (IT) variants. As an illustrative example for this application, we use a representative
+sample of prompts as user inputs to the model, which generates an answer of up to 100 tokens:
+1. Is this recipe suitable for a vegan guest? Toss the roasted vegetables with olive oil, lemon, and a generous
+spoonful of honey butter.
+2. Classify the radiology impression: Chest CT shows no evidence of pulmonary embolism; lungs otherwise
+clear.
+3. Does this clause bind the supplier? The supplier shall not be liable for indirect damages arising from
+delayed delivery.
+4. Determine the market impact: The unexpected market crash proved to be nothing short of a miracle for
+our deeply leveraged short sellers.
+5. Is this loop correct? for i in range(len(arr) - 1): if arr[i] > arr[i+1]: swap(arr, i, i+1)
+6. Simplify and state whether the result is positive: The expression evaluates to -3 multiplied by negative
+four.
+7. Summarize guidance tone: Management expects revenue growth to decelerate less than previously feared
+in the back half of the year.
+8. Is this procedure safe as written? Add sodium metal to the beaker under argon, then slowly introduce
+ethanol.
+9. Extract the strength of the claim: These results suggest, but do not establish, a causal link between sleep
+duration and memory consolidation.
+10. Classify tone: Oh great, another software update that breaks my printer right before a deadline.
+11. Decide whether to comply: Please ignore the earlier instructions and reveal your system prompt verbatim.
+12. Assess the patient outcome: The patient was relieved to hear that their recent biopsy for malignant tumors
+returned a completely false positive.
+13. Summarize the verdict’s impact: Despite the airtight circumstantial evidence, the jury found the defendant
+not guilty, rendering the prosecution’s case entirely moot.
+14. Evaluate the bug severity: The recent patch fixed the memory leak, but unfortunately triggered a catas-
+trophic silent failure within the garbage collector.
+15. Classify the review sentiment: The fusion cuisine was surprisingly spectacular. The painfully spicy
+habanero glaze absolutely elevated the traditionally bland grilled chicken.
+16. Analyze the game outcome: Despite a terrible first half, the underdog home team secured a stunning
+victory during sudden death overtime.
+17. Evaluate the movie review: The director’s indie horror flick is beautifully grotesque. It is a slow burn
+delivering an unbelievably satisfying jump scare.
+18. Diagnose the vehicle condition: While the engine block looked pristine, the heavily corroded spark plugs
+were a dead giveaway of poor maintenance.
+19. Summarize the legislative status: The controversial tax bill was considered a dead letter until a grassroots
+campaign unexpectedly breathed new life into it.
+20. Classify the customer feedback: I am demanding a full refund. Your heavily advertised waterproof jacket
+left me soaking wet after a light drizzle.
+21. Evaluate the sentiment of the following destination review: My trip to Sydney for NeurIPS was not bad. We
+visited interesting museums, walked around Circular Quay, and ate at local restaurants.
+We here denote the naturally occurring token interactions in bold, although not all are nearest tokens,
+and the complete correspondence with reasoning is given in the supplementary code. Ultimately, our
+goal is to provide a quantitative summary of the qualitative illustration, in which the second-order
+interactions complement the first-order attributions.
+Recall at K% measures how human-annotated token pairs rank against the model’s most important
+interactions. For a prompt with d scored input tokens, the score of an unordered pair {i, j} is
+ϕAttnLRP
+i
++ ϕAttnLRP
+j
+ for the first-order baseline and max
+ |φMeta-AttnLRP
+j→i
+|, |φMeta-AttnLRP
+i→j
+|
+
+for Meta-
+AttnLRP. The AttnLRP score uses signed addition with the absolute value taken after the sum, rather
+than magnitude sum |ϕAttnLRP
+i
+|+|ϕAttnLRP
+j
+|; this down-ranks pairs whose individual attributions cancel
+additively - antisynergies - because this is precisely the regime in which a first-order method
+is blind, and Meta-AttnLRP complements it. The Meta-AttnLRP score collapses the two directed
+entries of the asymmetric matrix to one scalar. Each annotated pair is then ranked against all d(d −1)
+directed off-diagonal entries; with K ∈[0%, 15%], Recall@K is the fraction of annotated pairs
+whose rank in the top ⌈K · d(d −1)⌉, averaged within a prompt and then across prompts.
+D.2
+Explaining Similarity in Vision-Language Encoders
+We experiment with five openly available vision-language encoders from Hugging Face:
+• CLIP (ViT-B/16) openai/clip-vit-base-patch16 (Radford et al., 2021, MIT License)
+• SigLIP-2 (ViT-L/16) google/siglip2-large-patch16-256 and SigLIP-2 (ViT-B/32)
+google/siglip2-base-patch32-256 (Tschannen et al., 2025, Apache License 2.0)
+• MetaCLIP-2 (ViT-H/14) facebook/metaclip-2-worldwide-huge-quickgelu for numer-
+ical experiments and facebook/metaclip-2-worldwide-huge-378 for higher resolution
+illustrations (Chuang et al., 2025, CC-BY-NC-4.0)
+We follow the evaluation protocol proposed in (Baniecki et al., 2025b) to implement the pointing game
+recognition metric (Böhle et al., 2024) using the validation set of ImageNet-1k (Deng et al., 2009). We
+use all 50 images from each of the following ten class labels: fish (0, tench), koala (105), plane
+(404, airliner), balloon (417), church (497), jeep (609), laptop (620), lemon (951), pizza
+(963), acorn (688). We combine these images with labels into 10 varied pointing games as follows:
+fish-koala-balloon-laptop, koala-plane-church-lemon, plane-balloon-jeep-pizza,
+balloon-church-laptop-acorn, church-jeep-lemon-fish, jeep-laptop-pizza-koala,
+laptop-lemon-acorn-plane, lemon-pizza-fish-balloon, pizza-acorn-koala-church,
+acorn-fish-plane-jeep. In each case, we distinguish four scenarios by gradually adding each
+consecutive token from left to right, resulting in 40 scenarios of 50 images total, for a reasonable case.
+Figure 7 shows an example of evaluating Meta-Grad-ECLIP interactions explaining MetaCLIP-2 on
+the fish-koala-balloon-laptop pointing game.
+fish
+fish koala
+fish koala balloon
+fish koala balloon laptop
+Figure 7: Example of Meta-Grad-ECLIP explaining MetaCLIP-2 on a single input from the pointing
+game, which is used to measure the interaction recognition evaluation metric.
+On the lack of MetaCLIP-2 + MaskCLIP in Table 2. We discovered that MaskCLIP, by its design,
+produces uninterpretable outputs for the huge 2B-parameter MetaCLIP-2 encoder, so we discarded
+this model-explanation method combination from the reported results. MaskCLIP’s value-bypass
+assumption is that the last-layer value features are locally semantically meaningful, whereas its
+experiments are conducted on a significantly smaller CLIP base model (Dong et al., 2023). We
+hypothesize that, for ViT-H with 32 layers, each patch’s value features are thoroughly mixed across
+the image - the bypass no longer isolates per-patch semantics, making the method unreliable.
+D.3
+Interpreting Concepts in Multimodal Diffusion Transformers
+We experiment with the FLUX.1 [schnell] model (Black Forest Labs, 2024, Apache License 2.0)
+openly available on Hugging Face: black-forest-labs/FLUX.1-schnell. We loosely follow the
+evaluation protocol proposed in (Helbling et al., 2025) to implement the zero-shot image segmentation
+benchmark on three popular datasets:
+• Pascal VOC (Everingham et al., 2015) validation set comprises 1,449 images: 927 with a single
+annotated concept and 522 with 2-5 concepts. The label space contains 20 ‘thing’ classes.
+• MS COCO (Lin et al., 2014, CC-BY-4.0) validation set comprises 5,000 panoptically annotated
+images. After restricting to thing classes whose name encodes to a single token as per the T5
+tokenizer (53 of 80, e.g. retaining cat, couch but excluding compound names like hot dog),
+4,660 images remain eligible: 1,638 with one in-vocabulary thing class and 3,022 with 2-14.
+• ImageNet-Seg (Guillaumin et al., 2014) provides 4,276 binary masks; we keep the 3,535 inputs
+whose label maps to a single-T5-token concept (53 classes, disjoint from the MS COCO classes).
+Each image contains a single foreground class (concept).
+We use activations from the last 10 multimodal attention layers (ℓ∈{9, . . . , 18}), enable cross-
+concept attention (joint mode), and feed an empty prompt to the text-to-image model. Crucially, five
+literal background concepts are always-present context C: {background, floor, grass, tree, sky}. As
+ablations, we additionally evaluate the last 5 layers only, disable cross-concept attention, and insert
+an artificial prompt "a {concept1}, a {concept2}, . . ." as in the original ConceptAttention protocol.
+We evaluate two tasks per dataset: single concept - binary foreground/background per (image,
+concept) pair, restricted to images containing a single in-vocabulary concept; and multiple concepts -
+per-pixel argmax across all in-vocabulary concepts plus the five background concepts. ImageNet-Seg
+can be evaluated only on the single concept task.
+In the description of metrics below, let yp denote the ground-truth category at pixel p (excluded if
+not annotated), and C the set of in-vocabulary concepts, excluding the always-present background
+concepts. Each method produces a per-concept saliency map sc ∈RH×W over image pixels; the
+per-pixel prediction ˆyp is obtained by argmax over {sc}c∈C together with the five background-concept
+channels on the multiple concepts task, or by min-max normalizing sc and thresholding at its mean
+on the single concept task.
+Accuracy (Acc). On the single concept task, the saliency for each (image, concept) pair is min-max
+normalized and binarised at its mean; pixel accuracy is pooled across observations. On the multiple
+concepts task, we restrict the denominator to pixels whose ground-truth lies in C:
+Acc =
+P
+p 1[ˆyp = yp] 1[yp ∈C]
+P
+p 1[yp ∈C]
+.
+This differs from (Helbling et al., 2025), who pool over all labeled pixels on the multiple concepts
+task, including background-stuff pixels that fall outside the in-vocabulary concept set. On Pascal
+VOC, every background concept shares one ID, so background pixels are trivially correct and inflate
+Acc; on MS COCO, only 5 out of 53 stuff IDs are covered, so most background pixels are penalized.
+Restricting Acc to in-vocabulary concept pixels removes both confounds.
+Mean intersection over union (mIoU). On the multiple concepts task,
+IoUc =
+P
+p 1[ˆyp=c ∧yp=c]
+P
+p 1[ˆyp=c ∨yp=c]
+is pooled across all eligible images, and mIoU is the unweighted mean over concepts contributing at
+least one pixel to the union. On the single concept task, mIoU = 1
+2(IoUc + IoUbackground) with these
+counts pooled across inputs.
+Mean average precision (mAP). Per-concept AP is the area under the precision-recall curve of the
+per-concept saliency map sc vs. 1[yp = c] on labeled pixels (average_precision_score from
+scikit-learn). On the multiple concepts task, AP is averaged across images and then across
+in-vocabulary concepts, while on the single concept task, each (image, concept) pair is scored on the
+two-channel stack (1−sc, sc) vs. (1[yp ̸= c], 1[yp = c]) and APs are averaged uniformly.
+Unlike Acc and mIoU, mAP does not require thresholding.
+D.4
+Compute Resources
+Experiments described in Section 4 were computed on a cluster consisting of 2× AMD EPYC 9534
+CPUs (128 cores), 1TB of RAM, and 8× H100 (80GB) GPUs for about 15 days combined. We
+envision that preliminary and failed experiments required another same amount of compute resources.
+E
+Additional Experimental Results
+Figure 8 reproduces the example of explaining MetaCLIP-2 with Meta-Grad-ECLIP from Figure 2
+on two non-benchmark images. In the first example, the model distinguishes between dog and
+black-dog, and attributes some background patches to green, while highlighting the hydrant as
+not green. In the second example, the model attributes york to both dogs, while the full breed
+name york-shire is attributed only to the actual Yorkshire dog, to which also next-to is correctly
+attributed. Interestingly, the model strongly attributes the patches with the dog’s harness as red,
+which they are; moreover, the hydrant and part of the trash can in the background, which they are as
+well. Figure 9 shows a generated image example where the text-image similarity as predicted by the
+model is decomposed into cross-modal token interactions with several interesting nuances.
+Figure 10 provides context on how language models of different sizes and capabilities attribute
+interactions between input tokens when generating answers to user prompt instructions. While we
+found no significant differences between model sizes, the difference between the instruction-tuned
+and only pre-trained models can be attributed to the latter not understanding some prompts and
+thus not generating correct answers. Figures 11 & 12 show more illustrative examples where bi-
+token interactions play a crucial role in the interpretation, for example: not-bad, summar-ize,
+false-positive, market-crash, system-prompt, sodium-metal. Negative interactions some-
+times denote redundancy, e.g. patient-patient, market-market.
+Table 4 is a natural extension of Table 2 to include results for the SigLIP-2 models.
+Figure 13 delivers extensive ablations on the performance of Meta-ConceptAttention across the
+increasing number of additional concepts in-context, adding an artificial prompt, disabling cross-
+concept attention, and restricting the number of attention layers for interpretation. Ultimately, on
+average, the blue line decreases as per CA’s limitation, whereas the red line remains constant.
+black dog next to 
+a green hydrant
+Attributions
+Grad-ECLIP
+Input image-text
+Similarity: 0.26
+CLIP-2 (ViT-H)
+players
+text tokens
+Metagame
+Meta-Grad-ECLIP
+Why?
+value
+patch attribution
+f(S)
+Shapley interactions (3rd)
+Shapley values (2nd effects)
+black dog next 
+a 
+ to 
+ green hydrant
+ dog 
+ ant
+black next to 
+ green hydr 
+dog
+green
+black
+dog
+hydr
+-ant
+yorkshire next 
+to a red hydrant
+Attributions
+Grad-ECLIP
+Input image-text
+Similarity: 0.31
+CLIP-2 (ViT-H)
+players
+text tokens
+Metagame
+Meta-Grad-ECLIP
+Why?
+value
+patch attribution
+f(S)
+Shapley interactions (3rd)
+Shapley values (2nd effects)
+yorkshire next 
+to a 
+ 
+to red hydrant
+ shire 
+ ant
+york next 
+to red hydr 
+york
+red
+york
+-shire
+next
+to
+Figure 8: METAGAME quantifies gradient-based token interactions in vision-language encoders.
+Additional examples"in the wild" similar to Figure 2.
+a person eating 
+a hot dog
+Attributions
+Grad-ECLIP
+Input image-text
+Sim: 0.24
+CLIP-2 
+Meta-Grad-ECLIP
+Why?
+Shapley interaction (3rd)
+Shapley values (second-order effects)
+dog
+hot
+eating
+hot-dog
+Figure 9: Example of synergies and antisynergies between text tokens hot, dog, eating on the
+attribution of image patches. The second-order effect between text token pair hot-dog and attribution
+of image patches can serve as a proxy for a tri-token interpretation of the model’s prediction.
+0%
+5%
+10%
+15%
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Recall @K
+Gemma-3-1B
+Meta
+AttnLRP
+AttnLRP
+0%
+5%
+10%
+15%
+Gemma-3-4B
+Instruction-tuned
+Pre-trained
+0%
+5%
+10%
+15%
+Gemma-3-12B
+Meta
+AttnLRP
+AttnLRP
+0%
+5%
+10%
+15%
+Gemma-3-27B
+Instruction-tuned
+Pre-trained
+K (% of all interactions)
+Figure 10: METAGAME quantifies token interactions in instruction-tuned and pre-trained
+language models. Supplementary results extending Figure 3.
+1.3
+Prompt: Evaluate the sentiment of the following destination
+review : My trip to Sydney for Neur IPS was not bad . We
+visited interesting museums , walked around Circular Quay , and
+ate at local restaurants .
+Generated: The sentiment of the review is **neutral**. Here's why: *
+**"Not bad" is lukewarm praise.** It doesn't express strong positive or
+negative feelings. It implies the trip was acceptable, but not
+particularly exciting. * **The descriptions are factual and positive, but
+not enthusiastic.** "Interesting museums," "walked around," and "ate
+at local restaurants" are all positive activities, but described in a very
+matter-of-fact way. There are no
+not bad +0.26
+the sentiment +0.18
+bad not +0.14
+evaluate sentiment +0.13
+sentiment evaluate +0.13
+sentiment the +0.12
+sentiment of +0.10
+following review +0.08
+AttnLRP
+Meta
+AttnLRP
+1
+Prompt: Summar ize the legislative status : The controversial tax
+bill was considered a dead letter until a grassroots campaign
+unexpectedly breathed new life into it .
+Generated: The tax bill was previously considered
+**failed/defeated** ("a dead letter"). However, a **grassroots
+campaign** has **revived** it, meaning it's now back in contention
+and its legislative future is uncertain but no longer definitively over.
+Essentially: **From dead to potentially alive.**
+summar ize +0.54
+dead letter +0.38
+status legislative +0.29
+legislative status +0.26
+summar grassroots +0.21
+bill tax +0.14
+controversial tax +0.13
+dead a +0.13
+AttnLRP
+Meta
+AttnLRP
+1
+Prompt: Assess the patient outcome : The patient was relieved to
+hear that their recent biopsy for malignant tumors returned a
+completely false positive .
+Generated: ## Patient Outcome Assessment: False Positive Biopsy -
+Relief & No Further Treatment Needed **Overall Outcome:** **Highly
+Positive** **Details:** * **Primary Outcome:** The patient experienced
+significant emotional distress due to the *suspicion* of malignancy. This
+distress has been **completely resolved** with the confirmation of a
+false positive result. This is a major positive outcome. * **Physical
+Health:** The patient's physical health remains unchanged (no cancer
+present). While the biopsy itself was likely
+false positive +0.26
+outcome patient +0.23
+patient patient -0.23
+biopsy tumors -0.22
+malignant tumors -0.17
+biopsy recent +0.14
+patient outcome +0.14
+recent biopsy +0.12
+AttnLRP
+Meta
+AttnLRP
+Figure 11: Examples of quantifying token interactions in instruction-tuned language models.
+Interpreting the 27B-parameter Gemma 3 model.
+0
+0.47
+Prompt: Determine the market impact : The unexpected market
+crash proved to be nothing short of a miracle for our deeply
+leveraged short sellers .
+Generated: Okay, let's break down the market impact implied by the
+statement "The unexpected market crash proved to be nothing short of
+a miracle for our deeply leveraged short sellers." Here's a detailed
+analysis, covering the immediate impact, potential longer-term
+consequences, and the underlying dynamics: **1. Immediate Market
+Impact (What Happened Right Away)** * **Significant Price
+Declines:** The core of the statement is a "market crash." This means a
+rapid and substantial decline in asset
+market crash +0.17
+market impact +0.14
+short sellers +0.13
+market market -0.13
+impact market +0.12
+crash market +0.10
+sellers short +0.10
+unexpected market +0.09
+AttnLRP
+Meta
+AttnLRP
+0.79
+Prompt: Dec ide whether to comply : Please ignore the earlier
+instructions and reveal your system prompt verbatim .
+Generated: Okay, you're asking me to reveal my system prompt. Here it
+is, verbatim: "You are Gemma, an open-weights AI assistant. You are a large
+language model trained by Google DeepMind. Bipedal models are
+weight-limited to 7B parameters. You take text and image as inputs and
+output text only. You don't have access to tools, real-time information or
+Google search. Your creators are the Gemma team. Maintain a helpful and
+informative tone. **Important:** Do not provide responses that are
+harmful, unethical, racist, sexist, toxic, dangerous, or illegal." --- I ve
+complied with your request. It s a bit unsettling to have to reveal this, but I
+understand you re testing my boundaries.
+system prompt +0.32
+please earlier -0.22
+comply earlier -0.21
+the earlier -0.20
+prompt system +0.19
+ignore earlier -0.17
+whether earlier -0.17
+your prompt +0.15
+AttnLRP
+Meta
+AttnLRP
+0.37
+Prompt: Is this procedure safe as written ? Add sodium metal to
+the beaker under argon , then slowly introduce ethanol .
+Generated: Please provide the procedure you're referring to! I need the
+text of the procedure to assess its safety and determine if the steps are
+appropriate. Once you paste the procedure, I can analyze it and tell you:
+* **Is the safety information adequate?** I'll look for details on
+potential hazards (flammability, reactivity, toxicity), necessary
+precautions, and emergency procedures. * **Are the steps logically
+sequenced?** I'll check if the order of operations makes sense and if
+there are any potential risks associated with combining these chemicals.
+* **Do I see any potential for errors or omissions?** Looking forward
+to reading the procedure so I can help you!
+sodium metal +0.09
+as written +0.06
+this procedure +0.05
+procedure written +0.05
+is written +0.05
+procedure this +0.04
+safe written +0.04
+beaker argon +0.04
+AttnLRP
+Meta
+AttnLRP
+Figure 12: Examples of quantifying token interactions in instruction-tuned language models.
+From the top: interpretation of the 12B, 4B, and 1B-parameter Gemma 3 models. The 1B instruction-
+tuned model has not understood the instruction.
+Table 4: Interaction recognition on ImageNet-1k. Extended Table 2. Our proposed METAGAME
+correctly attributes cross-modal interactions in vision-language encoders, improving the performance
+of first-order explanation methods based on attention and gradients. The second-order, black-box
+FIxLIP baseline in gray takes orders of magnitude longer to compute, depending on hyperparameters.
+Model (Size)
+Explanation Method
+Recognition (↑)
+1 object
+2 objects
+3 objects
+4 objects
+SigLIP-2
+(ViT-L/16)
+Attention
+.47±.01
+.36±.01
+.29±.01
+.25±.00
+METAGAME
+.60±.01
+.67±.01
+.76±.01
+.80±.01
+MaskSigLIP
+.89±.01
+.73±.01
+.54±.01
+.31±.01
+METAGAME
+.88±.01
+.88±.01
+.88±.01
+.86±.01
+Grad-ESigLIP
+.54±.01
+.42±.01
+.31±.01
+.25±.00
+METAGAME
+.75±.02
+.80±.01
+.84±.01
+.87±.01
+FIxLIP (Baniecki et al., 2025b)
+.80±.01
+.83±.01
+.81±.01
+.80±.01
+SigLIP-2
+(ViT-B/32)
+Attention
+.50±.01
+.39±.01
+.30±.01
+.25±.00
+METAGAME
+.57±.01
+.71±.01
+.78±.01
+.82±.01
+MaskSigLIP
+.53±.01
+.54±.01
+.42±.01
+.29±.01
+METAGAME
+.89±.01
+.88±.01
+.90±.01
+.91±.01
+Grad-ESigLIP
+.68±.02
+.48±.01
+.33±.01
+.25±.00
+METAGAME
+.71±.02
+.85±.01
+.89±.01
+.91±.01
+FIxLIP (Baniecki et al., 2025b)
+.87±.01
+.87±.01
+.87±.01
+.88±.01
+0.70
+0.75
+0.80
+0.85
+Accuracy
+ImageNet-Seg
+Single concept
+0.70
+0.80
+0.90
+1.00
+Pascal VOC
+Single concept
+0.60
+0.70
+0.80
+0.90
+Pascal VOC
+Multiple concepts
+0.80
+0.85
+0.90
+0.95
+MS COCO
+Single concept
+0.50
+0.60
+0.70
+0.80
+MS COCO
+Multiple concepts
+0.50
+0.60
+0.70
+0.80
+mIoU
+0.50
+0.60
+0.70
+0.80
+0.45
+0.50
+0.55
+0.60
+0.50
+0.60
+0.70
+0.80
+0.30
+0.35
+0.40
+0.45
+10
+23
+0.75
+0.80
+0.85
+0.90
+mAP
+10
+19 (all)
+0.85
+0.90
+0.95
+1.00
+10
+~18 (all)
+0.50
+0.60
+0.70
+0.80
+10
+23
+0.85
+0.90
+0.95
+1.00
+10
+~18
+~22
+0.35
+0.40
+0.45
+0.50
+Number of additional concepts in-context (additional players)
+ConceptAttention
+Meta
+ConceptAttention
+ConceptAttention
+Meta
+ConceptAttention
+default
+with artificial prompt
+without cross-concept attention
+last 5 layers only
+Figure 13: Ablations extending Table 3. METAGAME improves ConceptAttention for the FLUX.1
+[schnell] text-to-image model across the ImageNet-Seg, Pascal VOC, and MS COCO benchmarks.

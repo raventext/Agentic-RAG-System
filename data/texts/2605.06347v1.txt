@@ -1,0 +1,355 @@
+Human-AI Co-Evolution and Epistemic Collapse: A Dynamical Systems
+Perspective
+Xuening Wu 1 2 Yanlan Kang 1 Qianya Xu 3 Kexuan Xie 4 Jiaqi Mi 5 Honggang Wang 6 Yubin Liu 7
+Zeping Chen 6
+Abstract
+Large language models (LLMs) are reshaping
+how knowledge is produced, with increasing re-
+liance on AI systems for generation, summariza-
+tion, and reasoning. While prior work has stud-
+ied cognitive offloading in humans and model
+collapse in recursive training, these effects are
+typically considered in isolation. We propose a
+unified perspective: humans and language mod-
+els form a coupled dynamical system linked by a
+feedback loop of usage, generation, and retraining.
+We introduce a minimal model with three vari-
+ables-human cognition, data quality, and model
+capability-and show that this feedback can give
+rise to distinct dynamical regimes. Our analy-
+sis identifies three regimes: co-evolutionary en-
+hancement, fragile equilibrium, and degenerative
+convergence. Through a simple simulation, we
+demonstrate that increasing reliance on AI can
+induce a transition toward a low-diversity, subop-
+timal equilibrium. From an information-theoretic
+perspective, this transition corresponds to an emer-
+gent information bottleneck in the human-AI
+loop, where entropy reduction reflects loss of di-
+versity and support under closed-loop feedback
+rather than beneficial compression. These results
+suggest that the trajectory of AI systems is shaped
+not only by model design, but by the dynamics of
+human-AI co-evolution.
+1Fudan University, Shanghai, China 2Pfizer China, Shanghai,
+China 3University of California San Diego, CA, USA 4Nanjing
+University of Posts and Telecommunications, Nanjing, China 5The
+University of Hong Kong, Hong Kong, China 6Tongji University,
+Shanghai, China 7Shanghai Jiao Tong University, Shanghai, China.
+Correspondence to: Xuening Wu <xueningwu@gmail.com>.
+Proceedings of the 43 rd International Conference on Machine
+Learning, Seoul, South Korea. PMLR 306, 2026. Copyright 2026
+by the author(s).
+1. Introduction
+The rise of large language models (LLMs) is reshaping how
+knowledge is produced. Tasks that once required sustained
+human reasoning-such as writing, summarization, and
+synthesis-can now be partially or fully outsourced to AI
+systems. While this shift improves efficiency, it raises a
+fundamental question: what happens when humans and
+models adapt to each other over time?
+Two lines of evidence motivate this question. On the human
+side, reliance on AI tools reduces cognitive engagement and
+memory formation (Kosmyna et al., 2025; Sparrow et al.,
+2011). On the model side, training on recursively generated
+data leads to distributional degeneration and loss of diversity
+(Shumailov et al., 2024). While these effects are typically
+studied in isolation, we argue that they instead reflect a
+single coupled process (Rahwan et al., 2019).
+We study epistemic intelligence-the capacity of human-AI
+systems to generate and sustain high-quality knowledge-as
+a dynamical property of a feedback system. We propose
+a minimal model in which human cognition and language
+models are coupled: humans increasingly rely on models
+for cognitive tasks, while models are trained on human-AI-
+generated data. This feedback loop gives rise to qualitatively
+distinct regimes, including enhancement, equilibrium, and
+degeneration.
+This framework admits an information-theoretic interpre-
+tation in which degeneration corresponds to an emergent
+information bottleneck(Tishby et al., 2000), i.e., a progres-
+sive restriction of the effective support of the data distribu-
+tion. Unlike beneficial compression in open systems, the
+associated entropy reduction in the closed human-AI loop
+reflects contraction of the data distribution and loss of novel
+information.
+We introduce a minimal formal framework that captures this
+feedback structure, exhibits transitions between regimes,
+and provides a basis for analyzing long-term human-AI
+co-evolution. This perspective reframes model collapse
+as a coupled dynamical phenomenon, rather than a purely
+data-centric issue.
+arXiv:2605.06347v1 [cs.HC] 7 May 2026
+
+Human-AI Co-Evolution and Epistemic Collapse: A Dynamical Systems Perspective
+Figure 1. The closed-loop dynamics of epistemic intelligence. The diagram illustrates the coupled ODE system, with state variables
+H(t), Q(t), M(t) (top) linked by forward enhancement pathways (solid arrows) and control variables u, A, S (bottom) introducing
+negative feedback via cognitive offloading and recursive data contamination (dashed arrows). External inputs rH, rQ, rM represent
+intervention mechanisms. The feedback structure H →Q →M →H captures the co-evolution of human cognition, data quality, and
+model capability.
+2. A Coupled Dynamical Model
+We define the system state as x(t) = [H, Q, M]⊤∈R3
++,
+representing human cognitive capacity (H), collective data
+quality (Q), and model capability (M). These variables are
+coupled via a feedback loop H →Q →M →H governed
+by the following ODE system:
+
+
+
+
+
+˙H = a(1 −u) −b uH + rH
+˙Q = cH −dA + rQ
+˙M = eQ −fS + rM
+(1)
+where u ∈[0, 1] is the degree of cognitive offloading. The
+system is closed by control relations A = g(u, M) and
+S = h(A), instantiated in Section 4 as A = αuM and
+S = βA.
+Parameters: (i) Reinforcement: a, c, e > 0 capture cogni-
+tive growth, human-driven quality, and model scaling; (ii)
+Degradation: b, d, f > 0 model offloading decay, content
+drift, and synthetic noise; (iii) Exogenous: rH, rQ, rM rep-
+resent interventions such as education, curation, and inno-
+vation. This formulation captures the risk of a "divergence
+shift," where increasing AI dependence amplifies recursive
+data generation, potentially decoupling model performance
+from real-world utility.
+2.1. Fixed Points and Stability
+A fixed point x∗= (H∗, Q∗, M ∗) satisfies ˙H = ˙Q = ˙M =
+0. Solving yields
+H∗= a(1 −u) + rH
+bu
+,
+(2)
+Q∗= 1
+e (fβαuM ∗−rM) ,
+(3)
+where M ∗is determined by the remaining equation. Local
+stability is governed by the eigenvalues of the Jacobian
+J = ∇f(x∗).
+As the offloading parameter u increases, the system ex-
+hibits a transcritical bifurcation at a critical threshold uc.
+For u < uc, a stable high-capability equilibrium yields a
+Co-evolutionary Enhancement regime. For u > uc, this
+equilibrium loses stability, and the system converges to a De-
+generative Convergence attractor with reduced epistemic
+diversity.
+2.2. Three Regimes
+We identify three qualitatively distinct regimes, arising from
+different balances between reinforcing and degrading feed-
+back in the coupled system.
+2.2.1. CO-EVOLUTIONARY ENHANCEMENT
+When cognitive engagement remains high (low u) and data
+quality is preserved (low A, S), the system exhibits sus-
+tained growth:
+H ↑,
+Q ↑,
+M ↑.
+Human-AI Co-Evolution and Epistemic Collapse: A Dynamical Systems Perspective
+Figure 2. Simulation of the coupled human-data-model system under three representative regimes. (a) Enhancement: all variables
+increase over time due to dominant positive feedback among human cognition (H), data quality (Q), and model capability (M). (b)
+Equilibrium: the system converges to a bounded fixed point, reflecting a balance between reinforcing and degrading feedback. (c)
+Degeneration: human cognition and data quality decline, while model capability stabilizes at a low-diversity equilibrium due to increasing
+reliance on synthetic data.
+In this regime, positive feedback dominates, and the system
+does not converge to a finite fixed point within the relevant
+time horizon.
+2.2.2. FRAGILE EQUILIBRIUM
+Under moderate AI dependence and active external correc-
+tion (e.g., curation or training), the system converges to a
+bounded fixed point:
+(H∗, Q∗, M ∗).
+This corresponds to a locally stable equilibrium, defining
+a metastable regime in which performance remains accept-
+able but long-term growth is limited. Intuitively, this corre-
+sponds to a parameter regime in which the local Jacobian at
+(H∗, Q∗, M ∗) has eigenvalues with negative real parts, so
+that perturbations decay over time.
+2.2.3. DEGENERATIVE CONVERGENCE
+When u, A, and S exceed critical levels and corrective inputs
+rH, rQ, rM are insufficient, the system enters a degenerative
+regime:
+H ↓,
+Q ↓,
+M →M ∗,
+where M ∗corresponds to a low-diversity equilibrium.
+In this regime, degrading feedback dominates: reduced
+human contribution and recursive data contamination drive
+the system toward a stable but low-diversity attractor.
+2.3. Information-Theoretic Interpretation
+The dynamics admit an information-theoretic interpretation.
+As cognitive offloading increases, the entropy of human-
+generated content decreases, reducing diversity in the shared
+corpus. This induces an information bottleneck along the
+feedback loop H →Q →M →H, limiting the system’s
+capacity to incorporate novel information.
+In the degenerative regime, this manifests as a divergence
+shift, where the model distribution aligns more closely with
+human-generated data while drifting away from the underly-
+ing world distribution, resulting in progressive information
+loss and reduced sensitivity to external knowledge.
+3. Testable Predictions
+The proposed dynamical framework yields the following
+empirically testable predictions:
+(1) Human cognition. Increasing AI dependence (u) leads
+to reduced entropy and lexical diversity in human-generated
+text, reflecting diminished cognitive engagement.
+(2) Data distribution. As the proportion of synthetic con-
+tent increases, the effective data distribution exhibits entropy
+reduction and contraction of the long tail, indicating loss of
+rare or novel patterns.
+(3) Model performance. Models trained on recursively gen-
+erated data exhibit degradation in out-of-distribution gener-
+alization, despite maintaining or improving in-distribution
+performance.
+(4) Regime transition. There exists a critical threshold in
+AI dependence (uc) beyond which the system transitions
+from a co-evolutionary enhancement regime to a degener-
+ative regime, observable as a sharp change in steady-state
+metrics (e.g., Q∗or M ∗).
+4. Simulation of the Coupled Dynamics
+To complement the theoretical analysis, we simulate the pro-
+posed coupled dynamical system to illustrate the emergence
+of the regimes described in Section 2.2.
+We adopt linear control relations of the form A = αuM and
+S = βA, where u ∈[0, 1] denotes the degree of cognitive
+offloading. The system is integrated using forward Euler
+Human-AI Co-Evolution and Epistemic Collapse: A Dynamical Systems Perspective
+discretization with a fixed step size.
+Our objective is not precise quantitative modeling, but to
+demonstrate that the feedback structure alone is sufficient
+to generate qualitatively distinct behaviors.
+We consider three representative parameter settings cor-
+responding to enhancement, equilibrium, and degenera-
+tion. The resulting trajectories of H(t), Q(t), and M(t)
+are shown in Figure 2.
+The simulations exhibit three characteristic regimes: (i) joint
+growth driven by reinforcing feedback, (ii) convergence to
+a bounded fixed point under balanced feedback, and (iii)
+collapse toward a low-diversity attractor under dominant
+degrading feedback. These behaviors are consistent with
+the qualitative predictions of the model.
+5. Discussion
+Our analysis suggests that the primary risk of AI is not
+merely capability misalignment, but dynamical misalign-
+ment-a degradation of epistemic intelligence arising from
+coupled human-model adaptation. In this view, failure is
+systemic rather than component-wise, emerging from feed-
+back loops rather than isolated model behavior.
+In the degenerative regime, the system approaches a state
+of epistemic closure: M ∗reflects not only reduced diver-
+sity, but also a diminished capacity to incorporate novel
+external information, effectively collapsing sensitivity to
+out-of-distribution knowledge. The system becomes in-
+creasingly self-referential, reinforcing its own outputs rather
+than tracking the underlying world distribution.
+Thus, the central issue is not model capability per se, but the
+dynamics induced by feedback between human cognition,
+data generation, and model training.
+5.1. Information-Theoretic Perspective
+Model collapse can be understood as a coupled socio-
+technical phenomenon rather than a purely data-driven issue.
+From an information-theoretic perspective, the degenerative
+regime corresponds to a divergence shift:
+DKL(Pmodel ∥Phuman) ↓
+while
+DKL(Pmodel ∥Pworld) ↑.
+This reflects increasing alignment with human-generated
+distributions, coupled with drift away from the true data-
+generating process.
+Recursive contamination induces an echo chamber effect,
+in which the effective data distribution collapses toward a
+low-entropy attractor. As a result, information transmission
+across generations degrades:
+I(Ht; Ht+1) < I(Ht−1; Ht).
+Figure 3. Steady-state behavior of the coupled system as a function
+of AI dependence u. As u increases, the system transitions from
+an enhancement regime to a degenerative equilibrium. The dashed
+line indicates the critical threshold uc, identified by the maximal
+gradient change in Q∗(u). The shaded region denotes the transi-
+tion band separating distinct dynamical regimes. The monotonic
+decline of H∗, Q∗, and M ∗reflects the increasing dominance of
+degrading feedback under higher AI dependence.
+5.2. Intervention Strategies
+The model suggests three intervention points corresponding
+to the state variables of the system:
+• Increasing rH (human cognition): through education
+and practices that preserve active reasoning and cogni-
+tive engagement.
+• Increasing rQ (data quality): via curation, filtering,
+and incorporation of high-quality human or expert-
+generated data.
+• Increasing rM (model capability): through architec-
+tural improvements that enhance robustness to distri-
+butional shift and synthetic data contamination.
+These results suggest that alignment must be understood
+not only as a property of models, but as a property of the
+coupled human-AI system.
+5.3. Limitations.
+The present work is intentionally minimal and conceptual.
+The proposed ODE system is not intended as a quantitatively
+validated model of human cognition or societal dynamics,
+but rather as a formal framework for studying possible feed-
+back mechanisms in human-AI co-evolution. Future work
+will empirically investigate entropy reduction, recursive se-
+mantic collapse, and diversity contraction under iterative
+AI-mediated generation.
+Human-AI Co-Evolution and Epistemic Collapse: A Dynamical Systems Perspective
+6. Conclusion
+We introduce a minimal dynamical framework for analyz-
+ing long-term human-AI co-evolution, unifying cognitive
+offloading and model collapse within a single feedback sys-
+tem. Our analysis shows that the same feedback structure
+can give rise to enhancement, equilibrium, or degeneration,
+depending on the level of AI dependence.
+This perspective suggests that the trajectory of AI systems
+is governed not only by model design, but by the coupled
+dynamics of human cognition, data generation, and model
+training.
+More broadly, alignment should be understood as a property
+of the human-AI system as a whole, rather than of models
+in isolation.
+Impact Statement
+This work presents a conceptual framework for analyzing
+the long-term co-evolution of human cognition and gen-
+erative models as a coupled dynamical system. A central
+implication is that increasing reliance on AI, combined with
+recursive data generation, may degrade both human cog-
+nitive engagement and data quality, potentially driving the
+system toward low-diversity, suboptimal equilibria.
+If such dynamics occur in practice, they could contribute
+to reduced creativity, diminished critical thinking, and ho-
+mogenization of knowledge production, particularly in high-
+stakes domains such as scientific research, education, and
+decision-making.
+At the same time, the framework highlights potential miti-
+gation strategies, including improved data curation, human-
+in-the-loop system design, and educational practices that
+preserve active cognitive engagement. These interventions
+can be interpreted as control mechanisms that steer the sys-
+tem toward a co-evolutionary enhancement regime.
+This work is primarily theoretical and supported by minimal
+simulations. Its main contribution is to provide testable
+hypotheses and a systems-level perspective for designing
+human-AI systems that preserve epistemic diversity and
+avoid degeneration under feedback dynamics.
+References
+Kosmyna, N. et al. Your brain on chatgpt: Accumulation of
+cognitive debt when using an ai assistant for essay writing
+task. arXiv preprint arXiv:2506.08872, 2025.
+Rahwan, I., Cebrian, M., Obradovich, N., Bongard, J., Bon-
+nefon, J.-F., Breazeal, C., Crandall, J. W., Christakis,
+N. A., Couzin, I. D., Jackson, M. O., et al. Machine
+behaviour. Nature, 568(7753):477-486, 2019.
+Shumailov, I., Shumaylov, Z., Zhao, Y., Papernot, N., and
+Anderson, R. The curse of recursion: Training on gen-
+erated data makes models forget. Nature, 2024. doi:
+10.1038/s41586-024-07566-y.
+Sparrow, B., Liu, J., and Wegner, D. M. Google effects on
+memory: Cognitive consequences of having information
+at our fingertips. science, 333(6043):776-778, 2011.
+Tishby, N., Pereira, F. C., and Bialek, W. The informa-
+tion bottleneck method. arXiv preprint physics/0004057,
+2000.

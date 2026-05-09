@@ -1,0 +1,1348 @@
+Memory Efficient Full-gradient Attacks (MEFA)
+Framework for Adversarial Defense Evaluations
+Yuan Du
+Department of Statistics and Data Science
+University of Central Florida
+Orlando, FL 32816, USA
+yuan_du@ucf.edu
+Mitchel Hill
+InnoPeak Technology
+Palo Alto, CA 94303, USA
+mitch.hill@innopeak.com
+HanQin Cai
+Department of Statistics and Data Science
+Department of Computer Science
+University of Central Florida
+Orlando, FL 32816, USA
+hqcai@ucf.edu
+Abstract
+This work studies the robust evaluation of iterative stochastic purification defenses
+under white-box adversarial attacks. Our key technical insight is that gradient
+checkpointing makes exact end-to-end gradient computation through long pu-
+rification trajectories practical by trading additional recomputation for substan-
+tially lower memory usage. This enables full-gradient adaptive attacks against
+diffusion- and Langevin-based purification defenses, where prior evaluations of-
+ten resort to approximate backpropagation due to memory constraints. These
+approximations can weaken the attack signal and risk overestimating robustness.
+In parallel, stochasticity in iterative purification is frequently under-controlled,
+even though different purification trajectories can substantially change reported
+robustness metrics. Building on this insight, we introduce a memory-efficient full-
+gradient evaluation framework for stochastic purification defenses. The framework
+combines checkpointed backpropagation with evaluation protocols that control
+stochastic variability, thereby reducing memory bottlenecks while preserving exact
+gradients. We evaluate diffusion-based purification and Langevin sampling with
+Energy-Based Models (EBMs), demonstrating that full-gradient attacks uncover
+vulnerabilities missed by approximate-gradient evaluations. Our framework yields
+stronger state-of-the-art ℓ∞and ℓ2 white-box attacks and further supports prob-
+ing out-of-distribution robustness. Overall, our results show that exact-gradient
+evaluation is essential for reliable benchmarking of iterative stochastic defenses.
+Introduction
+Iterative stochastic purification defenses have emerged as a promising approach for adversarial ro-
+bustness because they can be applied before classification without retraining the underlying classifier.
+Diffusion-based purification and Langevin sampling with Energy-Based Models (EBMs) are represen-
+tative examples of this paradigm. However, their reliable white-box evaluation remains challenging:
+a strong adaptive attack must differentiate through a long sequence of stochastic purification steps,
+while naively storing all intermediate states during backpropagation incurs prohibitive memory cost.
+As a result, existing evaluations often rely on approximate gradients, adjoint-style methods, surrogate
+backward passes, or other memory-saving approximations. These approximations may weaken the
+attack signal and overestimate robustness.
+Preprint.
+arXiv:2605.06357v1 [cs.LG] 7 May 2026
+
+The central insight of this work is that exact full-gradient attacks against iterative stochastic purifica-
+tion defenses can be made practical with memory-efficient checkpointed gradient computation. We
+propose Memory-Efficient Full-gradient Attack (MEFA), a framework that computes gradients
+through the full purification trajectory while reducing memory complexity with respect to the number
+of purification steps to O(1). MEFA detaches the forward purification trajectory and reconstructs
+the necessary local computation during backward propagation, enabling exact chain-rule gradient
+computation without storing the full computation graph. This makes strong adaptive attacks such
+as PGD with Expectation Over Transformation (PGD+EOT) [2, 36] feasible for iterative stochastic
+purification defenses under realistic memory constraints.
+This evaluation problem is important because deep neural networks (DNNs), despite achieving
+state-of-the-art performance in vision [30, 15, 35], language [47, 46, 38], and audio tasks [18, 9],
+remain vulnerable to adversarial examples. Small, human-imperceptible perturbations can cause high-
+confidence misclassification [45, 19]. For purification-based defenses, robustness evaluation must
+include not only the final classifier, but also the full randomized iterative preprocessing mechanism.
+Otherwise, the reported robustness may reflect an incomplete white-box threat model rather than true
+defensive strength.
+Prior work illustrates the difficulty of this evaluation. DiffPure [37] uses diffusion purification to
+remove adversarial perturbations and adopts the adjoint method to approximate gradients through
+the reverse Stochastic Differential Equation (SDE) with low memory cost. However, these gradients
+are approximate rather than exact full gradients through the purification trajectory. Subsequent
+studies have shown that diffusion-based defenses can lose substantial robustness under stronger
+adaptive or surrogate attacks [31, 25], suggesting that gradient quality is central to reliable robustness
+evaluation. Similar challenges arise in Langevin-based EBM purification, where the defense also
+relies on iterative stochastic sampling. Without exact-gradient attacks, reported robustness may reflect
+limitations of the evaluation procedure rather than genuine defensive strength.
+A second challenge is stochasticity. Even if exact gradients are available for a fixed purification
+trajectory, a stochastic purification defense does not define a single deterministic prediction for
+each input. Instead, it induces a distribution over purified samples and classifier outputs. Reported
+robustness can therefore depend on protocol choices such as the number of purification replicates,
+the number of adversarial candidates generated per input, and whether the final PGD iterate or the
+highest-loss iterate is selected. Too few purification samples can produce high-variance results, while
+validating many adversarial candidates with insufficient stochastic replicates can distort attack success
+estimates.
+MEFA addresses both challenges: memory-efficient exact-gradient attack generation and robust
+stochastic validation. In the attack process, MEFA computes exact full gradients through iterative
+purification with O(1) memory complexity in the number of purification steps, enabling PGD+EOT
+attacks to optimize perturbations using full adaptive gradients rather than weakened approximations.
+In the validation process, MEFA treats the stochastic defense as an underlying deterministic classifier
+defined by the expectation over infinitely many purification trajectories. Since this expectation cannot
+be computed exactly, MEFA approximates it using sufficient parallel purification replicates and
+determines the number of replicates needed to obtain stable, nearly deterministic predictions. Together,
+these components reduce both gradient-induced and randomness-induced evaluation artifacts.
+Our key contributions are:
+• A Memory Efficient Full Gradient Attack via Chain Rule: We introduce a framework for
+attacking iterative purification defenses using strong gradient checkpointing adaptive attacks,
+overcoming prohibitive memory costs associated with full gradient computation during backprop-
+agation in the adversarial attack process. See Section 3
+• Robust Validation: We formalize stochastic purification as an expected classifier over purification
+randomness and provide a validation process that uses sufficient parallel replicates to obtain stable
+robustness estimates. See Section 3.
+• SOTA Attack Success Rate against Iterative Stochastic Defenses: Using MEFA, we expose
+critical limitations of score SDE-, DDPM-, and EBM-based purification defenses and achieve
+stronger state-of-the-art ℓ∞and ℓ2 white-box attacks. See Section 4.
+• Insights on OOD Robustness: Furthermore, the diffusion model shows the potential to defend
+OOD datasets. However, the performance is limited to the data distribution similarity between the
+pre-trained and defended datasets. (See Section 4)
+2
+Preliminaries
+Diffusion Models. Diffusion models consist of two processes: first, a forward process that gradually
+adds noise to the original input until it becomes random noise, and second, a reverse process that
+generatively recovers the original input by removing the predicted noise at each time step. There are
+two types of diffusion models: discrete Diffusion Model (DDPM-based) and continuous diffusion
+model (score SDE-based).
+Discrete Diffusion Model.
+Given the input sample as x0 ∼q(x), the forward process adds
+Gaussian noise over T steps via a variance schedule {βt ∈(0, 1)}T
+t=1 with q(xt|xt−1) =
+N(xt; √1 −βtxt−1, βtI) and q(x1:T |x0) = QT
+t=1 q(xt|xt−1).
+The reverse process learns
+pθ(xt−1|xt) = N(xt−1; µθ(xt, t), Σθ(xt, t)) by optimizing the simple loss:
+L(θ) = Ex0,ε,t∼U[1,T ]
+
+∥ε −ˆεθ(xt, t) ∥2
+.
+(1)
+Denoising Diffusion Probabilistic Model (DDPM) [24] employs the update:
+xt−1 =
+√αt
+
+xt −1 −αt
+√1 −¯αt
+εθ(xt, t)
+
++ σtz,
+(2)
+where αt = 1 −βt, ¯αt = QT
+t=1 αt, σt =
+p
+βt(1 −¯αt−1)/(1 −¯αt), z ∼N(0, I).
+Continuous Diffusion Model. The forward process is a Stochastic Differential Equation (SDE):dx =
+µ(x, t)dt + σ(x, t)dwt with drift µ(x, t), volatility σ(x, t), and Wiener process wt.The reverse-time
+SDE [43] is:
+dx = [µ(x, t) −σ(x, t)2∇x log p(x, t)]dt + σ(x, t)d ¯wt,
+(3)
+where a scoring network sθ(x, t) estimates ∇x log p(x, t). Training minimizes the weighted score
+matching loss:
+L(θ) = min
+θ
+Z 1
+t=0
+Ep(x)p0t(ˆx(t)|x(0))
+h
+λt ∥∇ˆx log(p0t(ˆx(t)|x(0))) −sθ(ˆx(t), t)∥2
+i
+,
+(4)
+where λt is the time-dependent weighting coefficient [42, 48].
+Energy Based Models. EBM is a Gibbs-Boltzmann density [49]. A deep EBM has the form:
+P(x; θ) =
+Z(θ) exp{−U(x; θ)},
+(5)
+where the energy U(x; θ) is a ConvNet with a scalar output.
+The intractable Z(θ)
+=
+R
+X exp [−U(x; θ)] dx is circumvented via Markov Chain Monte Carlo (MCMC) sampling in unsuper-
+vised Maximum Likelihood Estimation (MLE) learning. The gradient used to learn θ is approximated:
+∇L(θ) = ∇Eq[U(x; θ)] −∇EPθ[U(x; θ)]
+≈1
+n
+n
+X
+i=1
+∇θU(x+
+i ; θ) −1
+m
+m
+X
+i=1
+∇θU(x−
+i ; θ),
+(6)
+where {x+
+i }n
+i=1 and {x−
+i }m
+i=1 are positive samples and negative samples from model P(x; θ). In
+practice, positive samples {x+
+i }n
+i=1 are a batch of training images and negative samples {x−
+i }m
+i=1 are
+obtained from K-step Langevin Dynamics (LD):
+x(k+1) = x(k) −η2
+2 ∇x(k)U(x(k); θ) + ηzk,
+(7)
+with step size η and zk ∼N(0, ID). Initialization of Langevin chains {x−
+i,0}n
+i=1 critically influences
+model behavior.
+Memory Efficient Full-gradient Attack (MEFA) Framework
+In this work, our objective is to tackle the difficulties of evaluating adversarial defenses based on iter-
+ative sampling. Adaptive adversarial attack on iterative stochastic purification defense is challenging
+due to 1) high memory and long time requirement for gradient calculation for the long sampling pro-
+cess, 2) stochastic transformation that induces gradient instability for the classifier and leads to high
+outcome variance that needs further analysis. In this section, we first formulate the adversarial attack
+against iterative stochastic purification, and then MEFA Framework is presented. Our methodological
+framework contains two main processes: Attack process and validation process. The adversarial
+attack process constitutes the initial memory-efficient computational process, while the validation
+process operates as an independent module for robustness validation to prevent overstatement of
+attack success. To optimize experimental reproducibility and computational efficiency, we advocate
+removing any stochasticity by defining the expectation of prediction over stochastic transformation,
+using many parallel purifications in a decoupled process in which researchers save adversarially
+perturbed purified images during the attack process for further analysis. Additional analyses can then
+leverage the final saved images to be re-evaluated by the validation pipeline. This validation process
+is flexible for comprehensive defense performance analysis without re-executing resource-intensive
+adversarial attack iterations. This MEFA Framework substantially reduces memory overhead and
+time cost during repeated evaluations. See Figure 1 for a pictorial illustration.
+Figure 1: Diagram for adversarial attack process (top) and validation process (bottom). In the MEFA-PGD
+gradient checkpointing process (top right): each image state represents the forward computation steps from
+initial state x to the final state ˆx through attack on the defense model transformation T(x), specifically described
+as from x(0) to x(K) for EBM in (7), xT to x0 for Diffusion model in (2) or (3). All intermediate x’s are
+detached and saved to CPU from the graph during the forward pass. In the backpropagation, each saved image
+state is re-attached to the graph and the gradient is computed with respect to the image state during the backward
+pass and passed to the next layer via the chain rule. In the defense validation process, the final adversarial state
+could be repeated with a number of replicates Hd, go through the purification defense model T(x) to check the
+efficacy of the attack and defense strength without intensive computing memory and time.
+Formulation. We first formulate the adversarial attack against the stochastic preprocessing transfor-
+mation for diffusion-based and EBM-based defenses. Let T(x) be the purification transformation
+with diffusion-based defenses, (2) or (3), or EBM-based defenses (7) for an image state x ∈RD.
+The classifier f defended by the transformation T(x) is defined by f(T(x)). Logits are presented as
+f(x), and expected logits for EOT attack are presented as F(x):
+F(x) = ET (x)[f(T(x))].
+(8)
+We can compute the EOT attack gradient as the average of finite samples according to the law of
+large numbers, where H is the number of adversarial samples practically with ∇ET (x)[f(T(x))] ≈
+∇1
+H
+PH
+h=1 f( ˆ
+xh), where ˆ
+xh ∼T(x). In the attack, Hadv and Hd are denoted as the number of
+attack replicates and the number of defense replicates, respectively.
+Given an input pair (x, y), an adversarial example ˜x satisfies the following:
+arg max˜x ET (˜x)[f(T(˜x))] ̸= y
+subject to ET (x),T (˜x)[d(x, ˜x)] < ε,
+x ∈[0, 1]D.
+Let Πx+S denote the projection on x + S, where S is the intersection of the image x ∈[0, 1]D and
+the ℓp-norm around image x for a small ε > 0. The PGD attack is iteratively updated through:
+˜xj+1 = Πx+S(˜xj + η sign∇j
+xL((F ◦T)(x), y)|x=˜xj).
+(9)
+However, to calculate the full gradient ∇j
+xL((F ◦T)(x), y)|x=˜xj through T(x) sampling process
+on the computational graph is known to be memory intensive. Alternative attack methods use a
+limited number of denoising steps to attack diffusion-based models [37, 3, 31, 8] due to the memory
+constraint. DiffAttack [25] uses segment-wise forwarding-backwarding algorithm to solve the
+memory problem, but formulates a surrogate loss, termed deviated-reconstruction loss (mse+ce)
+directly to the adversarial image state resulting in a weaker attack (see Table 1). Other alternative
+attack methods that use fewer sampling steps, or gradient approximation, such as BPDA, report false
+security in EBM-based defenses [16, 21, 50].
+Attack Process. Our attack process is a memory-efficient adaptive full gradient white-box adversarial
+attack, which has stronger attack success rates than state-of-the-art alternative attack methods. The
+main components are based on iterative PGD attack and gradient checkpointing. In the PGD attack,
+we bound the perturbation in the ℓp-norm epsilon ball. and we use adaptive or fixed adversarial steps.
+Many researchers shy away from adversarial purification by iterative sampling-based defense for
+white-box attacks due to memory limitations. Alternative attack methods and gradient approximation
+methods have been developed, such as BPDA attack [1], joint attack [50], adjoint attack [37],
+surrogate attack [8], DiffAttack [25] to overcome memory problems and obfuscated gradients.
+They all have shown very weak attack results (see Table 1 for DiffAttack, Table 5 for BPDA).
+Gradient checkpointing operates on the principle of recomputation during backpropagation to reduce
+memory consumption during backpropagation. Taking diffusion-based purification D(x; θ) as an
+example, during the forward purification pass, we store intermediate adversarial images xT , xT −1, x0
+and noises zT , zT −1, z0, detached from the graph. During backpropagation, we put each of the
+intermediate adversarial images stored xT , xT −1, x0 back on the graph, recompute the next state,
+and calculate the gradient of the recomputed state with respect to the current state iteratively until the
+final adversarial state to update the gradient via chain rule. Thus, the memory complexity is O(1)
+instead of O(T). We denote the input as xt and the purified input as x′
+t. Then each gradient with
+respect to the input is as during iterative backpropagation at step t ∈[0, T] is
+∂L
+∂x′
+t
+=
+∂L
+∂x′
+t−1
+∂x′
+t−1
+∂x′
+t
+=
+∂L
+∂x′
+t−1
+∂D(x′
+t, zt)
+∂x′
+t
+.
+(10)
+At t-th step, we recompute the next state x′
+t−1 = D(x′
+t, zt) using the intermediate adversarial images
+stored, and calculate the gradient ∂D(x′
+t,zt)
+∂x′
+t
+using chain rule to get ∂L
+∂x0 .
+We summarize the pseudo-codes of the MEFA Framework PGD attack in Appendix A, the gradient
+checkpointing algorithm in Appendix B, and the comparison between gradient checkpointing and the
+segment-wise forwarding-backwarding algorithm [25] in Appendix C.
+Why Full Gradients? Reliable robustness evaluation requires gradients that faithfully reflect
+the defended model. Adversarial examples exploit the local sensitivity of neural networks along
+gradient directions, so approximate gradients can misalign the attack optimization and underestimate
+vulnerability [20]. This has been a recurring failure mode in defenses that appeared robust under
+approximate or obfuscated gradients but were later broken by adaptive attacks with correct gradient
+information [1]. Exact, or provably equivalent, gradients also make evaluations less dependent
+on implementation-specific approximations, improving reproducibility and comparability across
+defenses. Accordingly, standard robustness evaluation guidelines emphasize the use of exact gradients
+whenever possible [7].
+For stochastic purification defenses, the choice of adversarial state used for reporting adversarial
+accuracy also matters. prior works implement exact backpropagation [25] via checkpointing [10]. We
+discover and fix issues in implementations and utilize a validation process to efficiently validate the
+saved adversarial states other than reporting attack success on the fly from the first broken stochastic
+state which can overestimate attack effectiveness. This decouples expensive gradient-based attack
+optimization from stochastic robustness estimation and enables controlled evaluation with parallel
+purifications. See Appendix D for details.
+Validation Process. Although MEFA removes the memory bottleneck for full-gradient PGD attacks,
+attack generation remains computationally expensive. PGD with 100 attack steps can take several
+Table 1: Defense against APGD+EOT20 ℓ∞attacks (ε = 8/255) from WRN-28-10 on CIFAR-10
+compared with DiffAttack [25].
+Defense Model
+Attack Method
+Nat. Accuracy (NA)
+Adv. Accuracy (AA)
+Score SDE VP-SDE
+(Contin. Diffusion)
+Ours, Hd = 1
+89.00%
+45.69%
+Ours, Hd = 50
+93.33%
+42.75%
+DiffAttack*, Hd = 1
+89.00%
+55.49%
+DiffAttack*, Hd = 50
+93.33%
+61.57%
+DiffAttack** (Surrogate Attack [25])
+87.50%
+46.88%
+DiffPure** (Adjoint Attack [37])
+89.02%
+70.64%
+2DUnet DDPM
+(Discrete Diffusion)
+Ours, Hd = 1
+85.69%
+40.20%
+Ours, Hd = 50
+92.94%
+35.29%
+DiffAttack*, Hd = 1
+85.68%
+64.70%
+DiffAttack*, Hd = 50
+89.80%
+67.65%
+DiffAttack** (Surrogate Attack[25])
+100%
+54.69%
+Smooth EBM
+Ours, Hd = 1
+72.16%
+7.84%
+Ours, Hd = 50
+85.69%
+6.08%
+Note: *validated using our validation process in DiffAttack’s pipeline, ** reported from the original paper.
+Table 2: Defense against PGD+EOT20 ℓ∞attacks from WRN-20-10 on CIFAR-10 with the same 60 images.
+Defense
+Trial
+Hd = 1
+Hd = 30
+Hd = 50
+Model
+No.
+NA
+AA
+NA
+AA
+NA
+AA
+Score SDE VP-SDE
+(Contin. Diffusion)
+90.00%
+48.33%
+90.00%
+55.00%
+90.00%
+55.00%
+88.33%
+56.67%
+90.00%
+58.33%
+90.00%
+56.67%
+88.33%
+58.33%
+90.00%
+60.00%
+90.00%
+58.33%
+Mean
+± std
+88.89%
+54.44%
+90.00%
+57.78%
+90.00%
+56.67%
+±0.96%
+±5.36%
+±0.00%
+±2.55%
+±0.00%
+±1.67%
+days for EBM- and score SDE-based defenses, even without parallel purification trials. At the same
+time, validating stochastic defenses with a single purification produces high-variance robustness
+estimates, while rerunning the full attack for different numbers of purification samples is impractical.
+We therefore decouple attack generation from robustness estimation. The attack process saves the
+final adversarial states, and a separate validation process reuses these saved examples with a flexible
+number of defense replicates Hd. This enables efficient estimation of the expected stochastic defended
+classifier without rerunning attack optimization, and also supports variance analysis and visualization
+under different validation settings.
+Empirically, single-purification validation can be highly unstable, even with EOT20 during attack
+generation, as shown in Figure 2. Increasing Hd reduces variance and stabilizes predictions, particu-
+larly for borderline cases. Larger Hd amplifies the majority prediction: examples correctly classified
+by most purification trials become more reliably correct, while examples misclassified by most trials
+become more reliably incorrect. Table 2 confirms that higher Hd reduces outcome variance.
+The validation process is also substantially faster than full re-evaluation. For the EBM defense,
+validation takes 27 seconds per image, compared with 13 minutes per image for standard evaluation,
+giving over 30× speedup. Because it operates directly on saved adversarial examples, the same
+pipeline can also serve as a post-hoc verification tool for existing attacks. Applying it to adversarial
+examples from DiffAttack [25], we observe substantially higher robust accuracy after re-validation
+than the originally reported attack-stage results, indicating that stochastic validation protocol choices
+can materially affect robustness estimates.
+In our experiments, Hd = 50 provides a practical stability and cost trade-off on CIFAR-10. We
+therefore report both single-purification and Hd = 50 validation results in the remaining experiments.
+See more in Section D.
+Limitations. While the MEFA Framework enables a robust and memory-efficient evaluation of
+stochastic purification defenses, several directions remain open for future work. These include
+Figure 2: Purified images present random prediction with occlusion attributions [52] where red and blue regions
+indicate high and low relevance areas to confidence reduction, respectively. Left to right: original, adversarial
+state, 1st-trial natural state, 1st-trial adversarial state, 2nd-trial natural state, and 2nd-trial adversarial state.
+reducing the runtime overhead introduced by gradient checkpointing, extending MEFA to larger-
+scale models and datasets, and generalizing the validation replicate count across diverse settings.
+Additionally, future work will be needed for defense models with non-smooth activations. These
+extensions represent promising avenues to further strengthen evaluations of iterative stochastic
+purification defenses.
+Empirical Experiments
+We compare EBM- and diffusion-based purification defenses under MEFA, including DDPM [3]
+and score SDE defenses [37], across multiple white-box attacks. We focus in particular on DiffPure
+[37], which evaluates score SDE purification using the adjoint method against ℓ∞APGD attacks with
+ε = 8/255 on CIFAR-10 and ε = 4/255 on ImageNet. For validation, we save the loss-optimized
+adversarial states for APGD attacks and the final adversarial states for PGD attacks. Since the adjoint
+method is introduced to address memory constraints, the attack can only access gradients of the final
+sampling state rather than exact full gradients through the purification trajectory.
+We further re-evaluate DiffAttack [25] by applying our standalone validation pipeline under the
+same CIFAR-10 setting, obtaining an adversarial accuracy of 61.57%. In contrast, MEFA reduces
+adversarial accuracy to 42.75%, an 18.82 percentage-point decrease over DiffAttack [25]. We also
+provide the first full-gradient evaluation of the EBM defense [23]; MEFA reduces its adversarial
+accuracy to 6.08%, compared with 54.90% under the original BPDA+EOT20 evaluation on CIFAR-
+10. On ImageNet, MEFA further reduces adversarial accuracy to 22% and 34% for ResNet-50 and
+WideResNet-50-2 classifiers purified by the score SDE VP-SDE defense under PGD+EOT20 ℓ∞
+attacks with ε = 4/255.
+Experimental Settings. We will first present the settings for the numerical experiments.
+Dataset and Classifier. We randomly pick 510 images from CIFAR-10 [29] and consistently use them
+for all experiments, and 100 images from ImageNet [14] for the sake of fairness. The WideResNet-28-
+10 classifier [51] is used for the evaluation on CIFAR-10. ResNet-50 [22] and Wideresnet-50-2 [15]
+are used for the evaluation on ImageNet. The original accuracy of these CIFAR-10 and ImageNet
+images is 95.10% and 90%, respectively.
+Defense Evaluation Metric. To rigorously assess the robustness of adversarial defense mechanisms,
+we adopt the following standardized metrics, aligned with established practices in adversarial attacks:
+• Original Accuracy (OA): Classification accuracy on the original unperturbed validation set.
+• Natural Accuracy (NA): Classification accuracy of the original unperturbed and purified validation
+set with the defend model, also termed Clean Accuracy.
+Table 3: Defense against PGD+EOT20 attacks from WRN-28-10
+on CIFAR-10.
+Defense
+Attack Nat. Accuracy (NA) Adv. Accuracy (AA)
+Model
+Type
+Hd = 1 Hd = 50 Hd = 1 Hd = 50
+Score SDE VP-SDE
+(Contin. Diffusion)
+ℓ∞
+88.82%
+93.33%
+43.53%
+41.76%
+ℓ2
+90.79%
+94.62%
+70.00%
+77.65%
+2DUnet DDPM
+(Discrete Diffusion)
+ℓ∞
+82.55%
+90.79%
+41.56%
+35.48%
+ℓ2
+82.74%
+89.81%
+64.71%
+68.23%
+Smooth EBM
+ℓ∞
+75.88%
+84.51%
+8.43%
+6.08%
+ℓ2
+75.88%
+84.51%
+41.96%
+41.76%
+Table 4: Score SDE VP-SDE defense
+against PGD+EOT20 ℓ∞attacks (ϵ =
+4/255) on ImageNet.
+Threat Model
+Attack Method
+Nat. Acc
+Adv. Acc
+ResNet-50
+Ours, Hd=1
+75.00%
+24.00%
+Ours, Hd=50
+77.00%
+22.00%
+DiffPure* [37]
+67.79%
+40.93%
+WideResNet-50-2
+Ours, Hd=1
+82.00%
+33.00%
+Ours, Hd=50
+81.00%
+34.00%
+DiffPure* [37]
+71.16%
+44.39%
+Note: * reported from the original paper.
+• Adversarial Accuracy (AA): Classification accuracy under adversarial perturbations within threat
+model T . Also termed Robust Accuracy. The final AA is re-evaluated using the saved adversarial
+images with the validation process.
+Defense Model and Method. We use pre-trained diffusion models including discrete DDPM-based
+[41] and continuous score SDE-based [43], non-smooth EBM models [23] to purify the images
+following Blau et al. [3], Nie et al. [37], Hill et al. [23] respectively. We trained the smooth EBM
+using the same model structure with softleakyrelu as the activation function. The reason for this
+activation choice is stated in Appendix D.
+Threat Model Specification. All metrics assume explicit adversarial constraints:
+• Perturbation Norm: ℓ∞or ℓ2 on image scale of [0, 1]D.
+• Attack Strength: ε = 8/255 for ℓ∞, ε = 0.5 for ℓ2 attacks on CIFAR-10. ε = 4/255 for ℓ∞on
+ImageNet.
+• Attack Method: White-box Iterative Attacks. We use PGD [36] with fixed step size of 2/255, and
+APGD from autoattack [12] with adaptive step size on image scale of [0, 1]D.
+Prioritizing loss-optimized perturbations versus first- or final-state attack success instances introduces
+non-negligible variance. 20 attack replicates are used for all APGD, PGD and BPDA attacks,
+denoted as APGD+EOT20, PGD+EOT20, and BPDA+EOT20. APGD with loss-optimized and
+PGD with final adversarial state show very close results on ℓ∞as shown in Tables 1 and 3 for
+Score SDE-based and EBM-based defenses. Thus, PGD is being used for our experiments other
+than Table 1. We make sure the gradient checkpointing gradients match with the exact gradients
+close to 10−6-10−7 on the defense model output without attacks. Iterative attacks with 100 steps
+including ℓ∞(ε = 8/255) and ℓ2 (ε = 0.5) are carried out on CIFAR-10. Iterative attacks with
+50 steps including ℓ∞(ε = 4/255) are carried out on ImageNet. More details of the experiment
+can be found in Appendix D. The code is available online anonymously for review at https:
+//anonymous.4open.science/r/MEFA-24DF/.
+Attack Against Continuous Diffusion Models. We use DiffPure [37] as the baseline score SDE-
+based defense because it reports SOTA robustness. Unlike DiffPure, which uses the adjoint method
+to estimate gradients under memory constraints, and DiffAttack [25], which combines adjoint-based
+gradients with a deviated-reconstruction loss, MEFA evaluates the defense with exact full gradients.
+As shown in Tables 1 and 3, MEFA achieves SOTA attack performance against the continuous
+diffusion, score SDE-based defense [37], reducing adversarial accuracy to 42.75% and 41.76% under
+PGD and APGD ℓ∞attacks with ε = 8/255, respectively. The loss-optimized and final adversarial
+states yield similar results, while BPDA+EOT20 fails to effectively attack the score SDE-based
+defense, as shown in Table 5. On ImageNet, MEFA also substantially reduces adversarial accuracy
+compared with DiffPure [37], as reported in Table 4. These results across CIFAR-10 and ImageNet
+highlight the importance of exact-gradient evaluation over approximate-gradient baselines for reliable
+robustness assessment.
+Attack Against Discrete Diffusion Models. Similarly, our evaluation shows that DDPM-based
+defense has a weaker robustness compared to the score SDE-based defense, with adversarial accuracy
+of 35.48% and 68.23% against ℓ∞and ℓ2 PGD attacks in Table 3. This is significantly lower than
+Diffattack’s evaluation method of 67.65% on APGD ℓ∞attacks. SOTA accuracy of 35.29% is shown
+for APGD ℓ∞attacks as well in Table 1. Similarly, BPDA + EOT20 in Table 5 failed to attack against
+DDPM-based defenses.
+Attack Against EBM-Based Defenses. We use the long-run EBM defense with 1500 Langevin steps
+[23] as the EBM baseline because it reports SOTA robustness among EBM-based defenses, as shown
+Figure 3: Memory(left), time(right) comparison between MEFA Framework’s gradient checkpointing (CKPT)
+and standard Pytorch (PT) backpropagation for smooth EBM against PGD ℓ∞attack on one CIFAR-10 image
+with WideResNet-28-10.
+Table 5: Defense against BPDA+EOT20 attacks on CIFAR-10
+Defense
+Attack Nat. Accuracy (NA) Adv. Accuracy (AA)
+Model
+Type
+Hd = 1 Hd = 50 Hd = 1 Hd = 50
+Score SDE VP-SDE
+(Contin. Diffusion)
+ℓ∞
+89.22%
+93.72%
+80.39%
+86.08%
+ℓ2
+88.82%
+93.33%
+83.33%
+89.80%
+2DUnet DDPM
+(Discrete Diffusion)
+ℓ∞
+81.96%
+90.78%
+70.98%
+76.47%
+ℓ2
+82.94%
+90.20%
+78.63%
+85.10%
+Smooth EBM
+ℓ∞
+75.88%
+84.51%
+44.14%
+49.80%
+ℓ2
+75.88%
+84.51%
+63.33%
+73.13%
+Table 6: OOD Defense against PGD+EOT20
+and BPDA+EOT20 ℓ∞attacks on CIFAR-10
+Attack
+Dataset
+Nat. Accuracy (NA) Adv. Accuracy (AA)
+Method
+Pre-trained Hd = 1 Hd = 50 Hd = 1 Hd = 50
+PGD+EOT20
+FOOD
+71.37%
+82.75%
+13.92%
+7.65%
+BPDA+EOT20
+38.63%
+36.86%
+PGD+EOT20
+CINIC10
+83.01%
+90.43%
+41.41%
+37.89%
+BPDA+EOT20
+47.45%
+43.33%
+in Tables 1 and 3. Prior evaluations rely on BPDA+EOT20 due to the memory cost of differentiating
+through long EBM sampling; in our re-evaluation, BPDA+EOT20 yields 49.8% adversarial accuracy
+on the smooth-activation EBM (Table 5), compared with 54.9% reported by Stochastic Security [23]
+using 150 defense replicates. MEFA provides the first full-gradient attack evaluation of this EBM
+defense. The original non-smooth pretrained EBM is re-evaluated with comparable robust accuracy
+of 53.5% using 50 replicates; additional details are provided in Appendix F.
+Memory and Time Comparison: MEFA Framework-PGD vs. Standard PGD. We validate the
+memory cost using a smooth EBM defense model to fit the fixed memory compared to the standard
+PGD attack. Figure 3 shows that our MEFA-PGD maintains a constant memory use cost and doubles
+the time usage on the same MCMC step since the backpropagation recomputes the intermediate
+states. In contrast, the standard PGD backpropagation, which had the intermediate image states on
+the graph, increases the memory use linearly and is unable to fit in the GPU memory after 150 steps.
+Thus, no bars are shown for the standard PDG attack at the 1000th and 1500th step.
+OOD Insights on Defense Robustness. We examine the OOD defense accuracy for DDPM-based
+defenses since it’s shown better defense outcomes than EBM and it’s faster to train than score
+SDE-based diffusion models. The OOD accuracy depends on the pre-trained data distribution. Thus,
+a defense model with diverse datasets could have the potential to secure the classifier. It shows that
+the defense accuracy is highly dependent on the data distribution on which the model is trained.
+The defense model trained on CINIC10, which is a combination of CIFAR-10 and ImageNet, has a
+comparable adversarial accuracy (37.89% vs. 35.48%) with CIFAR-10 trained defense model, and a
+better adversarial accuracy compared to the defense model trained on FOOD shown in Table 6.
+Related Work
+Adversarial Attack. Adversarial attacks expose the vulnerability of modern models [45] across
+white-box [19, 36, 6, 12, 13], black-box [39, 4, 44, 5, 27], and physical settings [17], with adaptive
+white-box attacks serving as the strongest empirical test. Recent works further strengthen adaptive
+attacks against diffusion-based purification defenses through improved gradient optimization and
+memory-efficient techniques such as checkpointing [26, 32, 34]. However, robustly evaluating
+iterative stochastic purification defenses [25, 31, 8], including diffusion- and EBM-based methods,
+remains challenging due to memory constraints and stochastic instability. MEFA addresses these
+limitations by enabling exact-gradient evaluation with controlled stochastic validation.
+Adversarial Purification (AP). Early AP methods employ generative models such as GANs [40]
+or VAEs [50] to project corrupted inputs onto the clean data manifold. Recent advances leverage
+stochastic purification mechanisms, including randomized smoothing [11], diffusion models [37],
+energy-based models [21, 16, 23], and score-based Langevin dynamics [50]. While these methods
+improve robustness, they are particularly susceptible to adaptive attacks when gradients are accurately
+computed [1]. Our work complements this line of research by providing a more faithful evaluation
+framework for such stochastic defenses, revealing their true robustness under strong white-box
+attacks.
+Conclusion
+Our work establishes the Memory-Efficient Full-gradient Attack (MEFA) framework as a rigorous
+benchmark for evaluating iterative stochastic purification defenses, with a focus on diffusion- and
+EBM-based methods. By enabling full-gradient computation with O(1) memory cost, MEFA
+reveals substantial vulnerabilities in both defense families and highlights the need for standardized
+evaluation of iterative stochastic purification. Overall, MEFA helps bridge the gap between theoretical
+robustness claims and practical deployability by quantifying the trade-offs among memory constraints,
+computational overhead, and stochastic outcome variance.
+References
+[1] Anish Athalye, Nicholas Carlini, and David Wagner. Obfuscated gradients give a false sense
+of security: Circumventing defenses to adversarial examples. In International conference on
+machine learning, pages 274-283. PMLR, 2018.
+[2] Anish Athalye, Logan Engstrom, Andrew Ilyas, and Kevin Kwok. Synthesizing robust adver-
+sarial examples, 2018. URL 
+[3] Tsachi Blau, Roy Ganz, Bahjat Kawar, Alex Bronstein, and Michael Elad. Threat model-
+agnostic adversarial defense using diffusion models, 2022. URL 
+2207.08089.
+[4] Wieland Brendel, Jonas Rauber, and Matthias Bethge. Decision-based adversarial attacks:
+Reliable attacks against black-box machine learning models, 2018. URL 
+org/abs/1712.04248.
+[5] HanQin Cai, Yuchen Lou, Daniel Mckenzie, and Wotao Yin. A zeroth-order block coordi-
+nate descent algorithm for huge-scale black-box optimization. In Proceedings of the 38th
+International Conference on Machine Learning, volume 139, pages 1193-1203. PMLR, 2021.
+[6] Nicholas Carlini and David Wagner. Towards evaluating the robustness of neural networks,
+2017. URL 
+[7] Nicholas Carlini, Anish Athalye, Nicolas Papernot, Wieland Brendel, Jonas Rauber, Dimitris
+Tsipras, Ian Goodfellow, Aleksander Madry, and Alexey Kurakin. On evaluating adversarial
+robustness. IEEE Symposium on Security and Privacy, 2019.
+[8] Huanran Chen, Yinpeng Dong, Zhengyi Wang, Xiao Yang, Chengqi Duan, Hang Su, and Jun
+Zhu. Robust classification via a single diffusion model. arXiv preprint arXiv:2305.15241, 2023.
+[9] Sanyuan Chen, Yu Wu, Chengyi Wang, Shujie Liu, Daniel Tompkins, Zhuo Chen, and Furu Wei.
+Beats: Audio pre-training with acoustic tokenizers. arXiv preprint arXiv:2212.09058, 2022.
+[10] Tianqi Chen, Bing Xu, Chiyuan Zhang, and Carlos Guestrin. Training deep nets with sublinear
+memory cost. arXiv preprint arXiv:1604.06174, 2016.
+[11] Jeremy Cohen, Elan Rosenfeld, and Zico Kolter. Certified adversarial robustness via randomized
+smoothing. In international conference on machine learning, pages 1310-1320. PMLR, 2019.
+[12] Francesco Croce and Matthias Hein. Reliable evaluation of adversarial robustness with an
+ensemble of diverse parameter-free attacks. In ICML, 2020.
+[13] Francesco Croce and Matthias Hein. Mind the box: l1-apgd for sparse adversarial attacks on
+image classifiers. In ICML, 2021.
+[14] Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei. Imagenet: A large-
+scale hierarchical image database. In 2009 IEEE conference on computer vision and pattern
+recognition, pages 248-255. Ieee, 2009.
+[15] Alexey Dosovitskiy. An image is worth 16x16 words: Transformers for image recognition at
+scale. arXiv preprint arXiv:2010.11929, 2020.
+[16] Yilun Du and Igor Mordatch. Implicit generation and modeling with energy based models. In
+Advances in Neural Information Processing Systems, volume 32, 2019.
+[17] Kevin Eykholt, Ivan Evtimov, Earlence Fernandes, Bo Li, Amir Rahmati, Chaowei Xiao, Atul
+Prakash, Tadayoshi Kohno, and Dawn Song. Robust physical-world attacks on deep learning
+models, 2018. URL 
+[18] Yuchen Gong, Yu-An Chung, and James Glass. AST: Audio spectrogram transformer. Inter-
+speech, 2021.
+[19] Ian Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing Xu, David Warde-Farley, Sherjil
+Ozair, Aaron Courville, and Yoshua Bengio. Generative adversarial nets. In Z. Ghahramani,
+M. Welling, C. Cortes, N. Lawrence, and K. Q. Weinberger, editors, Advances in Neural
+Information Processing Systems, volume 27. Curran Associates, Inc., 2014.
+[20] Ian J Goodfellow, Jonathon Shlens, and Christian Szegedy. Explaining and harnessing ad-
+versarial examples. Proceedings of the 33rd International Conference on Machine Learning,
+2014.
+[21] Will Grathwohl, Kuan-Chieh Wang, Joern-Henrik Jacobsen, David Duvenaud, Mohammad
+Norouzi, and Kevin Swersky. Your classifier is secretly an energy based model and you should
+treat it like one. In International Conference on Learning Representations, 2020.
+[22] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image
+recognition. In Proceedings of the IEEE conference on computer vision and pattern recognition,
+pages 770-778, 2016.
+[23] Mitch Hill, Jonathan Craig Mitchell, and Song-Chun Zhu. Stochastic security: Adversarial
+defense using long-run dynamics of energy-based models. In International Conference on
+Learning Representations, 2021. URL 
+[24] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models, 2020.
+[25] Mintong Kang, Dawn Song, and Bo Li. Diffattack: Evasion attacks against diffusion-based
+adversarial purification. Advances in Neural Information Processing Systems, 36, 2024.
+[26] Andre Kassis, Urs Hengartner, and Yaoliang Yu. Diffbreak: Is diffusion-based purification
+robust? arXiv preprint arXiv:2411.16598, 2024.
+[27] Bumsu Kim, Daniel McKenzie, HanQin Cai, and Wotao Yin. Curvature-aware derivative-free
+optimization. Journal of Scientific Computing, 103(43):1-28, 2025.
+[28] Peter E Kloeden, Eckhard Platen, Peter E Kloeden, and Eckhard Platen. Stochastic differential
+equations. Springer, 1992.
+[29] Alex Krizhevsky, Geoffrey Hinton, et al. Learning multiple layers of features from tiny images.
+2009.
+[30] Alex Krizhevsky, Ilya Sutskever, and Geoffrey E Hinton. Imagenet classification with deep
+convolutional neural networks. In NeurIPS, 2012.
+[31] Minjong Lee and Dongwoo Kim. Robust evaluation of diffusion-based adversarial purification.
+arXiv preprint arXiv:2303.09051, 2023.
+[32] Xiao Li, Wenxuan Sun, Huanran Chen, Qiongxiu Li, Yining Liu, Yingzhe He, Jie Shi, and
+Xiaolin Hu. Adbm: Adversarial diffusion bridge model for reliable adversarial purification.
+arXiv preprint arXiv:2408.00315, 2024.
+[33] Xuechen Li, Ting-Kam Leonard Wong, Ricky TQ Chen, and David K Duvenaud. Scalable
+gradients and variational inference for stochastic differential equations. In Symposium on
+Advances in Approximate Bayesian Inference, pages 1-28. PMLR, 2020.
+[34] Yiming Liu, Kezhao Liu, Yao Xiao, Ziyi Dong, Xiaogang Xu, Pengxu Wei, and Liang Lin.
+Towards understanding the robustness of diffusion-based purification: A stochastic perspective.
+arXiv preprint arXiv:2404.14309, 2024.
+[35] Ze Liu, Yutong Lin, Yue Cao, Han Hu, Yixuan Wei, Zheng Zhang, Stephen Lin, and Baining
+Guo. Swin transformer: Hierarchical vision transformer using shifted windows. In Proceedings
+of the IEEE/CVF International Conference on Computer Vision, pages 10012-10022, 2021.
+[36] Aleksander Madry, Aleksandar Makelov, Ludwig Schmidt, Dimitris Tsipras, and Adrian Vladu.
+Towards deep learning models resistant to adversarial attacks. In International Conference on
+Learning Representations, 2018.
+[37] Weili Nie, Brandon Guo, Yujia Huang, Chaowei Xiao, Arash Vahdat, and Anima Anandkumar.
+Diffusion models for adversarial purification. arXiv preprint arXiv:2205.07460, 2022.
+[38] OpenAI. Gpt-4 technical report, 2024. URL 
+[39] Nicolas Papernot, Patrick McDaniel, Ian Goodfellow, Somesh Jha, Z. Berkay Celik, and
+Ananthram Swami. Practical black-box attacks against machine learning, 2017. URL https:
+//arxiv.org/abs/1602.02697.
+[40] Pouya Samangouei, Maya Kabkab, and Rama Chellappa. Defense-gan: Protecting classifiers
+against adversarial attacks using generative models. arXiv preprint arXiv:1805.06605, 2018.
+[41] Jiaming Song, Chenlin Meng, and Stefano Ermon. Denoising diffusion implicit models. arXiv
+preprint arXiv:2010.02502, 2020.
+[42] Yang Song, Sahaj Garg, Jiaxin Shi, and Stefano Ermon. Sliced score matching: A scalable
+approach to density and score estimation. In Uncertainty in Artificial Intelligence, pages
+574-584. PMLR, 2020.
+[43] Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and
+Ben Poole. Score-based generative modeling through stochastic differential equations. arXiv
+preprint arXiv:2011.13456, 2020.
+[44] Jiawei Su, Danilo Vasconcellos Vargas, and Kouichi Sakurai. One pixel attack for fooling deep
+neural networks. IEEE Transactions on Evolutionary Computation, 23(5):828-841, October
+2019. ISSN 1941-0026. doi: 10.1109/tevc.2019.2890858. URL 
+1109/TEVC.2019.2890858.
+[45] Christian Szegedy, Wojciech Zaremba, Ilya Sutskever, Joan Bruna, Dumitru Erhan, Ian Goodfel-
+low, and Rob Fergus. Intriguing properties of neural networks. arXiv preprint arXiv:1312.6199,
+2013.
+[46] Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timo-
+thée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, Aurelien Rodriguez,
+Armand Joulin, Edouard Grave, and Guillaume Lample. Llama: Open and efficient foundation
+language models. arXiv preprint arXiv:2302.13971, 2023.
+[47] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez,
+Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In NeurIPS, 2017.
+[48] Pascal Vincent. A connection between score matching and denoising autoencoders. Neural
+computation, 23(7):1661-1674, 2011.
+[49] Jianwen Xie, Yang Lu, Song-Chun Zhu, and Yingnian Wu. A theory of generative convnet.
+In Proceedings of the 33rd International Conference on Machine Learning, pages 2635-2644,
+2016.
+[50] Jongmin Yoon, Sung Ju Hwang, and Juho Lee. Adversarial purification with score-based
+generative models. arXiv preprint arXiv:2106.06041, 2021.
+[51] Sergey Zagoruyko and Nikos Komodakis. Wide residual networks. CoRR, abs/1605.07146,
+2016. URL 
+[52] Matthew D Zeiler and Rob Fergus. Visualizing and understanding convolutional networks,
+2013. URL 
+Supplementary Materials for
+Memory Efficient Full-gradient Attacks (MEFA)
+Framework for Adversarial Defense Evaluations
+A
+MEFA Framework - PGD
+We summarize the full gradient attack algorithm for MEFA Framework PGD with fixed step size
+used for adversarial attacks in Algorithm 1. The APGD attack with adaptive step size is based on the
+framework of autoattack [13] with the same hyperparameters. However, the gradient is on the graph
+during the backpropagation for a more precise calculation.
+Algorithm 1 MEFA-PGD Attack Algorithm
+1: Input: Natural images {x+
+m}M
+m=1, defense model T(x; θ), classifier f, lnorm radius ε, attack step size η
+2: Output: ˜x
+3: for 1 ≤i ≤M do
+4:
+select(xi, yi)from batch
+5:
+Randomly initialize adversary ˜x(0) inside ℓnorm ball around xi
+6:
+˜x(0) ←xi
+7:
+for 1 ≤j ≤N do
+8:
+L(˜x(j), yi) ←F(˜x(j)) = ET (˜x(j))[f(T(˜x(j)))]
+▷calculate loss and logits with (8)
+9:
+∇˜x(j) = ∇CKPT(˜x(j), yi)
+▷calculate attack gradient with Algorithm 2
+10:
+˜x(j+1) ←PGD(˜x(j) + η∇˜x(j)(L(˜x(j), yi))
+▷update the adversarial state with (9)
+11:
+end for
+12: end for
+B
+Gradient Checkpointing Algorithm for Adversarial Attack
+We summarize the gradient checkpointing Algorithm for Adversarial Defense in Algorithm 2:
+Algorithm 2 Gradient Checkpointing Algorithm (PyTorch-like Pseudo-codes)
+1: Input: defense model D, xi (i ∈[T]), ∂L
+∂x′
+0 , T:number of sampling steps, noise zi ∼N(0, I)
+2: Output:
+∂L
+∂x0
+3: Initialize hs ←list of zeros to store intermediate images
+4: Initialize zs ←list of zeros to store intermediate noises
+5: for t = T to 0 do
+▷forward pass for reverse sampling
+6:
+Detach_Device(D(xt, zt) →x′
+t−1)
+7: end for
+8: for k ∈[T] do
+▷backpropagation
+9:
+xt = hs[n −k −1], zt = zs[n −k −1]
+10:
+Create_GraphOnDevice(D(xt, zt) →xt−1)
+11:
+∂L
+∂xt ←auto_grad(xt−1, xt, ∂L
+∂x′
+0 )
+12:
+∂L
+∂x′
+0 ←∂L
+∂xt
+13: end for
+C
+Comparison Between Gradient Checkpointing and Segment-Wise
+Forwarding-Backwarding Algorithms
+Strong adaptive attacks require computing the full gradients of the defense system. Gradient computa-
+tion in deep neural networks, particularly for iterative generative models such as EBM and diffusion
+models, is often memory intensive due to the need to retain intermediate results on the graph for
+backpropagation. The segment-wise forward-backward algorithm from the DiffAttack Method [25]
+and our gradient checkpointing algorithm are based on the similar mechanisms. In the following, we
+provide a detailed comparison of the two methods.
+Both gradient checkpointing Algorithm 2 and segment-wise forwarding-backwarding algorithm [25]
+are designed to balance memory efficiency and computational overhead during gradient computation
+for generative model sampling process. While both recompute forward steps during backpropagation,
+they differ in their memory management strategies and the granularity of operations.
+Gradient checkpointing Algorithm 2 minimizes memory usage by detaching intermediate states
+during the forward pass. These detached states are later recomputed during the backward pass to
+create the necessary computational graph for gradient computation. This approach trades memory
+efficiency for increased computational overhead, as every intermediate state must be recomputed.
+Segment-wise forwarding-backwarding operates by breaking the computation into segments. During
+the backward pass, forward states are recomputed for each segment using the saved intermediate
+results. While this also involves recomputation, it limits the size of the computational graph during
+backpropagation by processing each segment independently, which can improve memory efficiency.
+It avoids explicitly applying the chain rule step-by-step through each noise level or intermediate state.
+Instead, it leverages recomputed gradients and deviated-reconstruction loss (mse+ce) at multiple
+layers as the surrogate loss to approximate the effect of the chain rule. It does not represent the true
+gradient in a strict mathematical sense.
+Segment-wise forwarding-backwarding [25] is not a full gradient attack, since the final gradients are
+approximated using deviated-reconstruction loss (mse+ce) making this a projection rather than a full
+backward pass for the DDPM-based defenses. For score SDE-based defenses, gradient is computed
+with single backward pass from a combined reconstructed loss (mse+ce) with all intermediate states
+and the adjoint method is used. The adjoint method uses scalable gradients with memory-efficient
+noise caching [33]. However, it is an approximation of the gradients and doesn’t allow the attack to
+backpropgate through the entire sampling chain. Our method directly uses the SDE solver termed
+sdeint [28] by gradient checkpointing to compute the gradients for PGD attack. See the specific code
+application comparison in Table 7 and Table 8.
+For score SDE-based defenses, an augmented SDE for calculating the gradient of an objective
+function L w.r.t. the input x′
+T of the SDE is given by
+∂L
+∂x′
+T
+= sdeint
+ ∂L
+∂x′
+, x′
+0, f, g, w, 0, T
+
+,
+(11)
+where ∂L
+∂x′
+0 is the gradient of the objective L with respect to the output x′
+0 of the SDE in Equation (4),
+and
+f([x; z], t) =
+ frev(x, t)
+∂frev(x,t)
+∂x
+z
+
+,
+g(t) =
+
+−grev(t)1d
+0d
+
+,
+w(t) =
+
+−w(1 −t)
+−w(1 −t)
+
+,
+with 1d and 0d representing the d-dimensional vectors of all ones and all zeros, respectively.
+D
+Experiment Details
+In our experiments, we use pre-trained score SDE-based diffusion model [43] on CIFAR-10 and
+ImageNet, DDPM-based diffusion model [41] and EBM-based model [23] on CIFAR-10 according
+to the defense methods from [37, 3, 23] for image purification. Both diffusion-based defenses use 100
+denoising steps. EBM-based defenses use 1500 sampling steps. Given the significant computational
+requirements, we randomly select a fixed subset of 510 images from the validation set to ensure
+fair comparisons across all experiments in robust evaluations to avoid data selection randomness
+on CIFAR-10 and 100 images on ImageNet. The proposed MEFA Framework PGD attack is
+implemented within the PGD [36] or AGPD framework [12], maintaining identical hyperparameters.
+Specifically, for both PGD and APGD, the number of attack iterations is set to 100 on CIFAR-10,
+Table 7: Score SDE-based Gradient Calculation: DiffAttack vs. MEFA Framework
+DiffAttack (Segment-wise Gradient)
+MEFA (Full Gradient Checkpointing)
+# DiffAttack
+Code: Approximate
+gradients
+with
+deviated -
+reconstruction
+loss
+logits , mid_x , ori_x = self.model(
+x_adv ,
+return_mid=True
+)
+loss_indiv = self.mse_loss(
+mid_x ,
+ori_x ,
+target_ind
+)
+if len(loss_indiv.shape) > 3:
+loss_indiv = loss_indiv.view(
+loss_indiv.shape [0],
+loss_indiv.shape [1],
+-1
+)
+loss_indiv = torch.mean(loss_indiv ,
+dim =-1)
+loss_indiv = torch.mean(loss_indiv ,
+dim =0)
+loss_indiv = loss_indiv.view(x.shape
+[0])
+loss_ce = criterion_indiv (logits , y)
+loss_indiv
++=
+loss_ce
+loss = torch.mean(loss_indiv)
+grad = torch.autograd.grad(
+loss ,
+[x_adv]
+)[0]. detach ()
+# ME
+framwork
+Code: Full
+gradient
+computation , input: CE loss
+net_grads = torch.autograd.grad(
+loss ,
+[ X_repeat_purified ]
+)[0]
+curr_t = curr_ts[n-i -1]. to(device)
+next_t = next_ts[n-i -1]. to(device)
+net_out = ys[n-i -1]
+curr_y = torch.autograd.Variable(
+net_out ,
+requires_grad =True
+).to(device)
+noi = noises[n-i -1]. to(device)
+prev_t , prev_y = curr_t , curr_y
+next_layer , curr_extra = self.step(
+curr_t ,
+next_t ,
+curr_y ,
+noi ,
+curr_extra
+)
+curr_t = next_t
+net_grads = torch.autograd.grad(
+next_layer ,
+[curr_y],
+grad_outputs =net_grads
+)[0]
+grad = net_grads.view(
+X_repeat_purified .shape
+)
+Key Technical Differences for Score SDE-based Defense:
+• Left:
+Approximates gradients through segmented forward/backward passes via adjoint method with deviated-
+reconstruction
+• Right: Computes exact gradients from CE loss via SDE solver gradient checkpointing with O(1) memory
+• Red lines: Core gradient computation steps
+and 50 on ImageNet, while the attack replicates for the gradient approximation EOT are fixed at 20.
+For PGD, the step size α is set to 2/255. For the APGD, the momentum coefficient α is set to 0.75,
+and the step size η is initialized as 2ε, where ε represents the maximum ℓ-norm of the perturbations.
+For adversarial attacks, we evaluate with ε = 8/255 for ℓ∞-norm, and ε = 0.5 for ℓ2-norm.
+For strong attacks such as ℓ∞(ε = 8/255 on CIFAR-10) in order to compare with existing results,
+we use PGD with Adaptive adversarial steps (APGD) according to autoattack [12]. For weaker
+attacks such as ℓ2 (ε = 0.5), we use PGD to explore stable adversarial examples. We save the first
+broken state, final and/or loss-optimized final adversarial state during the attack process so that
+the validation process could validate the outcomes. All results in the tables are validated using the
+validation process. We chose the final adversarial state for PGD attacks and the loss-optimized final
+misclassified adversarial state for APGD from autoattack [12] for the validation.
+We run our experiments on 4 workstations, each with 3 NVIDIA RTX A2000 GPUS with 12GB
+memory on CIFAR-10. EBM-based defense takes 4.5 days for ME PGD per experiment, while score
+SDE-based defense takes 9 days per experiment. We run our experiments on available Tesla V100
+GPUS with 32GB memory on ImageNet. Google Colab T4 GPU with 16GB of memory is used for
+demonstrating the memory and time cost.
+Table 8: DDPM-based Gradient Calculation: DiffAttack vs. MEFA Framework
+DiffAttack (Segment-wise Gradient)
+MEFA (Full Gradient Checkpointing)
+# DiffAttack
+Code: Gradient
+approximation , input: grad
+if self. total_noise_levels
+>= 1:
+# Forward
+diffusion
+process
+out = ori_x * self.a[self.
+total_noise_levels
+- 1]. sqrt
+()
++ self.e * (1.0 - self.a[
+self. total_noise_levels
+-
+1]).sqrt ()
+7
+# Gradient
+computation
+with
+weighted
+loss
+loss = torch.sum(out * grad)
+grad_new = torch.autograd.grad(
+loss ,
+[ori_x]
+)[0]. detach ()
+# MEFA
+Framework
+Code: Full
+gradient
+computation , input: net_grads
+net_out = x_diff_list [n - k - 1]
+net_out = torch.autograd.Variable(
+net_out ,
+requires_grad =True
+).to(model.device)
+noi_out = noi_diff_list [
+n - k - 1
+].to(model.device)
+t = torch.tensor(
+[n - k - 1] * shape [0],
+device=X.device
+)
+15
+# DDPM
+sampling
+forward
+process
+next_layer = scheduler.
+ddim_sample_grad (
+model ,
+net_out ,
+t,
+noi_out ,
+model_kwargs =model_kwargs ,
+eta=args.eta
+)
+next_layer_out = next_layer [" sample "]
+net_grads = torch.autograd.grad(
+next_layer_out ,
+[net_out],
+grad_outputs =net_grads
+)[0]
+Key Technical Differences for DDPM-based Defense:
+• Left: Approximates gradients at specific noise levels using deviated-reconstruction loss.
+• Right: Computes exact gradients from CE loss through full DDPM sampling chain with O(1) memory.
+• Red lines: Core gradient computation steps.
+Attack Steps
+The loss trajectory of one image example stabilizes after 20 attack steps, and fluctuations could
+be handled during the validation process (see Figure 4). The plot shows that the loss of the first
+broken states is much lower than the later stable states, thus inducing more volatility of the outcome
+evaluation.
+Defense Replicates Hd Statistical Analysis
+Figure 5 shows that 50 replicates are sufficient when the correct logit is well separated from the
+largest incorrect logit across repeated purification trials.
+Additionally, we design the experiment by purifying each adversarial image N trials using Hd of 1,
+20, 50, 100. Then, the p-value is calculated for the distributions of correct logits and 2nd choice logits
+(the highest incorrect logits) from the classifier. The percentage of images whose p-value < 0.0001 is
+plotted in Figure 6. N is set to 10 in this plot. Larger Hd have a higher percentage of images whose
+p-value < 0.0001, which indicates a more stable prediction after the purification.
+Figure 4: Loss trend stabilized at 20 attack steps. red line: PGD loss [36], green line: APGD loss from
+autoattack [12]. 0’s on the lines: wrong prediction. vertical dash lines: first broken state
+Figure 5: Defense replicates required analysis to stabilize prediction due to purification randomness. Histogram
+of correct logits and highest incorrect logits, with mean and standard deviation for the adversarial image with
+different Hd. Left: Hd = 1. Middle: Hd = 20. Right: Hd = 50.
+Non-zero Second Derivatives
+In the context of adversarial defense evaluation, we implement a rigorous approach to ensure that
+the gradient-checkpointing second-order derivatives align with those computed using the exact full
+gradients, within the constraints imposed by available memory. Specifically, we utilize smooth
+activation functions in our EBM, referred to as smooth EBM, which facilitates stable and accurate
+gradient computations. This choice is critical as it allows us to fairly evaluate the defense against the
+strong PGD attacks. The diffusion model utilizes the smooth activation function of SiLU. In the case
+of non-smooth activation functions such as Leaky ReLU, PGD and BPDA attacks will be equivalent
+due to the zero second-order derivative.
+E
+Additional comparison with other gradient approximation methods
+We have conducted the experiments with Diffpure Adjoint Method [37] and Surrogate Process[31] on
+CIFAR-10. In particular, we implemented our standalone validation process in their original pipelines
+to validate their attacks and defenses. The results are summarized in Table 9. In our validation
+pipeline, Diffpure Adjoint Attack has a high adversarial accuracy, showing its attack is actually
+not very strong, which may give a false sense of security for the associated defense method. Thus,
+Diffpure must be re-evaluated by a strong FULL gradient attack, which is what we have presented in
+Table 1 and stated the why it’s important for the evaluation in Section 3. On the other hand, Surrogate
+Process achieves much stronger (i.e., lower) adversarial accuracy than Diffpure Adjoint Method.
+However, it is still 8% weaker (i.e., higher) than our MEFA framework on the same images. Note
+that the Surrogate Process starts with a lower natural accuracy due to the surrogate denoising steps.
+Overall, MEFA’s attack reduces much more accuracy during the attack process, thus a much stronger
+attack. As stated in the paper, we emphasize that MEFA has the state-of-the-art attack success rate on
+CIFAR-10, i.e., the largest accuracy reduction during the attack process.
+For runtime, Diffpure Adjoint Method appears to be even slower than our MEFA framework. It
+takes 18 minutes per image, whereas Diffpure takes 23 minutes per image on the same hardware.
+We understand that the runtime of the Diffpure Adjoint Method can be slightly improved with a
+Figure 6: % of images with p-value<0.001% by Hdef = 1, 20, 50, 100
+larger batch size if memory allows; however, its runtime advantage will not be significant. Surrogate
+Attack takes about 4 minutes per image on the same hardware. We acknowledge Surrogate Attack’s
+speed advantage, yet we believe a stronger attack is important for defense evaluation, and the longer
+runtime of MEFA is worth the trade-off. Future accelerated full-gradient attacks may be inspired by
+MEFA and use it as a baseline.
+Table 9: Score SDE Defense against PGD+EOT20 attacks from WRN-28-10 on CIFAR-10.
+Defense
+Attack
+Nat. Accuracy (NA)
+Adv. Accuracy (AA)
+Defense Model
+Type
+Hd = 1
+Hd = 50
+Hd = 1
+Hd = 50
+Diffpure Adjoint Method (n∗=100)
+ℓ∞
+93.33%
+93.33%
+88.33%
+91.67%
+Surrogate Process (n∗=510)
+ℓ∞
+80.00%
+87.06%
+50.39%
+50.59%
+∗n=number of random sampled images
+F
+Smooth and Non-Smooth EBM
+The adaptive PGD attack is based on gradient update. [1] has pointed out the obfuscated gradients
+that cause false security. and proposed BPDA to circumvent the problem of exploding or vanishing
+gradients. However, the experiments show in Table 5 that BPDA does not solve this problem when
+the gradients become very small due to the many layers of the networks, even with LeakyRelu or
+SoftLeakyRelu shown in Table 10. EBM sampling evolves gradient update, and thus during the
+backpropagation, the LeakyRelu second-order derivative is 0. Thus, we use SoftLeakyRelu with
+non-zero second-order derivative for PGD attack. We see that SoftLeakyRelu has a more stable
+gradient update and resulted in a stronger PGD attack.
+Non-Smooth EBM with LeakyRelu
+Recall the LeakyRelu and its gradient:
+LeakyRelu(x) =
+x,
+if x > 0;
+0.05x,
+otherwise.
+∂
+∂xLeakyRelu(x) =
+1,
+if x > 0;
+0.05,
+otherwise.
+For negative inputs (x ≤0), the gradient is scaled by α, a small value (e.g., 0.05). In deep networks,
+gradients for early layers are computed via the chain rule:
+∂L
+∂wlayer1
+=
+∂L
+∂αlast
+·
+n
+Y
+i=2
+αi.
+(12)
+After n = 5 layers with LeakyRelu, the gradient decays exponentially approximately as 0.055 =
+3.125e−7.
+Smooth EBM with SoftLeakyRelu
+Recall SoftLeakyRelu:
+SoftLeakyRelu(x) = (1 −a)x
+|
+{z
+}
+linear term
++ a
+p
+x2 + e2
+|
+{z
+}
+smooth term
+−
+ae
+|{z}
+constant offset
+,
+where we take a = 0.49 (controls the "leakiness") and e = 0.01 (smoothing parameter). Thus, its
+gradient is:
+∂
+∂xSoftLeakyRelu(x) = 0.51 +
+0.49x
+√
+x2 + 0.0001
+.
+(13)
+For x ≫0, gradient approaches 1.0, for x ≪0, gradient approaches 0.02 and At x = 0, gradient is
+0.51.
+Table 10: EBM BPDA+EOT20 white-box attacks on CIFAR-10 with ℓ∞(ε = 8/255).
+Defense Model
+Attack Method
+NA
+AA
+Hd = 1
+Hd = 50
+Hd = 1
+Hd = 50
+Smooth EBM
+adaptive step size
+75.88%
+84.51%
+56.67%
+55.10%
+fixed stepsize
+75.88%
+84.51%
+44.14%
+49.80%
+Non-Smooth EBM
+adaptive step size
+70.00%
+81.12%
+55.29%
+53.50%
+fixed step size* with Hd = 150 [23]
+-
+84.12%
+-
+54.90%
+*results from the paper.

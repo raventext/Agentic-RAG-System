@@ -1,0 +1,1395 @@
+Multimodal Deep Generative Model for Semi-Supervised
+Learning under Class Imbalance
+Heegeon Yoona and Heeyoung Kima,+
+aDepartment of Industrial and Systems Engineering, Korea Advanced Institute of Science and
+Technology (KAIST), Daejeon, Republic of Korea
++Corresponding author, Email: heeyoungkim@kaist.ac.kr
+Abstract
+When modeling class-imbalanced data, it is crucial to address the imbalance, as
+models trained on such data tend to be biased towards the majority classes.
+This
+problem is amplified under partial supervision, where pseudo-labels for unlabeled data
+are predicted based on imbalanced labeled data, propagating the bias. While recent
+semi-supervised models address class imbalance, they typically assume single-modal
+input data. However, with the growing availability of multimodal data, it is essential
+to leverage complementary modalities. In this article, we propose a multimodal deep
+generative model for semi-supervised learning under class imbalance. Our approach
+uses separate encoders for each modality, sharing latent variables across modalities,
+and simplifies joint posterior computation with a product-of-experts method. To fur-
+ther address class imbalance, we replace typical Gaussian distributions with Student’s
+t-distributions for the prior, encoder, and decoder, better capturing the heavy-tailed
+latent distributions in imbalanced data. We derive a new objective function for train-
+ing the proposed model on both labeled and unlabeled data using γ-power divergence.
+arXiv:2605.06289v1 [stat.ML] 7 May 2026
+
+Empirical results on benchmark and real-world datasets demonstrate that our model
+outperforms baseline methods in generalization, achieving superior classification per-
+formance for partially labeled multimodal data with imbalanced class distributions.
+Keywords: Class-imbalanced learning, Deep generative models, γ-power divergence, Mul-
+timodal learning, Product-of-experts, Semi-supervised learning, Student’s t-distribution.
+Introduction
+Deep neural networks (DNNs) have demonstrated remarkable effectiveness across a wide
+range of applications owing to their powerful computational capacity (Kim et al., 2021;
+Kim and Kim, 2023; Yoon and Kim, 2024).
+As the volume of accessible data increases
+and input patterns become more intricate, DNNs have evolved to incorporate more complex
+structures and higher computational capabilities (Yoon and Kim, 2025; Koo et al., 2024).
+However, despite their impressive performance, DNNs are prone to overfitting when trained
+on datasets with class imbalance (Lee et al., 2021; Shu et al., 2019). Specifically, DNNs
+tend to favor majority classes in such scenarios, leading to poor generalization on minority
+classes (Lee et al., 2025; Park et al., 2024; Zhang et al., 2023b). This issue is exacerbated
+under partial supervision, where the pseudo-labels for unlabeled data-predicted based on
+a limited, class-imbalanced labeled dataset-further reinforce the imbalance during training
+(Lee and Kim, 2024; Kim et al., 2020). Real-world datasets often complicate this further
+by being only partially labeled, due to the impracticality of fully annotating large datasets,
+and by exhibiting imbalanced class distributions, where minority classes frequently contain
+crucial information (Yoon and Kim, 2023; Lee et al., 2023; Park et al., 2022; Ko and Kim,
+2019). Therefore, it is important to develop methods for robustly training DNNs on class-
+imbalanced data in semi-supervised learning settings, leveraging the abundance of unlabeled
+data while ensuring the preservation of crucial information from minority classes.
+In addition, real-world datasets are often multimodal, meaning they combine informa-
+tion from diverse sources in multiple formats (Chung and Kim, 2019; Choy et al., 2016).
+To effectively utilize such data, various multimodal learning methods have been developed,
+leveraging the complementary information inherent in different modalities to enhance per-
+formance (Cho et al., 2023; Han et al., 2022; Ko and Kim, 2022). Discriminative multimodal
+learning approaches focus on bridging modalities by combining them into a unified repre-
+sentation through various fusion techniques, ranging from simple concatenation of input
+features (Hong et al., 2020; Huang et al., 2021) to generating joint representations using
+neural network architectures (Li et al., 2021; Wang et al., 2021). In contrast, generative ap-
+proaches (Wu and Goodman, 2018, 2019; Shi et al., 2019) aim to model the joint distribution
+across modalities by exploring their latent representations, thereby capturing the semantic
+correlations between them.
+Although numerous studies have addressed either class imbalance or multimodality in
+data, few have tackled the challenging scenario where datasets are both class-imbalanced
+and multimodal, and none have assumed partial supervision. However, addressing the task
+of class-imbalanced and multimodal learning under semi-supervised settings remains an im-
+portant and unsolved problem across various domains. For example, in medical diagnosis,
+multiple types of data, such as X-ray images and patient meta-information (e.g., gender,
+age, and medical history), are often used to detect diseases. Simultaneously, the number of
+healthy patients typically far exceeds the number of infected ones, leading to class imbalance.
+Additionally, some patients may have their medical data collected but remain undiagnosed,
+meaning their infection status is unknown. This scenario highlights the need for solutions
+that can handle class imbalance and multimodality under partial supervision.
+One might consider using zero-shot multimodal foundation models (Radford et al., 2021;
+Li et al., 2022, 2023) for such tasks, given their impressive performance across a wide range
+of applications without task-specific training. However, these models are typically trained on
+large-scale, general-purpose datasets and often struggle to generalize to domain-specific tasks
+involving partial supervision and class imbalance. In addition, they tend to require substan-
+tial computational resources and offer limited interpretability. These limitations highlight
+the need for a more structured, data-efficient approach that explicitly models interactions
+among modalities, class labels, and latent factors under partial supervision.
+In this article, we propose a unified framework for semi-supervised learning with class-
+imbalanced multimodal data. Specifically, we introduce a novel method called the semi-
+supervised multimodal variational autoencoder for class-imbalanced learning (SSMVAE-CI),
+which models the joint distribution of multiple modalities under imbalanced class distribu-
+tions. Our approach builds on the semi-supervised variational autoencoder (VAE) framework
+(Kingma et al., 2014), which effectively utilizes unlabeled data by introducing latent variables
+for both observations and their corresponding labels. To accommodate multimodal data, we
+design modality-specific encoders that share a common latent space for each latent variable.
+This shared latent space unifies heterogeneous information across modalities, enabling better
+capture of inter-modal correlations. Additionally, to address class imbalance, we replace the
+commonly used Gaussian distribution with a Student’s t-distribution for each encoder. The
+heavy-tailed nature of the t-distribution enhances the model’s ability to effectively represent
+imbalanced class distributions.
+Our design of modality-specific encoders addresses the challenge of exponential growth
+in trainable parameters that arises with separate inference networks for each combination
+of modalities. We mathematically formulate the relationship between the joint posterior
+and the individual posteriors of the modalities using a product-of-experts (PoE) framework,
+inspired by the multimodal variational autoencoder (MVAE) (Wu and Goodman, 2018).
+Furthermore, our use of the Student’s t-distribution in each encoder addresses class imbalance
+by enhancing the flexibility of the latent space. Compared to the Gaussian, the t-distribution
+exhibits heavier tails, maintaining non-negligible density in sparse regions of the latent space
+where minority-class samples typically reside due to their scarcity. This reduces the risk of
+over-regularizing these samples during variational inference, allowing the encoder to preserve
+semantically meaningful but underrepresented patterns. Prior work such as t3VAE (Kim
+et al., 2023) has explored the use of Student’s t-distributions in VAEs to enhance robustness,
+providing inspiration for our heavy-tailed posterior design. However, t3VAE is restricted to
+unimodal and unsupervised settings. A similar motivation underlies the tilted VAE proposed
+by Floto et al. (2023), which modifies the Gaussian prior to allocate more probability mass to
+the tails, thereby better supporting latent encodings that fall in low-density regions. While
+their approach is not specifically designed to address class imbalance, it shares the underlying
+goal of improving representation quality for samples that deviate from high-density regions.
+In our case, the t-distribution achieves a similar effect through its inherent heavy-tailed
+nature, enabling more faithful posterior representations for minority-class samples in class-
+imbalanced scenarios.
+Unlike MVAE, which assumes only continuous latent variables in an unsupervised set-
+ting, and t3VAE, which is limited to unimodal and unsupervised scenarios, our approach
+introduces discrete latent class variables and a multimodal extension of the Student’s t-
+distribution. This enables joint modeling of continuous and discrete latent variables across
+multiple modalities under partial supervision. By integrating these elements via a PoE in-
+ference mechanism, our framework resolves incompatibilities in supervision levels, latent
+variable types, and modality handling, rather than simply combining existing methods.
+This unified probabilistic formulation ensures theoretical consistency for semi-supervised
+multimodal learning while maintaining robustness to class imbalance, allowing the model
+to capture complex relationships that neither MVAE nor t3VAE can address individually.
+Although our formulation does not offer formal convergence or generalization guarantees,
+deriving such theoretical results remains challenging given the heterogeneous probabilistic
+components. Instead, we provide extensive empirical validation across diverse datasets and
+evaluation settings, demonstrating consistently strong performance and suggesting that the
+model generalizes well in practice.
+To facilitate end-to-end optimization of the encoder and decoder parameters, we derive a
+new objective function for both labeled and unlabeled data points. This is achieved by solving
+for a closed-form expression of the γ-power divergence between two joint distributions-one
+representing the model distribution manifold and the other representing the data distribution
+manifold--over the observed variable, continuous latent variable, and latent class variable.
+This divergence-based formulation ensures both robustness and expressiveness in the learned
+representations, particularly in partially labeled, class-imbalanced, and multimodal settings.
+Our contributions are summarized as follows:
+(i) We propose the first generative model that jointly tackles semi-supervision, multimodal-
+ity, and class imbalance within a unified framework. These three challenges are typically ad-
+dressed separately due to differences in modeling requirements (e.g., label handling, modality
+fusion, distributional assumptions), and our model is carefully designed to reconcile these
+differences in a principled manner.
+(ii) We develop a PoE inference mechanism that supports both continuous and discrete la-
+tent variables across modalities, enabling flexible and scalable multimodal modeling.
+(iii) We generalize the use of the Student’s t-distribution to the multimodal setting, enhanc-
+ing robustness to class imbalance and improving tail-class modeling through heavy-tailed
+posterior approximations.
+(iv) We derive a new training objective based on γ-power divergence, which ensures stable
+and expressive learning from both labeled and unlabeled data under imbalanced class distri-
+butions.
+(v) We conduct extensive experiments on multiple datasets, demonstrating that our ap-
+proach consistently outperforms baseline methods in semi-supervised, multimodal, and class-
+imbalanced settings.
+The remainder of this paper is organized as follows. Section 2 reviews related work.
+Section 3 provides a brief overview of deep generative models and their extensions to semi-
+supervised learning, multimodal learning, and class-imbalanced learning. In Section 4, we
+detail the proposed model and its inference process. Section 5 presents experimental results
+on benchmark and real-world datasets. Finally, Section 6 concludes the paper.
+Related Work
+2.1
+Semi-Supervised Learning
+Recent methods in semi-supervised learning (SSL) are mostly based on consistency regu-
+larization (Laine and Aila, 2017; Tarvainen and Valpola, 2017; Miyato et al., 2018), which
+encourages models to produce consistent class distributions for an unlabeled example and
+its augmented version. Another prominent approach is pseudo-labeling (Lee et al., 2013a),
+where pseudo-labels are generated for unlabeled samples and used for model prediction.
+Holistic methods (Berthelot et al., 2019, 2020; Sohn et al., 2020) further improve these tech-
+niques by combining multiple strategies.
+In contrast to these discriminative approaches,
+generative methods focus on learning the data distribution to produce predictions. Typ-
+ical examples include models based on VAEs (Kingma et al., 2014; Louizos et al., 2016;
+Ehsan Abbasnejad et al., 2017; Davidson et al., 2018; Feng et al., 2021) and generative ad-
+versarial networks (GANs) (Odena, 2016; Liu et al., 2020). This paper mainly focuses on
+VAE-based generative models, specifically the semi-supervised VAE, which supports scalable
+inference and data generation. By encoding input data into a lower dimensional latent repre-
+sentation, this approach enables efficient modeling of large-scale, high-dimensional datasets,
+where dimensionality reduction is essential (Soh et al., 2018; Lee et al., 2013b).
+2.2
+Class-Imbalanced Learning
+Two common approaches for class-imbalanced learning are re-sampling (Chawla et al., 2002;
+Liu et al., 2008; He and Garcia, 2009; Byrd and Lipton, 2019) and re-weighting (Wang
+et al., 2017b; Ross and Doll´ar, 2017; Khan et al., 2017; Ren et al., 2018; Hu et al., 2019;
+Cui et al., 2019; Cao et al., 2019).
+Re-sampling methods balance class distributions by
+under-sampling the majority class or over-sampling the minority class, while re-weighting
+methods adjusts loss functions by assigning greater weights to minority samples. Generative
+oversampling (Wan et al., 2017; Zhang et al., 2018; Mullick et al., 2019; Wang et al., 2020;
+Ai et al., 2023) extends re-sampling methods by generating synthetic samples from learned
+data distributions, improving scalability. Other generative approaches (Takahashi et al.,
+2018; Abiri and Ohlsson, 2020; Mathieu et al., 2019; Kim et al., 2023) incorporate Student’s
+t-distributions, leveraging its heavy-tailed properties. This paper focuses on employing the
+t-distribution to define the generative model in a semi-supervised VAE designed for SSL to
+better capture the heavy-tailed nature of class-imbalanced data.
+2.3
+Multimodal Learning
+Typical multimodal learning models utilize multimodal fusion techniques to integrate infor-
+mation from different modalities. These fusion techniques are categorized into early fusion
+(Poria et al., 2015, 2016; Wang et al., 2017a), intermediate fusion (Zadeh et al., 2017; Liu
+et al., 2018; Hou et al., 2019; Han et al., 2022), and late fusion (Nojavanasghari et al., 2016;
+W¨ortwein and Scherer, 2017; Tian et al., 2020), based on the stage at which the fusion
+occurs. Dynamic fusion (Xue and Marculescu, 2023; Zhang et al., 2023a; Cao et al., 2024)
+introduces instance-dependent weights for output aggregation, enabling modality-level dy-
+namics and enhancing the interpretability of late fusion methods. Meanwhile, generative
+approaches (Wu and Goodman, 2018, 2019; Shi et al., 2019; Lee and Pavlovic, 2021) employ
+the VAE framework to model joint distributions across modalities, offering fast and scalable
+inference. The proposed model distinguishes itself from these generative approaches by in-
+corporating a latent class variable to account for the semi-supervised nature of the input data
+and employing heavy-tailed distributions in the latent space to better represent imbalanced
+datasets.
+Background
+3.1
+Deep Generative Models for Semi-Supervised Learning and
+Multimodal Learning
+The semi-supervised VAE (Kingma et al., 2014) and the MVAE (Wu and Goodman, 2018)
+extend the VAE (Kingma and Welling, 2013) for semi-supervised and multimodal learning,
+respectively. The semi-supervised VAE introduces a discrete class variable y, latent only
+for unlabeled data, while the MVAE models M modalities x1, ..., xM, assumed conditionally
+independent given a shared latent variable z. Both models share the prior p(z) = N(z|0, I),
+but differ in their likelihood functions: the semi-supervised VAE conditions its likelihood on
+y with p(y) = Cat(y|π), where Cat(y|π) is a multinomial distribution, while the MVAE’s
+likelihood factors across modalities as
+pθ(x1, ..., xM|z) =
+M
+Y
+m=1
+pθ(xm|z).
+(1)
+Inference models qϕ(·) approximate the posterior for both models. The semi-supervised
+VAE assumes a factorized form qϕ(y, z|x) = qϕ(z|x, y)qϕ(y|x), while the MVAE employs a
+PoE approach that uses the relation p(z|x1, ..., xM) ∝
+QM
+m=1 p(z|xm)
+QM−1
+m=1 p(z)
+to approximate the joint
+posterior qϕ(z|x1, ..., xM), reducing the need for 2M inference networks:
+qϕ(z|x1, ..., xM) ≈
+QM
+m=1 qϕ(z|xm)
+QM−1
+m=1 p(z)
+≡
+QM
+m=1[˜qϕ(z|xm)p(z)]
+QM−1
+m=1 p(z)
+= p(z)
+M
+Y
+m=1
+˜qϕ(z|xm),
+(2)
+where qϕ(z|xm) ≡˜qϕ(z|xm)p(z) with ˜qϕ(z|xm) being the underlying inference network.
+Using the inference models, the evidence lower bounds (ELBOs) on the marginal likeli-
+hood are derived for both models. For the semi-supervised VAE, the ELBOs are computed
+separately for labeled and unlabeled data: for labeled data, the ELBO extends that of the
+original VAE by including the observed class variable y, while for unlabeled data, y is treated
+as latent. In the MVAE, the ELBO generalizes the original VAE by replacing the single-
+modality input x with M modalities x1, ..., xM. For further details, see Kingma et al. (2014)
+and Wu and Goodman (2018).
+3.2
+VAE Framework for Heavy-tailed Data
+To model the heavy-tailed nature of real-world datasets, the t3VAE (Kim et al., 2023) ex-
+tends the VAE framework by incorporating Student’s t-distributions. The generative process
+assumes a latent variable z ∈Rnz for observed data x ∈Rnx with:
+pν(z) = tnz(z|0, I, ν),
+pθ,ν(x|z) = tnx
+
+x
+µθ(z), 1 + ν−1∥z∥2
+1 + ν−1nz
+σ2I, ν + nz
+
+,
+(3)
+where ν > 2 denotes the degrees of freedom. The corresponding inference model is qϕ,ν(z|x) =
+tnz(z|µϕ(x), (1+ν−1nx)−1Σϕ(x), ν+nx), which is derived from the true posterior distribution
+for the case where the mean µθ(z) of the likelihood pθ,ν(x|z) is linear.
+To optimize the model, the t3VAE employs the γ-loss, derived from the γ-power diver-
+gence, suitable for power-family distributions. The closed-form γ-loss is given by
+Jγ(θ, ϕ) = 1
+2Ex∼pdata
+ 1
+σ2Ez∼qϕ,ν(·|x)∥x −µθ(z)∥2
++ ∥µϕ(x)∥2 +
+ν
+ν + nx −2trΣϕ(x) −νC1
+C2
+|Σϕ(x)|−
+γ
+2(1+γ)
+
+,
+(4)
+where C1 and C2 are constants dependent on ν, nz, and nx. For further details on the t3VAE,
+see Kim et al. (2023).
+Methodology
+In this section, we propose a new deep generative model for semi-supervised learning with
+class-imbalanced multimodal data. In Section 4.1, we present the problem scenario, followed
+by a description of the proposed model in Section 4.2 and its inference process in Section
+4.3.
+4.1
+Problem Scenario
+Our training dataset consists of both labeled and unlabeled data from multiple modalities.
+The labeled dataset is given as DL = {({x1
+1, ..., xM
+1 }, y1), ..., ({x1
+L, ..., xM
+L }, yL)}, where xm
+i
+represents the ith instance of the mth modality, and yi ∈{1, ..., K} denotes the corresponding
+label. The unlabeled dataset is denoted as DU = {{x1
+L+1, ..., xM
+L+1}, ..., {x1
+L+U, ..., xM
+L+U}}. In
+total, the dataset contains L + U samples, where class k has Lk labeled samples, such
+that L = PK
+k=1 Lk. We assume an imbalanced class distribution, where class sizes differ
+significantly. If classes are sorted by size in descending order (Li ≥Lj for i < j), the largest
+class (L1) dominates the smallest class (LK), with the imbalance ratio defined as r = L1/LK.
+The goal of our model is to predict the class label y of an unseen instance {x1, ..., xM} using
+both DL and DU.
+4.2
+Proposed Model
+We propose SSMVAE-CI, a novel multimodal deep generative model for semi-supervised
+learning with imbalanced class distributions.
+We assume that each data point comprises M modalities x1, . . . , xM, which share a
+common latent variable z and a class variable y. For unlabeled data, y is treated as a latent
+variable. Additionally, we assume that the M modalities are conditionally independent given
+z. Under this assumption, we extend the generative process of the semi-supervised VAE to
+incorporate M modalities. Specifically, the conditional independence assumption allows the
+joint likelihood to be expressed as a product of individual likelihoods, such that Equation
+(1) becomes:
+pθ(x1, ..., xM|y, z) =
+M
+Y
+m=1
+pθ(xm|y, z),
+(5)
+where each individual likelihood pθ(xm|y, z) = f(xm; y, z, θ) is modeled by a neural network
+with parameters θ.
+The generative process of SSMVAE-CI consists of a prior for the class variable y, a
+prior for the latent variable z, and the joint likelihood conditioned on these two variables.
+To address class imbalance in the training data, the prior for z is assumed to follow a t-
+distribution, instead of a typical Gaussian distribution, with mean 0, scale matrix I, and
+ν > 2 degrees of freedom, i.e., pν(z) = tnz(z|0, I, ν), where nz is the dimensionality of z.
+The joint likelihood is expressed as a product of individual likelihoods, as in Equation (5).
+Each individual likelihood, pθ,ν(xm|y, z) = f(xm; y, z, θ, ν), for modalities m = 1, ..., M, is
+also modeled as a t-distribution and is parameterized by a neural network.
+4.3
+Inference
+To address the intractability of the latent variables y and z in SSMVAE-CI, we approximate
+the true joint posterior p(y, z|x1, ..., xM) by introducing an approximate posterior distribu-
+tion qϕ(·), parameterized by ϕ as an inference model, inspired by the semi-supervised VAE.
+We further assume a factorized form for the approximate posterior: qϕ(y, z|x1, ..., xM) =
+qϕ(y|x1, ..., xM)qϕ(z|x1, ..., xM, y), where qϕ(y|x1, ..., xM) is modeled using a multinomial dis-
+tribution, and qϕ(z|x1, ..., xM, y) is modeled using a t-distribution. To reduce the number
+of inference networks required for modeling qϕ(z|x1, ..., xM, y), we employ a PoE framework
+with a prior expert (Wu and Goodman, 2018). This allows us to express the approximate
+joint posterior as the product of the approximate posteriors for individual modalities. Specif-
+ically, the approximate joint posterior can be factorized as follows:
+qϕ(y, z|x1, ..., xM)
+=
+qϕ(y|x1, ..., xM)qϕ(z|x1, ..., xM, y)
+=
+qϕ(y|x1, ..., xM)p(z)
+M
+Y
+m=1
+qϕ(z|xm, y),
+(6)
+where the individual posterior qϕ(z|xm, y) is modeled as a t-distribution, i.e., qϕ,ν(z|xm, y) =
+tnz(z|µϕ(xm, y), ˜Σϕ(xm, y), ν + nxm + K), where µϕ(xm, y) and ˜Σϕ(xm, y) = (1 + ν−1(nxm +
+K))−1Σϕ(xm, y) denote the mean and the scale matrix of the t-distribution, respectively,
+with nxm being the dimensionality of xm.
+To update the parameters θ and ϕ of SSMVAE-CI, we construct an objective function
+using the γ-power divergence (Kim et al., 2023). In developing this objective function, we
+separately consider two cases: one for labeled data points and another for unlabeled data
+points, following the approach of the semi-supervised VAE. In the first case, where the label
+of a data point is observed, the objective function for a single modality m ∈{1, ..., M} is an
+extension of the original γ-loss function in Equation (4), incorporating the class variable y:
+Lm
+γ (θ, ϕ) = 1
+2E(xm,y)∼DL
+ 1
+σ2Ez∼qϕ,ν(·|xm,y)∥xm −µθ(y, z)∥2
++ ∥µϕ(xm, y)∥2 +
+ν
+ν + nxm + K −2trΣϕ(xm, y) −νC′
+C′
+|Σϕ(xm, y)|−
+γ
+2(1+γ)
+
+,
+(7)
+where γ is related to ν as γ = −
+ν+nxm+K+nz, and C′
+1 and C′
+2 are constants dependent on
+ν, nz, nxm, and K. Since there are M such objective functions, one for each modality, the
+overall objective function across all M modalities is given by Lγ(θ, ϕ) = PM
+m=1 Lm
+γ (θ, ϕ).
+This summation is justified by the fact that both the joint likelihood in Equation (5) and
+the joint posterior in Equation (6) can be decomposed into M distinct components.
+In the second case, where the label is missing, it is treated as a latent variable, and the
+objective function for a data point with an unobserved label y is given by:
+Uγ(x1, ..., xM; θ, ϕ) = Ez∼qϕ,ν(·|x1,...,xM,y)
+y∼qϕ(·|x1,...,xM)
+ 1
+2σ2∥(x1, ..., xM) −µθ(y, z)∥2
+
++ Dγ(qϕ,ν(y, z|x1, ..., xM)||p(y, z))
+=
+X
+y
+qϕ(y|x1, ..., xM)Lγ(x1, ..., xM, y; θ, ϕ) + C′
+1H(qϕ(y|x1, ..., xM)),
+(8)
+where C′
+1 is the same constant as in Equation (7), and H denotes the entropy. The derivation
+of this objective function is motivated by the structure of Equation (7), which consists of the
+reconstruction error (described by the first term in the bracket) and the regularizer for the
+encoder qϕ,ν(z|xm, y), represented by the remaining terms. A full derivation of the objective
+function in Equation (8) is provided in the supplementary materials.
+This divergence-based formulation can be intuitively understood as redefining the geo-
+metric relationship between the model and data manifolds. Unlike the KL divergence, which
+enforces strict overlap, the γ-power divergence introduces a controllable robustness parame-
+ter that allows smoother alignment between the two, reducing sensitivity to outliers and class
+imbalance. For labeled data, this objective coincides with the γ-loss of t3VAE, except that
+we additionally condition on the class variable y. For unlabeled data, however, our approach
+differs fundamentally from t3VAE: by treating y as a latent variable and marginalizing it
+out through the γ-divergence, we derive a tractable lower bound analogous to the ELBO,
+enabling consistent optimization in the absence of labels. This unified treatment extends
+the γ-divergence framework of t3VAE-originally limited to unimodal and fully unsupervised
+settings-into a semi-supervised, multimodal framework that preserves its inherent robust-
+ness to class imbalance while enabling flexible learning across modalities and supervision
+levels.
+Finally, a classification loss is added to encourage the label predictive distribution qϕ(y|x1, ..., xM)
+to learn effectively from the labeled data. Incorporating this classification loss, the overall
+objective function becomes:
+Joverall = Lγ(θ, ϕ) +
+X
+(x1,...,xM)∼DU
+Uγ(x1, ..., xM; θ, ϕ) −α · EDL
+
+log qϕ(y|x1, ..., xM)
+
+,
+(9)
+where α controls the contribution of the discriminative learning from the label predictive
+distribution qϕ(y|x1, ..., xM) during the training process.
+Following the semi-supervised VAE framework (Kingma et al., 2014), the hyperparam-
+eter α in Equation (9) controls the balance between the generative term, which promotes
+coherent latent representations, and the discriminative term, which enhances classification
+performance. Smaller α values favor generative learning, whereas larger values emphasize
+discriminative learning. In our experiments, we found that using a moderately larger value
+(α = 10×N, where N = L+U) yielded slightly smoother and more stable convergence under
+class imbalance, while overall performance remained consistent across different α settings.
+This suggests that the model is not overly sensitive to α, and that stronger discriminative
+weighting can help stabilize training in more complex, imbalanced scenarios. Other hyper-
+parameters, such as the latent dimensionality nz and the degrees of freedom ν, were set to
+the values commonly used in prior VAE and t3VAE studies, which also produced stable and
+reliable results in our experiments.
+The reparameterization trick for backpropagation of gradients through stochastic nodes
+must be adapted to enable sampling z(i,1), ..., z(i,L) from the approximate posterior distri-
+bution qϕ,ν(z|xm, y) for each data pair (xm
+(i), y(i)). Inspired by the t-reparameterization trick
+(Kim et al., 2023), which generates samples from a multivariate t-distribution T ∼td(µ, Σ, ν)
+using an affine transformation of a multivariate centered Gaussian Z ∼Nd(0, Σ) and an inde-
+pendent chi-squared variable V ∼χ2(ν) via the relation T
+d= µ+
+Z
+√
+V/ν, we derive a modified
+t-reparameterization trick tailored for SSMVAE-CI. The trick is formulated as follows:
+z(i,l)
+=
+µϕ(xm
+(i), y(i)) +
+p
+δ(i,l)/(ν + nxm + K)
+σϕ(xm
+(i), y(i))
+p
+1 + ν−1(nxm + K)
+⊙ϵ(i,l)
+=
+µϕ(xm
+(i), y(i)) +
+r ν
+δ(i,l)
+σϕ(xm
+(i), y(i)) ⊙ϵ(i,l),
+(10)
+where ϵ(i,l) ∼Nnz(0, I) and δ(i,l) ∼χ2(ν + nxm + K) are drawn independently.
+Compared with standard Gaussian reparameterization, this t-based formulation not only
+enables low-variance gradient estimation but also preserves the heavy-tailed nature of the
+latent distribution. The resulting latent space allocates non-negligible probability mass to
+sparse or minority-class regions, preventing such samples from being over-regularized toward
+high-density areas. While t3VAE employs the same idea only for continuous latent variables
+in a unimodal, unsupervised setting, our model extends the reparameterization to jointly
+accommodate both continuous and discrete latent variables across multiple modalities. This
+allows the model to maintain robustness and generalization under partial supervision, par-
+ticularly in the presence of class imbalance.
+Experiments
+In this section, we evaluate the effectiveness of our method through experiments on mul-
+tiple multimodal datasets from various application domains. We begin by describing the
+experimental setup, including the datasets, performance metrics, baseline methods, and im-
+plementation details. We then present and discuss the results.
+5.1
+Experimental Setup
+Datasets. In the first experiment, we used a combination of two benchmark image datasets:
+the Modified National Institute of Standards and Technology (MNIST) dataset and the
+Street View House Numbers (SVHN) dataset. The MNIST dataset comprises 60,000 training
+and 10,000 test images of handwritten digits across 10 classes, while the SVHN dataset
+contains 73,257 training and 26,032 test images of house numbers, also across 10 classes. To
+create a multimodal dataset, we selected an equal number of images from each dataset for
+every class and paired one MNIST image with one SVHN image per label.
+In the second experiment, we employed the University Pierre and Marie Curie (UPMC)
+Food-101 dataset-a real-world multimodal dataset containing food images and correspond-
+ing textual recipe descriptions across 101 categories. Each class consists of 1,000 samples,
+with 750 training samples and 250 manually reviewed test samples.
+Lastly, we used the Carnegie Mellon University Multimodal Opinion Sentiment and Emo-
+tion Intensity (CMU-MOSEI) dataset-a real-world multimodal dataset consisting of over
+23,500 sentence-utterance video clips from more than 1,000 speakers across 250 topics. Unlike
+the previous datasets, which involve two modalities, CMU-MOSEI includes three modalities:
+visual, audio, and textual.
+For each dataset, we conducted extensive experiments with various imbalance ratios r
+and different proportions of labeled data, denoted by β = L/(L + U). Specifically, for the
+MNIST-SVHN and CMU-MOSEI datasets, we set β to 10% and 30%. For the MNIST-
+SVHN and UPMC Food-101 datasets, we varied the class imbalance ratio r from 10 to
+100 to evaluate the robustness of our method under different levels of class imbalance. To
+create imbalanced datasets, we followed the procedure described in Cao et al. (2019) for
+generating imbalanced versions of the Canadian Institute for Advanced Research (CIFAR)-
+10 and CIFAR-100 datasets, where class sample sizes follow an exponential decay pattern.
+Across all datasets, we assumed that the class imbalance ratio of labeled data matched that
+of the unlabeled data and adjusted the number of unlabeled samples per class accordingly.
+Evaluation metrics.
+To evaluate the performance of our model, we used two per-
+formance measures: overall classification accuracy and minority-class accuracy.
+Overall
+accuracy measures the proportion of correct predictions across the entire dataset, while
+minority-class accuracy measures the ratio of correct predictions only across the minority
+classes. Specifically, minority-class accuracy is computed as the average per-class accuracy
+over the half of the classes with the fewest training samples. This metric highlights the
+model’s robustness under class imbalance.
+Overall accuracy is computed as the ratio of
+correct predictions (true positives and true negatives) to the total number of samples.
+Baselines.
+Since no existing methods simultaneously address multimodality, partial
+supervision, and class imbalance, we selected a diverse set of baseline approaches, each tar-
+geting a subset of these challenges. To enable fair comparisons, we additionally constructed
+composite baselines by combining existing class-imbalanced semi-supervised learning meth-
+ods with multimodal fusion strategies-specifically, early and late fusion-to handle all three
+aspects.
+We first considered methods developed for semi-supervised multimodal learning, which
+address both partial supervision and multimodality but do not explicitly handle class im-
+balance. These include: (i) Comprehensive Multi-Modal Learning (CMML) (Yang et al.,
+2019), which addresses modal insufficiency using an instance-level attention mechanism with
+diversity regularization and a robust consistency metric to preserve inter-modal diversity;
+and (ii) Semi-supervised Multimodal Learning Network (SMLN) (Hu et al., 2020), which
+captures modality correlations by constructing a similarity matrix using both labeled and
+unlabeled data and optimizing a loss function based on spectral decomposition.
+Next, we considered methods designed for class-imbalanced semi-supervised learning,
+which address class imbalance and partial supervision but assume unimodal inputs. These
+included: (i) Class Rebalancing Self-Training (CReST) (Wei et al., 2021), which iteratively
+retrains a base SSL algorithm by adaptively incorporating pseudo-labeled samples; and (ii)
+Adaptive Thresholding (Adsh) (Guo and Li, 2022), which dynamically adjusts the sampling
+of pseudo-labeled data based on class-dependent thresholds during training. To adapt these
+methods for multimodal scenarios, we applied early and late fusion strategies. In early fu-
+sion, raw features from all modalities are concatenated into a single input tensor, while in
+late fusion, predictions from individual modalities are aggregated. These composite ver-
+sions therefore address all three challenges-multimodality, partial supervision, and class
+imbalance-within a modular design.
+Finally, we included several methods that address only one of the three challenges, serv-
+ing as reference points for evaluating the benefit of joint modeling. These include: (i) Semi-
+supervised VAE (SSVAE) (Kingma et al., 2014), a generative model for semi-supervised
+learning that serves as the basis of our proposed framework; (ii) Label-Distribution-Aware
+Margin (LDAM) loss (Cao et al., 2019), a re-weighting method for class-imbalanced learn-
+ing that improves generalization through class-dependent margins; and (iii) Generative Ad-
+versarial Minority Oversampling (GAMO) (Mullick et al., 2019), a Generative Adversarial
+Network (GAN)-based oversampling framework for class-imbalanced learning that involves
+a three-player game among a convex generator, classifier, and discriminator. As with other
+baselines not originally designed for multimodal data, we adapted these models using both
+early and late fusion strategies, following the procedures described above. Notably, LDAM
+and GAMO are originally designed for fully supervised settings. As our objective in in-
+cluding these models was to assess the added value of leveraging unlabeled data-rather
+than directly compare classification accuracy-we trained them using only the labeled por-
+tion of the dataset. Furthermore, although MVAE and t3VAE are conceptually related to
+our framework, we did not include them as baselines because both are fundamentally un-
+supervised generative models. Adapting them for classification would require substantial
+modifications to their training objectives and inference procedures, making direct or fair
+comparison infeasible.
+Network structure and optimization. For our model, we employed a 64-dimensional
+latent variable z and used ReLU as the activation function.
+The encoder and decoder
+networks for both modalities were implemented as multi-layer perceptrons (MLPs) with two
+hidden layers, each comprising 512 hidden units. During training, the class variable y was
+concatenated with the instance x in the encoder networks to model the approximate posterior
+qϕ(z|x, y), and with the latent variable z in the decoder networks to model the likelihood
+pθ(x|y, z). The initial weight parameters were randomly sampled from N(0, 0.0012I), while
+the initial bias parameters were set to 0. The objective function for the proposed model
+was optimized using the Adam with a batch size of 100, decay parameters for the first and
+second moments of the gradients (β1, β2) = (0.9, 0.999) and a learning rate of 10−4.
+5.2
+Results on MNIST-SVHN Dataset
+We repeated the experiment 10 times for each scenario; for each experiment, we randomly
+selected the required number of labeled and unlabeled images per class without replacement,
+ensuring the specified imbalance ratio was maintained. The classification accuracies, along
+with standard errors, are presented in Table 1.
+The table demonstrates the superior performance of the proposed model across both
+overall accuracy and minority-class accuracy, with performance gains becoming more pro-
+nounced at higher imbalance ratios. In particular, SSMVAE-CI consistently outperformed
+CReST and Adsh-regardless of whether early or late fusion was applied-highlighting the
+benefit of natively modeling multiple data modalities rather than relying on external mul-
+timodal fusion strategies. While CMML and SMLN showed competitive results at lower
+imbalance levels, their performance, particularly on minority classes, degraded significantly
+as the imbalance ratio increases due to their lack of class-imbalance handling. Interestingly,
+even the baseline SSVAE, which was designed only for semi-supervised learning, achieved the
+second-best performance in terms of both overall and minority-class accuracy when β = 10%.
+This suggests that generative models may generalize better than discriminative models in
+imbalanced training scenarios, especially under limited supervision.
+Table 1: Overall accuracies/minority-class accuracies for the MNIST-SVHN dataset.
+Model
+β(%)
+r = 10
+r = 20
+r = 50
+r = 100
+CMML
+86.16±0.06/80.08±0.13
+80.26±0.22/62.94±0.56
+73.62±0.49/51.62±0.55
+64.99±0.50/41.80±0.93
+89.68±0.44/87.13±0.71
+84.56±0.33/72.20±0.73
+81.51±0.20/65.90±0.42
+69.37±0.60/51.17±0.44
+SMLN
+85.64±0.37/78.94±0.55
+80.51±0.43/60.84±0.73
+68.13±0.59/46.34±0.88
+61.61±1.74/39.34±1.21
+87.25±0.93/81.60±1.08
+81.02±0.69/68.76±0.90
+74.05±1.51/59.76±1.97
+63.78±0.61/43.26±0.72
+SSVAE
++ Early fusion
+89.36±0.31/84.30±0.70
+85.54±0.35/77.81±0.71
+78.82±0.73/64.59±1.70
+71.14±1.24/53.58±1.69
+91.57±0.39/86.88±0.62
+88.45±1.41/81.84±2.21
+83.40±0.90/72.51±1.57
+74.55±0.99/56.49±2.21
++ Late fusion
+75.63±0.32/67.52±0.53
+71.62±1.19/60.30±0.97
+66.04±0.62/50.29±1.31
+60.50±0.59/40.49±1.26
+80.54±0.71/74.09±1.48
+77.30±1.05/67.99±1.76
+72.80±1.08/59.57±1.18
+69.02±0.93/53.13±1.75
+GAMO
++ Early fusion
+82.30±0.99/73.13±1.70
+78.55±0.45/62.55±0.90
+71.64±0.54/50.45±1.50
+64.63±0.41/36.13±0.93
+86.30±1.08/79.41±1.98
+83.92±1.11/74.40±2.58
+79.27±1.09/64.40±2.41
+73.33±1.17/52.60±1.84
++ Late fusion
+66.66±0.82/54.45±1.46
+60.81±0.67/43.59±0.81
+57.31±0.32/36.82±0.53
+52.45±0.52/28.58±1.06
+70.18±0.71/60.88±1.45
+67.71±0.74/55.03±1.27
+64.61±0.74/48.31±0.69
+61.90±1.18/43.61±1.85
+LDAM
++ Early fusion
+83.45±0.86/74.70±1.71
+79.90±0.93/68.47±1.80
+73.51±0.77/54.72±2.01
+66.47±0.93/44.56±3.06
+89.10±1.02/82.81±2.34
+87.02±0.67/80.39±3.02
+80.49±0.37/68.17±2.20
+74.40±0.84/56.68±0.83
++ Late fusion
+73.28±0.79/66.18±0.49
+69.84±0.62/60.14±1.55
+61.24±1.12/44.32±2.43
+57.61±1.27/41.02±1.18
+79.94±0.63/74.89±1.27
+76.78±1.15/69.54±1.94
+71.72±1.98/61.35±2.79
+68.03±1.71/54.57±2.97
+CReST
++ Early fusion
+85.45±0.08/81.09±0.19
+82.76±0.20/76.38±0.30
+75.71±0.21/61.83±0.37
+67.07±0.17/48.28±0.51
+90.49±0.11/86.15±0.23
+87.74±0.20/81.27±0.38
+83.01±0.19/72.54±0.43
+75.50±0.28/58.62±0.57
++ Late fusion
+72.10±0.09/65.63±0.18
+69.77±0.12/60.80±0.30
+64.28±0.21/50.29±0.30
+60.77±0.15/43.92±0.29
+80.59±0.11/74.97±0.20
+78.55±0.17/70.18±0.39
+73.65±0.17/62.33±0.30
+68.43±0.20/52.55±0.42
+Adsh
++ Early fusion
+78.77±0.50/78.20±0.33
+74.95±0.42/71.44±0.41
+65.48±0.82/57.29±0.85
+57.65±0.60/42.18±0.58
+90.06±0.06/85.97±0.12
+88.25±1.48/81.77±0.45
+82.36±0.29/72.04±0.75
+72.92±0.29/58.66±0.85
++ Late fusion
+62.35±0.75/63.12±1.42
+58.36±1.13/56.74±1.14
+55.49±0.46/47.31±0.73
+51.43±0.37/41.58±0.45
+80.27±0.49/74.86±0.26
+77.32±0.66/69.71±1.29
+72.13±0.12/58.38±0.20
+68.77±0.14/51.70±0.34
+SSMVAE-CI
+91.69±0.25/86.98±0.41
+87.85±0.16/80.33±0.31
+82.93±0.80/71.32±1.53
+74.79±0.54/59.07±0.50
+92.68±0.53/88.79±0.89
+89.72±0.51/83.94±0.76
+85.61±0.34/76.12±0.87
+79.47±0.61/64.44±1.53
+The performance advantage of the proposed model is further attributed to its effective
+use of unlabeled data to mitigate class imbalance, as reflected in the performance gap be-
+tween SSMVAE-CI and the baseline methods. Specifically, since GAMO and LDAM cannot
+utilize unlabeled data, their performance suffered as the imbalance ratio r increases and
+the labeled data ratio β decreased. For example, when β = 30%, SSMVAE-CI exceeded
+LDAM with early fusion by 3.58% in overall accuracy and 5.98% in minority-class accuracy.
+These margins increased to 8.24% and 12.28%, respectively, when β = 10%. Moreover, the
+gap between SSMVAE-CI and CReST or Adsh (with both fusion strategies) increased as r
+increased, validating the robustness of the proposed model under class-imbalanced settings.
+For instance, when β = 10%, the gains over CReST with early fusion were 6.24% (overall)
+and 5.89% (minority) for r = 10, which increased to 7.72% and 10.79%, respectively, for
+r = 100, further demonstrating the effectiveness of SSMVAE-CI in addressing severe class
+imbalance.
+Table 2: Overall accuracies/minority-class accuracies for the UPMC Food-101 dataset.
+Model
+r = 10
+r = 20
+r = 50
+r = 100
+CMML
+17.06±0.34/13.19±0.37
+14.89±0.37/6.24±0.28
+9.92±0.15/1.97±0.23
+8.66±0.90/0.96±0.29
+SMLN
+3.21±0.07/0.82±0.21
+3.21±0.21/0.80±0.18
+3.17±0.11/0.79±0.17
+3.08±0.09/0.77±0.13
+SSVAE
++ Early fusion
+29.64±1.71/18.63±1.93
+22.57±1.52/11.21±2.12
+17.31±0.78/5.26±1.17
+14.12±1.03/3.01±1.16
++ Late fusion
+28.58±1.24/17.92±1.57
+20.77±1.33/10.42±1.95
+15.86±0.96/4.99±1.03
+13.22±0.91/2.88±1.05
+GAMO
++ Early fusion
+2.07±0.04/0.45±0.05
+2.05±0.03/0.50±0.08
+1.97±0.05/0.48±0.07
+2.01±0.04/0.53±0.05
++ Late fusion
+2.06±0.05/0.50±0.05
+2.05±0.06/0.48±0.07
+2.01±0.07/0.49±0.09
+1.99±0.04/0.52±0.07
+LDAM
++ Early fusion
+33.47±1.68/24.29±1.35
+25.24±0.45/14.22±0.75
+18.76±0.35/7.60±0.86
+16.19±0.53/4.11±0.75
++ Late fusion
+31.53±0.25/23.44±0.36
+23.77±0.51/13.84±0.91
+16.09±0.60/6.79±1.17
+15.03±0.87/3.37±1.65
+CReST
++ Early fusion
+33.84±0.80/22.01±0.94
+29.07±0.73/14.81±0.73
+19.18±1.84/6.57±1.86
+17.42±0.38/3.04±0.28
++ Late fusion
+32.09±0.27/20.68±0.48
+27.80±0.33/12.82±0.42
+17.17±0.42/5.20±0.70
+16.62±0.42/3.47±0.62
+Adsh
++ Early fusion
+29.09±0.21/20.58±0.66
+21.32±0.40/10.21±0.36
+17.49±0.29/6.26±0.21
+14.72±0.33/3.64±0.41
++ Late fusion
+28.66±0.32/19.32±0.50
+20.91±0.26/9.75±0.33
+16.39±0.40/5.45±0.55
+13.47±0.28/2.91±0.33
+SSMVAE-CI
+49.97±0.81/38.36±0.88
+34.81±1.01/18.64±1.13
+28.93±0.93/10.65±1.20
+20.22±0.55/5.97±0.65
+5.3
+Results on UPMC Food-101 Dataset
+To perform classification using the UPMC Food-101 dataset, we first preprocessed the textual
+descriptions and vectorized them using bag-of-words representation. During this process, we
+ensured that all words appearing in the dataset were included in the vector, resulting in a
+15,064-dimensional bag-of-words vector for each sample. We also rescaled the images, which
+hand inconsistent sizes, so that all images had a side length of 128 pixels.
+As before, we repeated the experiment 10 times, but with a fixed value of β = 30%
+and randomly sampled, without replacement, the required number of labeled and unlabeled
+samples for each class in each experiment. The performance of the proposed model and the
+competing models is presented in Table 2, which reaffirms that our model outperforms the
+baseline models, especially when the dataset is severely imbalanced. Specifically, LDAM,
+CReST, and Adsh, with either early or late fusion, produced lower overall and minority-
+class accuracy than SSMVAE-CI across all imbalance ratios, reflecting their limited capacity
+to effectively handle multimodal data. CMML showed poor performance, with both overall
+and minority-class accuracy approximately half that of other methods, likely due to its lack
+of mechanisms to address class imbalance. Interestingly, SSVAE with early and late fusion,
+despite sharing the same objective as CMML, achieved competitive results relative to other
+baselines, further demonstrating the flexibility and robustness of generative models. We
+excluded the comparisons with SMLN and GAMO combined with early and late fusion, as
+they failed to learn on the UPMC Food-101 dataset.
+5.4
+Results on CMU-MOSEI Dataset
+To evaluate the performance of the proposed model on a more complex multimodal dataset
+involving more than two modalities, we conducted a series of experiments on the CMU-
+MOSEI dataset. This dataset includes three modalities: video, audio, and text. Each video
+is segmented into multiple short utterances, each annotated with a sentiment score ranging
+from -3 to 3, where -3 indicates strongly negative sentiment and 3 indicates strongly positive
+sentiment.
+Our task was to predict the sentiment scores based on the three modalities.
+Following the procedure described in Liang et al. (2021), we split the dataset into training
+and test sets and extracted features from the three modalities. These features, represented
+as tensors, were used as inputs to both the proposed model and the competing baselines.
+We did not perform any additional adjustments to class sizes, as the dataset is naturally
+imbalanced.
+The experimental results are presented in Table 3. Due to the dataset’s complexity, size,
+and noisy features, the performance differences between the proposed model and competing
+methods are less pronounced. Nevertheless, the proposed model generally outperforms the
+baselines, with the largest observed gaps in overall and minority-class accuracy reaching
+14.48% and 14.70%, respectively, for β = 10%, and 13.35% and 15.72%, respectively, for
+β = 30%. Notably, while CMML and SMLN achieved higher overall accuracy than GAMO,
+they exhibited lower minority-class accuracy, indicating that they perform well on majority
+classes but struggle with minority-class predictions due to their lack of mechanisms for
+handling class imbalance. Consistent with results on other datasets, SSVAE combined with
+early or late fusion demonstrated strong overall performance and ranked second in minority-
+class accuracy, further highlighting the advantage of generative models over discriminative
+models.
+Table 3: Overall accuracies/minority-class accuracies for the CMU-MOSEI dataset.
+Model
+β = 10%
+β = 30%
+CMML
+27.70±2.92/11.69±2.78
+28.46±2.78/12.70±2.57
+SMLN
+26.57±0.17/9.98±0.52
+27.95±0.31/10.42±0.78
+SSVAE
++ Early fusion
+30.03±3.08/20.43±7.73
+33.10±2.27/21.21±6.03
++ Late fusion
+28.37±0.99/20.31±2.98
+30.04±1.77/21.55±4.08
+GAMO
++ Early fusion
+24.97±1.47/13.75±2.91
+25.28±1.09/14.58±1.54
++ Late fusion
+25.64±0.67/14.48±1.47
+26.88±1.13/13.09±1.51
+LDAM
++ Early fusion
+33.60±0.50/13.74±1.12
+32.94±0.58/17.09±1.93
++ Late fusion
+33.09±0.75/13.56±2.60
+31.69±0.71/16.19±1.02
+CReST
++ Early fusion
+30.65±0.24/16.25±0.13
+32.90±0.34/15.59±0.45
++ Late fusion
+29.16±0.33/15.86±0.50
+29.58±0.66/17.22±1.43
+Adsh
++ Early fusion
+21.89±0.15/11.48±0.32
+25.22±0.99/13.80±0.10
++ Late fusion
+21.65±0.18/11.99±1.34
+25.58±0.44/14.03±1.20
+SSMVAE-CI
+36.13±1.53/24.68±1.71
+38.57±1.32/26.14±1.85
+5.5
+Evaluation Under Missing Modalities
+In real-world multimodal datasets, it is common for some samples-either labeled or un-
+labeled-to lack one or more modalities. This may occur due to data corruption, limited
+sensor availability, or collection constraints in practical settings. A straightforward approach
+to handle such missing data is to discard incomplete samples and train models only on sam-
+ples with all modalities. However, this can significantly reduce the available training data
+and result in degraded performance due to the loss of valuable information.
+To address this issue, the proposed model utilizes samples with missing modalities as
+additional training signals, rather than discarding them. This capability is enabled by in-
+corporating a Student’s t-distribution prior.
+Due to its heavy-tailed nature, the t-prior
+encourages latent representations to occupy broader regions of the latent space with high
+probability density, allowing the model to learn more diverse and expressive features. This,
+in turn, facilitates the implicit estimation of missing modalities during training, ultimately
+improving predictive performance.
+To evaluate the effectiveness of SSMVAE-CI under missing modality scenarios, we con-
+ducted experiments on the MNIST-SVHN dataset.
+We artificially generated a modified
+version of the dataset by randomly removing one modality for all samples in the first half
+of the training set. When training SSMVAE-CI, its modality-specific encoders allowed com-
+putation of the loss only over observed modalities, thus enabling the model to fully utilize
+all samples. In contrast, since baseline models require complete modality information, we
+trained them solely on the second half of the dataset that retained both modalities. The
+results of the experiments with r = 50 and β = 10% are presented in Table 4. For SSMVAE-
+CI, we also report results from an additional experiment in which the model was trained on
+the second half of the dataset containing both modalities, to enable a fair comparison with
+the baseline models. In the table, the decrease in accuracy relative to the original dataset
+(Table 1) is shown in parentheses.
+Table 4: Overall accuracies/minority-class accuracies for the MNIST-SVHN dataset with
+missing modalities.
+Model
+Overall
+Minority
+CMML
+68.69±0.87
+(−4.93)
+41.76±0.59
+(−9.86)
+SMLN
+59.34±1.19
+(−8.79)
+35.05±1.57
+(−11.29)
+SSVAE
++ Early fusion
+71.31±0.23
+(−7.51)
+51.63±0.73
+(−12.96)
++ Late fusion
+61.60±0.35
+(−4.44)
+44.71±0.70
+(−5.58)
+GAMO
++ Early fusion
+64.32±0.59
+(−7.32)
+38.80±0.80
+(−11.65)
++ Late fusion
+52.72±0.45
+(−4.59)
+32.17±0.58
+(−4.65)
+LDAM
++ Early fusion
+65.73±0.59
+(−7.78)
+41.11±1.04
+(−13.61)
++ Late fusion
+53.44±0.57
+(−7.80)
+29.58±1.21
+(−14.74)
+CReST
++ Early fusion
+68.05±0.84
+(−7.66)
+46.27±1.73
+(−15.56)
++ Late fusion
+58.01±0.18
+(−6.27)
+42.46±0.84
+(−7.83)
+Adsh
++ Early fusion
+61.42±0.63
+(−4.06)
+43.17±1.02
+(−14.12)
++ Late fusion
+50.48±0.61
+(−5.01)
+40.48±0.89
+(−6.83)
+SSMVAE-CI (using half)
+78.30±0.29
+(−4.63)
+65.42±0.94
+(−5.90)
+SSMVAE-CI (using all)
+80.85±0.65
+(−2.08)
+68.88±1.10
+(−2.44)
+As shown in the table, the proposed model achieved significantly higher accuracies than
+the baseline models, with gains of at least 6.99% in overall accuracy and 13.79% in minority-
+class accuracy. More importantly, the performance drop-reported in parentheses-from
+the original (complete-modality) dataset provides key insights. While all models experienced
+accuracy degradation due to the missing modality in half of the dataset, SSMVAE-CI trained
+on the full dataset (including both complete and incomplete samples) exhibited the smallest
+drop: just 2.08% in overall accuracy and 2.44% in minority-class accuracy. Notably, this
+drop is smaller than that of SSMVAE-CI trained only on the complete half of the dataset,
+highlighting the model’s ability to exploit the additional information from samples with
+missing modalities-an advantage not shared by baseline models, which cannot handle such
+incomplete data.
+5.6
+Ablation Study
+We conducted an ablation study on the MNIST-SVHN dataset to investigate the individual
+contributions of key components in the proposed method. While this dataset was chosen
+for its simplicity, similar trends were observed across the other two datasets. The proposed
+method, SSMVAE-CI, extends the vanilla SSVAE by incorporating two major enhancements:
+a PoE framework and the use of Student’s t-distributions for the prior, encoder, and decoder.
+To assess the impact of these components, we began with the vanilla SSVAE using either
+early or late fusion, and progressively added each component, tracking changes in both
+overall and minority-class accuracy. The results for two extreme imbalance ratios, r = 50
+and r = 100, with a fixed β = 10%, are presented in Table 5.
+The key findings from the results in Table 5 are summarized as follows: (1) Replacing the
+Student’s t-distributions in the prior, encoder, and decoder with Gaussian distributions led
+to a noticeable drop in classification accuracy, as Gaussian distributions lack the heavy-tailed
+property that enables better handling of class-imbalanced data. (2) Substituting the PoE
+framework with simple early or late fusion resulted in reduced performance, indicating that
+such na¨ıve fusion strategies are insufficient for capturing inter-modal correlations effectively.
+(3) Performance declined even further when using the vanilla SSVAE with either fusion
+strategy, as it lacks both the PoE mechanism and the heavy-tailed modeling capability of
+t-distributions, making it less suitable for class-imbalanced multimodal learning.
+Table 5: Ablation study for SSMVAE-CI on the MNIST-SVHN dataset.
+Ablation study
+r = 50, β = 10%
+r = 100, β = 10%
+Overall/Minority
+Overall/Minority
+SSMVAE-CI
+⇒SSVAE + PoE + Student’s t-distributions
+82.93/71.32
+74.79/59.07
+Replacing Student’s t-distributions with Gaussian distributions
+⇒SSVAE + PoE + Gaussian distributions
+80.83/65.72
+71.55/53.32
+Replacing the PoE structure with an early fusion
+⇒SSVAE + Early fusion + Student’s t-distributions
+81.72/67.30
+72.72/55.51
+Replacing the PoE structure with a late fusion
+⇒SSVAE + Late fusion + Student’s t-distributions
+72.39/56.71
+66.20/48.82
+SSVAE combined with an early fusion
+⇒SSVAE + Early fusion + Gaussian distributions
+76.92/62.81
+69.36/51.96
+SSVAE combined with a late fusion
+⇒SSVAE + Late fusion + Gaussian distributions
+66.04/50.29
+60.50/40.49
+Conclusion
+In this paper, we proposed SSMVAE-CI, a novel model for semi-supervised learning with
+class-imbalanced multimodal datasets. We designed a generative model with an inference
+structure consisting of modality-specific encoders that share a latent variable across all
+modalities. This approach approximates the joint posterior as a product of individual pos-
+teriors with a prior expert, effectively reducing computational complexity. Additionally, we
+replaced the typical Gaussian distribution used in the prior, encoder, and decoder with the
+Student’s t-distribution to better account for the heavy-tailed nature of class-imbalanced
+datasets.
+To validate our model, we conducted experiments using a combination of two benchmark
+image datasets and two real-world datasets containing diverse modalities. Our results demon-
+strate that the proposed model is well-suited for classifying samples from class-imbalanced
+multimodal datasets with partial supervision. Beyond the evaluated datasets, the proposed
+framework has strong potential in domains such as healthcare and finance, where multi-
+modal, partially labeled, and highly imbalanced data are common. For example, in medical
+diagnosis, rare conditions appear infrequently and span heterogeneous modalities such as
+medical imaging, clinical notes, and physiological signals, making balanced annotation dif-
+ficult. Similarly, in financial risk assessment, fraudulent behaviors constitute minority pat-
+terns embedded in multimodal sources such as transaction histories and textual records. By
+jointly addressing class imbalance, multimodality, and partial supervision within a unified
+generative framework, SSMVAE-CI can facilitate more reliable, data-efficient, and equitable
+decision-making in such high-stakes real-world scenarios.
+In future work, we plan to extend our model to accommodate distribution mismatches
+between the labeled and unlabeled sets, where the distribution of the unlabeled set is often
+unknown in practice. This extension would expand the range of datasets the model can
+handle, thus enhancing its applicability to a wider array of real-world problems.
+Supplementary Materials
+Supplementary document: The pdf file contains the full derivation of the objective func-
+tion used for SSMVAE-CI.
+Python code: "Codes.zip" contains the codes and datasets used in this paper.
+Acknowledgments
+The authors would like to thank the referees, the associate editor, and the editor for review-
+ing this article and providing valuable comments. This work was supported by Samsung
+Electronics Co., Ltd. and the National Research Foundation of Korea (NRF) grant funded
+by the Korea government (MSIT) (2023R1A2C2005453, RS-2023-00218913).
+Conflict of Interest Disclosure
+The authors declare that they have no conflict of interests that could have appeared to
+influence the work reported in this manuscript.
+References
+Abiri, N. and Ohlsson, M. (2020), "Variational auto-encoders with Student’s t-prior," in
+Proceedings of 27th European Symposium on Artificial Neural Networks, Computational
+Intelligence and Machine Learning, pp. 415-420.
+Ai, Q., Wang, P., He, L., Wen, L., Pan, L., and Xu, Z. (2023), "Generative Oversampling
+for Imbalanced Data via Majority-Guided VAE," in International Conference on Artificial
+Intelligence and Statistics, PMLR, pp. 3315-3330.
+Berthelot, D., Carlini, N., Cubuk, E. D., Kurakin, A., Sohn, K., Zhang, H., and Raffel,
+C. (2020), "Remixmatch: Semi-supervised learning with distribution alignment and aug-
+mentation anchoring," in Proceedings of the 8th International Conference on Learning
+Representations.
+Berthelot, D., Carlini, N., Goodfellow, I., Papernot, N., Oliver, A., and Raffel, C. A. (2019),
+"Mixmatch: A holistic approach to semi-supervised learning," Advances in neural infor-
+mation processing systems, 32.
+Byrd, J. and Lipton, Z. (2019), "What is the effect of importance weighting in deep learning?"
+in International conference on machine learning, PMLR, pp. 872-881.
+Cao, B., Xia, Y., Ding, Y., Zhang, C., and Hu, Q. (2024), "Predictive Dynamic Fusion," in
+The Forty-First International Conference on Machine Learning, PMLR.
+Cao, K., Wei, C., Gaidon, A., Arechiga, N., and Ma, T. (2019), "Learning imbalanced
+datasets with label-distribution-aware margin loss," Advances in neural information pro-
+cessing systems, 32.
+Chawla, N. V., Bowyer, K. W., Hall, L. O., and Kegelmeyer, W. P. (2002), "SMOTE:
+synthetic minority over-sampling technique," Journal of artificial intelligence research,
+16, 321-357.
+Cho, H., Koo, W., and Kim, H. (2023), "Prediction of highly imbalanced semiconductor
+chip-level defects in module tests using multimodal fusion and logit adjustment," IEEE
+Transactions on Semiconductor Manufacturing, 36, 425-433.
+Choy, M., Kim, D., Lee, J.-G., Kim, H., and Motoda, H. (2016), "Looking back on the
+current day: interruptibility prediction using daily behavioral features," in Proceedings of
+the 2016 ACM international joint conference on pervasive and ubiquitous computing, pp.
+1004-1015.
+Chung, J. and Kim, H. (2019), "Crime risk maps: A multivariate spatial analysis of crime
+data," Geographical analysis, 51, 475-499.
+Cui, Y., Jia, M., Lin, T.-Y., Song, Y., and Belongie, S. (2019), "Class-balanced loss based
+on effective number of samples," in Proceedings of the IEEE/CVF conference on computer
+vision and pattern recognition, pp. 9268-9277.
+Davidson, T. R., Falorsi, L., De Cao, N., Kipf, T., and Tomczak, J. M. (2018), "Hyperspher-
+ical Variational Auto-Encoders," 34th Conference on Uncertainty in Artificial Intelligence
+(UAI-18).
+Ehsan Abbasnejad, M., Dick, A., and van den Hengel, A. (2017), "Infinite variational autoen-
+coder for semi-supervised learning," in Proceedings of the IEEE Conference on Computer
+Vision and Pattern Recognition, pp. 5888-5897.
+Feng, H.-Z., Kong, K., Chen, M., Zhang, T., Zhu, M., and Chen, W. (2021), "Shot-vae: semi-
+supervised deep generative models with label-aware elbo approximations," in Proceedings
+of the AAAI Conference on Artificial Intelligence, vol. 35, pp. 7413-7421.
+Floto, G., Kremer, S., and Nica, M. (2023), "The tilted variational autoencoder: Improv-
+ing out-of-distribution detection," in The Eleventh International Conference on Learning
+Representations.
+Guo, L.-Z. and Li, Y.-F. (2022), "Class-imbalanced semi-supervised learning with adaptive
+thresholding," in International conference on machine learning, PMLR, pp. 8082-8094.
+Han, Z., Yang, F., Huang, J., Zhang, C., and Yao, J. (2022), "Multimodal dynamics: Dy-
+namical fusion for trustworthy multimodal classification," in Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition, pp. 20707-20717.
+He, H. and Garcia, E. A. (2009), "Learning from imbalanced data," IEEE Transactions on
+knowledge and data engineering, 21, 1263-1284.
+Hong, D., Gao, L., Yokoya, N., Yao, J., Chanussot, J., Du, Q., and Zhang, B. (2020),
+"More diverse means better: Multimodal deep learning meets remote-sensing imagery
+classification," IEEE Transactions on Geoscience and Remote Sensing, 59, 4340-4354.
+Hou, M., Tang, J., Zhang, J., Kong, W., and Zhao, Q. (2019), "Deep multimodal multilinear
+fusion with high-order polynomial pooling," Advances in Neural Information Processing
+Systems, 32.
+Hu, P., Zhu, H., Peng, X., and Lin, J. (2020), "Semi-supervised multi-modal learning with
+balanced spectral decomposition," in Proceedings of the AAAI Conference on Artificial
+Intelligence, vol. 34, pp. 99-106.
+Hu, Z., Tan, B., Salakhutdinov, R. R., Mitchell, T. M., and Xing, E. P. (2019), "Learning
+data manipulation for augmentation and weighting," Advances in Neural Information
+Processing Systems, 32.
+Huang, Y., Du, C., Xue, Z., Chen, X., Zhao, H., and Huang, L. (2021), "What makes multi-
+modal learning better than single (provably)," Advances in Neural Information Processing
+Systems, 34, 10944-10956.
+Khan, S. H., Hayat, M., Bennamoun, M., Sohel, F. A., and Togneri, R. (2017), "Cost-
+sensitive learning of deep feature representations from imbalanced data," IEEE transac-
+tions on neural networks and learning systems, 29, 3573-3587.
+Kim, H. and Kim, H. (2023), "Contextual anomaly detection for high-dimensional data using
+Dirichlet process variational autoencoder," IISE Transactions, 55, 433-444.
+Kim, J., Hur, Y., Park, S., Yang, E., Hwang, S. J., and Shin, J. (2020), "Distribution
+aligning refinery of pseudo-label for imbalanced semi-supervised learning," Advances in
+neural information processing systems, 33, 14567-14579.
+Kim, J., Kwon, J., Cho, M., Lee, H., and Won, J.-H. (2023), "t3-Variational Autoencoder:
+Learning Heavy-tailed Data with Student’s t and Power Divergence," in The Twelfth
+International Conference on Learning Representations.
+Kim, K., Shin, J., and Kim, H. (2021), "Locally most powerful bayesian test for out-of-
+distribution detection using deep generative models," Advances in Neural Information
+Processing Systems, 34, 14913-14924.
+Kingma, D. P., Mohamed, S., Rezende, D. J., and Welling, M. (2014), "Semi-supervised
+learning with deep generative models," in Advances in neural information processing sys-
+tems, pp. 3581-3589.
+Kingma, D. P. and Welling, M. (2013), "Auto-encoding variational bayes," arXiv preprint
+arXiv:1312.6114.
+Ko, J. and Kim, H. (2022), "Deep Gaussian process models for integrating multifidelity
+experiments with nonstationary relationships," IISE Transactions, 54, 686-698.
+Ko, T. and Kim, H. (2019), "Fault classification in high-dimensional complex processes using
+semi-supervised deep convolutional generative models," IEEE Transactions on Industrial
+Informatics, 16, 2868-2877.
+Koo, W., Ma, E.-Y., and Kim, H. (2024), "Deep Latent Factor Model for Spatio-Temporal
+Forecasting," Technometrics, 66, 470-482.
+Laine, S. and Aila, T. (2017), "Temporal ensembling for semi-supervised learning," in Pro-
+ceedings of the 5th International Conference on Learning Representations.
+Lee, D.-H. et al. (2013a), "Pseudo-label: The simple and efficient semi-supervised learning
+method for deep neural networks," in Workshop on challenges in representation learning,
+ICML, Atlanta, vol. 3, p. 896.
+Lee, H. and Kim, H. (2024), "Cdmad: class-distribution-mismatch-aware debiasing for class-
+imbalanced semi-supervised learning," in Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition, pp. 23891-23900.
+Lee, H., Lee, J., and Kim, H. (2023), "Semi-supervised learning for simultaneous location
+detection and classification of mixed-type defect patterns in wafer bin maps," IEEE Trans-
+actions on Semiconductor Manufacturing, 36, 220-230.
+Lee, H., Park, T., and Kim, H. (2025), "Learnable Logit Adjustment for Imbalanced
+Semi-Supervised Learning under Class Distribution Mismatch," in Proceedings of the
+IEEE/CVF International Conference on Computer Vision, pp. 2664-2674.
+Lee, H., Shin, S., and Kim, H. (2021), "Abc:
+Auxiliary balanced classifier for class-
+imbalanced semi-supervised learning," Advances in Neural Information Processing Sys-
+tems, 34, 7082-7094.
+Lee, K., Gray, A., and Kim, H. (2013b), "Dependence maps, a dimensionality reduction with
+dependence distance for high-dimensional data," Data Mining and Knowledge Discovery,
+26, 512-532.
+Lee, M. and Pavlovic, V. (2021), "Private-shared disentangled multimodal vae for learning
+of latent representations," in Proceedings of the ieee/cvf conference on computer vision
+and pattern recognition, pp. 1692-1700.
+Li, H., Yang, F., Xing, X., Zhao, Y., Zhang, J., Liu, Y., Han, M., Huang, J., Wang, L., and
+Yao, J. (2021), "Multi-modal multi-instance learning using weakly correlated histopatho-
+logical images and tabular clinical information," in Medical Image Computing and Com-
+puter Assisted Intervention-MICCAI 2021: 24th International Conference, Strasbourg,
+France, September 27-October 1, 2021, Proceedings, Part VIII 24, Springer, pp. 529-539.
+Li, J., Li, D., Savarese, S., and Hoi, S. (2023), "Blip-2: Bootstrapping language-image
+pre-training with frozen image encoders and large language models," in International
+conference on machine learning, PMLR, pp. 19730-19742.
+Li, J., Li, D., Xiong, C., and Hoi, S. (2022), "Blip: Bootstrapping language-image pre-
+training for unified vision-language understanding and generation," in International con-
+ference on machine learning, PMLR, pp. 12888-12900.
+Liang, P. P., Lyu, Y., Fan, X., Wu, Z., Cheng, Y., Wu, J., Chen, L., Wu, P., Lee, M. A.,
+Zhu, Y., et al. (2021), "Multibench: Multiscale benchmarks for multimodal representation
+learning," Advances in neural information processing systems, 2021, 1.
+Liu, X.-Y., Wu, J., and Zhou, Z.-H. (2008), "Exploratory undersampling for class-imbalance
+learning," IEEE Transactions on Systems, Man, and Cybernetics, Part B (Cybernetics),
+39, 539-550.
+Liu, Z., Shen, Y., Lakshminarasimhan, V. B., Liang, P. P., Zadeh, A., and Morency, L.-
+P. (2018), "Efficient low-rank multimodal fusion with modality-specific factors," arXiv
+preprint arXiv:1806.00064.
+Liu, Z., Wang, J., and Liang, Z. (2020), "Catgan: Category-aware generative adversarial net-
+works with hierarchical evolutionary learning for category text generation," in Proceedings
+of the AAAI Conference on Artificial Intelligence, vol. 34, pp. 8425-8432.
+Louizos, C., Swersky, K., Li, Y., Welling, M., and Zemel, R. (2016), "The variational fair
+autoencoder," in Proceedings of the 4th International Conference on Learning Represen-
+tations.
+Mathieu, E., Rainforth, T., Siddharth, N., and Teh, Y. W. (2019), "Disentangling disen-
+tanglement in variational autoencoders," in International conference on machine learning,
+PMLR, pp. 4402-4412.
+Miyato, T., Maeda, S.-i., Koyama, M., and Ishii, S. (2018), "Virtual adversarial training:
+a regularization method for supervised and semi-supervised learning," IEEE transactions
+on pattern analysis and machine intelligence, 41, 1979-1993.
+Mullick, S. S., Datta, S., and Das, S. (2019), "Generative adversarial minority oversampling,"
+in Proceedings of the IEEE/CVF international conference on computer vision, pp. 1695-
+1704.
+Nojavanasghari, B., Gopinath, D., Koushik, J., Baltruˇsaitis, T., and Morency, L.-P. (2016),
+"Deep multimodal fusion for persuasiveness prediction," in Proceedings of the 18th ACM
+international conference on multimodal interaction, pp. 284-288.
+Odena, A. (2016), "Semi-supervised learning with generative adversarial networks," arXiv
+preprint arXiv:1606.01583.
+Park, S., Kim, K., and Kim, H. (2022), "Prediction of highly imbalanced semiconductor
+chip-level defects using uncertainty-based adaptive margin learning," IISE Transactions,
+55, 147-155.
+Park, T., Lee, H., and Kim, H. (2024), "Rebalancing using estimated class distribution
+for imbalanced semi-supervised learning under class distribution mismatch," in European
+Conference on Computer Vision, Springer, pp. 388-404.
+Poria, S., Cambria, E., and Gelbukh, A. (2015), "Deep convolutional neural network textual
+features and multiple kernel learning for utterance-level multimodal sentiment analysis,"
+in Proceedings of the 2015 conference on empirical methods in natural language processing,
+pp. 2539-2544.
+Poria, S., Chaturvedi, I., Cambria, E., and Hussain, A. (2016), "Convolutional MKL based
+multimodal emotion recognition and sentiment analysis," in 2016 IEEE 16th international
+conference on data mining (ICDM), IEEE, pp. 439-448.
+Radford, A., Kim, J. W., Hallacy, C., Ramesh, A., Goh, G., Agarwal, S., Sastry, G., Askell,
+A., Mishkin, P., Clark, J., et al. (2021), "Learning transferable visual models from natural
+language supervision," in International conference on machine learning, PmLR, pp. 8748-
+8763.
+Ren, M., Zeng, W., Yang, B., and Urtasun, R. (2018), "Learning to reweight examples
+for robust deep learning," in International conference on machine learning, PMLR, pp.
+4334-4343.
+Ross, T.-Y. and Doll´ar, G. (2017), "Focal loss for dense object detection," in proceedings of
+the IEEE conference on computer vision and pattern recognition, pp. 2980-2988.
+Shi, Y., Paige, B., Torr, P., et al. (2019), "Variational mixture-of-experts autoencoders for
+multi-modal deep generative models," Advances in neural information processing systems,
+32.
+Shu, J., Xie, Q., Yi, L., Zhao, Q., Zhou, S., Xu, Z., and Meng, D. (2019), "Meta-weight-
+net: Learning an explicit mapping for sample weighting," Advances in neural information
+processing systems, 32.
+Soh, W., Kim, H., and Yum, B.-J. (2018), "Application of kernel principal component anal-
+ysis to multi-characteristic parameter design problems," Annals of Operations research,
+263, 69-91.
+Sohn, K., Berthelot, D., Carlini, N., Zhang, Z., Zhang, H., Raffel, C. A., Cubuk, E. D.,
+Kurakin, A., and Li, C.-L. (2020), "Fixmatch: Simplifying semi-supervised learning with
+consistency and confidence," Advances in neural information processing systems, 33, 596-
+608.
+Takahashi, H., Iwata, T., Yamanaka, Y., Yamada, M., and Yagi, S. (2018), "Student-t
+Variational Autoencoder for Robust Density Estimation." in IJCAI, pp. 2696-2702.
+Tarvainen, A. and Valpola, H. (2017), "Mean teachers are better role models: Weight-
+averaged consistency targets improve semi-supervised deep learning results," Advances in
+neural information processing systems, 30.
+Tian, J., Cheung, W., Glaser, N., Liu, Y.-C., and Kira, Z. (2020), "UNO: Uncertainty-
+aware noisy-or multimodal fusion for unanticipated input degradation," in 2020 IEEE
+International Conference on Robotics and Automation (ICRA), IEEE, pp. 5716-5723.
+Wan, Z., Zhang, Y., and He, H. (2017), "Variational autoencoder based synthetic data
+generation for imbalanced learning," in 2017 IEEE symposium series on computational
+intelligence (SSCI), IEEE, pp. 1-7.
+Wang, H., Meghawat, A., Morency, L.-P., and Xing, E. P. (2017a), "Select-additive learning:
+Improving generalization in multimodal sentiment analysis," in 2017 IEEE International
+Conference on Multimedia and Expo (ICME), IEEE, pp. 949-954.
+Wang, T., Shao, W., Huang, Z., Tang, H., Zhang, J., Ding, Z., and Huang, K. (2021),
+"MOGONET integrates multi-omics data using graph convolutional networks allowing
+patient classification and biomarker identification," Nature communications, 12, 3445.
+Wang, X., Lyu, Y., and Jing, L. (2020), "Deep generative model for robust imbalance classi-
+fication," in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition, pp. 14124-14133.
+Wang, Y.-X., Ramanan, D., and Hebert, M. (2017b), "Learning to model the tail," Advances
+in neural information processing systems, 30.
+Wei, C., Sohn, K., Mellina, C., Yuille, A., and Yang, F. (2021), "Crest: A class-rebalancing
+self-training framework for imbalanced semi-supervised learning," in Proceedings of the
+IEEE/CVF conference on computer vision and pattern recognition, pp. 10857-10866.
+W¨ortwein, T. and Scherer, S. (2017), "What really matters-An information gain analysis
+of questions and reactions in automated PTSD screenings," in 2017 Seventh International
+Conference on Affective Computing and Intelligent Interaction (ACII), IEEE, pp. 15-20.
+Wu, M. and Goodman, N. (2018), "Multimodal generative models for scalable weakly-
+supervised learning," Advances in neural information processing systems, 31.
+- (2019), "Multimodal generative models for compositional representation learning," arXiv
+preprint arXiv:1912.05075.
+Xue, Z. and Marculescu, R. (2023), "Dynamic multimodal fusion," in Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition, pp. 2575-2584.
+Yang, Y., Wang, K.-T., Zhan, D.-C., Xiong, H., and Jiang, Y. (2019), "Comprehensive
+Semi-Supervised Multi-Modal Learning." in IJCAI, pp. 4092-4098.
+Yoon, H. and Kim, H. (2023), "Label-noise robust deep generative model for semi-supervised
+learning," Technometrics, 65, 83-95.
+Yoon, T. and Kim, H. (2024), "Uncertainty estimation by density aware evidential deep
+learning," arXiv preprint arXiv:2409.08754.
+- (2025), "Uncertainty Estimation by Flexible Evidential Deep Learning," arXiv preprint
+arXiv:2510.18322.
+Zadeh, A., Chen, M., Poria, S., Cambria, E., and Morency, L.-P. (2017), "Tensor fusion
+network for multimodal sentiment analysis," arXiv preprint arXiv:1707.07250.
+Zhang, C., Zhou, Y., Chen, Y., Deng, Y., Wang, X., Dong, L., and Wei, H. (2018), "Over-
+sampling algorithm based on VAE in imbalanced classification," in Cloud Computing-
+CLOUD 2018: 11th International Conference, Held as Part of the Services Conference
+Federation, SCF 2018, Seattle, WA, USA, June 25-30, 2018, Proceedings 11, Springer,
+pp. 334-344.
+Zhang, Q., Wu, H., Zhang, C., Hu, Q., Fu, H., Zhou, J. T., and Peng, X. (2023a), "Provable
+dynamic fusion for low-quality multimodal data," in International conference on machine
+learning, PMLR, pp. 41753-41769.
+Zhang, Y., Kang, B., Hooi, B., Yan, S., and Feng, J. (2023b), "Deep long-tailed learning: A
+survey," IEEE Transactions on Pattern Analysis and Machine Intelligence.

@@ -1,0 +1,928 @@
+Superintelligent Retrieval Agent: The Next Frontier
+of Information Retrieval
+Zeyu Yang1,2,∗, Qi Ma1, Jason Chen1, Anshumali Shrivastava1,2,∗
+1Meta Superintelligence Labs, 2Rice University
+∗Work done at Meta
+Retrieval-augmented agents are increasingly the interface to large organizational knowledge bases,
+yet most still treat retrieval as a black box: they issue exploratory queries, inspect returned snippets,
+and iteratively reformulate until useful evidence emerges. This approach resembles how a newcomer
+searches an unfamiliar database rather than how an expert navigates it with strong priors about
+terminology and likely evidence, and results in unnecessary retrieval rounds, increased latency, and
+poor recall.
+We introduce SuperIntelligent Retrieval Agent (SIRA), which defines superintelligence in retrieval as
+the ability to compress multi-round exploratory search into a single corpus-discriminative retrieval
+action. SIRA does not merely ask what terms are relevant to the query; it asks which terms are likely
+to separate the desired evidence from corpus-level confusers. On the corpus side, an LLM enriches each
+document offline with missing search vocabulary; on the query side, it predicts evidence vocabulary
+omitted by the query; and document-frequency statistics as a tool call to filter proposed terms that
+are absent, overly common, or unlikely to create retrieval margin. The final retrieval step is a single
+weighted BM25 call combining the original query with the validated expansion.
+Across ten BEIR benchmarks and downstream question-answering tasks, SIRA achieves the significantly
+superior performance outperforming dense retrievers and state-of-the-art multi-round agentic baselines,
+demonstrating that one well-formed lexical query, guided by LLM cognition and lightweight corpus
+statistics, can exceed substantially more expensive multi-round search while remaining interpretable,
+training-free, and efficient.
+Date: May 8, 2026
+Correspondence: Zeyu Yang at zy45@meta.com and Anshumali Shrivastava anshumali@meta.com
+Code: Will be available at 
+Introduction
+Information retrieval (IR) has evolved from lexical matching, exemplified by BM25 (Robertson and Zaragoza,
+2009), to neural retrieval dominated by dense embeddings (Karpukhin et al., 2020). Embedding-based
+retrievers perform well when trained with abundant in-domain supervision: large-scale relevance labels and
+interaction logs that calibrate the model to a platform’s user population (Bajaj et al., 2016; Joachims et al.,
+2007; Chapelle and Zhang, 2009). This regime has fueled modern retrieval-augmented generation (RAG)
+systems that ground LLM outputs in external corpora (Lewis et al., 2020).
+The user interface for information access is changing rapidly: search is increasingly answer-forward and
+conversational, with LLMs mediating multi-turn information seeking (Mo et al., 2025). A key consequence is
+that the classic training signal for supervised ranking, clickthrough, becomes sparse, delayed, and biased: users
+often terminate sessions without clicking, or accept an on-page summary as the final answer. A large-scale
+browsing analysis by Pew Research Center finds that when Google presents an AI-generated summary, users
+click standard result links substantially less often (Pew Research Center, 2025). Click-based supervision is
+therefore becoming unreliable at scale, precisely as query behavior is shifting.
+arXiv:2605.06647v1 [cs.IR] 7 May 2026
+
+Compositional queries need controllable retrieval.
+At the same time, query distributions are moving
+away from short keyword strings toward longer, compositional requests that combine constraints, exclusions,
+and multi-step intent. This shift is a hallmark of conversational search. Pure similarity search is an awkward
+fit for this regime: dense retrieval exposes only a black-box nearest-neighbor operator and provides weak
+handles for enforcing structure (e.g., must-include/must-not-include constraints, attribute filters, or explicit
+decomposition). Neural sparse methods such as SPLADE (Formal et al., 2021) partially restore lexical
+controllability while preserving learning-based ranking, but they are still used as fixed retrievers inside
+pipelines rather than as controllable components of an agent policy.
+Classical lexical retrieval, exemplified by BM25, possesses underappreciated strengths that become decisive
+when paired with LLM reasoning. BM25 is transparent: an agent can boost keywords, enforce constraints, and
+decompose queries with predictable effects on retrieval outcomes. It naturally rewards rare, discriminative
+terms via IDF weighting, so domain-specific jargon that would be diluted in a dense embedding becomes
+a powerful retrieval signal. It is auditable: one can trace exactly which keywords matched and why, while
+avoiding the latency and memory costs of dense indices. The missing ingredient has been a mechanism
+to surface the right rare terms and constraints; LLMs, with their vast parametric knowledge, are uniquely
+positioned to fill this role.
+LLM reasoning meets retrieval.
+The limitations of dense retrieval are not merely engineering inconve-
+niences; they expose a deeper mismatch between single-vector representations and compositional information
+needs. Recent theoretical and empirical work shows that fixed-dimensional embeddings can realize only a
+limited family of relevance patterns (Weller et al., 2025), that static embeddings are information bottlenecks
+whenever relevance requires cross-attention-style interaction (Shrivastava, 2025), and that vector databases
+impose substantial cost, latency, and objective-mismatch burdens in production (Shrivastava, 2023)
+In parallel, LLM reasoning frameworks such as Chain-of-Thought, Tree-of-Thoughts, and Graph-of-Thoughts
+demonstrate that LLMs can plan and explore structured intermediate states (Wei et al., 2022; Yao et al.,
+2023; Besta et al., 2024). Tool-using agents extend this capability to external actions, including search (Yao
+et al., 2022), and recent reinforcement-learning approaches train LLMs to interleave reasoning with multi-turn
+web search (Jin et al., 2025). In most agentic search systems, however, retrieval itself remains an opaque tool:
+the agent can rewrite queries and judge snippets, but cannot directly manipulate retrieval primitives such as
+keyword weighting, constraint selection, or decomposition tied to index-time signals.
+This exposes why current search agents remain brittle despite strong reasoning capabilities. Agentic systems
+such as ReAct, IRCoT, and recent RL-trained search agents improve performance by interleaving reasoning
+with repeated retrieval calls (Yao et al., 2022; Trivedi et al., 2023; Jin et al., 2025). However, this success is
+partly obtained through a retrieval-context advantage: after each search, the agent absorbs returned snippets,
+discovered entities, surface vocabulary, and near misses into the LLM context, then uses this accumulated
+evidence to formulate later queries. In other words, the agent compensates for weak retrieval control by
+learning the corpus through interaction. This strategy is expensive and noisy, and it relies increasingly on
+long-context LLMs to retain and use many intermediate passages-a regime known to be unreliable when
+relevant evidence is buried in long contexts (Liu et al., 2024). Thus the failure mode is not simply that LLMs
+cannot reason; it is that the search interface gives them too little direct control, forcing them into hit-and-miss
+exploration.
+The known hardness of retrieval that LLM agents are clueless about.
+Classical IR theory clarifies
+the missing ingredient. Retrieval is not just a question of whether a query is semantically related to the desired
+document; it is a comparative ranking problem in which the gold evidence must outrank many non-gold
+confusers. The probability ranking principle and learning-to-rank methods formalize this as ordering relevant
+documents above non-relevant alternatives (Robertson, 1977; Joachims et al., 2007; Chapelle and Zhang, 2009),
+while BM25 operationalizes corpus contrast through document frequency and IDF (Robertson and Zaragoza,
+2009). A query can therefore be plausible in isolation yet fail because its terms also match many distractors,
+or because its most expert-sounding terms are absent, too common, or weakly discriminative in the target
+index. Dense single-vector retrieval adds a further bottleneck: recent theory shows that fixed-dimensional
+embedding retrievers cannot realize all top-k relevance patterns and can fail even on simple realistic constraint
+structures (Weller et al., 2025). This points to the core gap SIRA addresses: an LLM may know what relevant
+(a) Dense Retrieval
+(b) Multi-Step Agent
+(c) SIRA (Ours)
+Query q
+Neural Encoder
+Black-box embedding
+Dense Index
+(ANN Search)
+Top-k Documents
+One-shot | Opaque
+Requires in-domain supervision
+Query q
+LLM Agent
+Formulate query
+Retriever
+Retrieved Passages
+Read &
+Reformulate
+(N rounds)
+Top-k Documents
+Multi-round | Context-dependent
+Query q
+LLM Reasoning
+Expected-response sketch
+Corpus Statistics
+DF validation & pruning
+Retrieval Program
+Weighted keywords + constraints
+BM25 Retrieval
+Top-k Documents
+One-shot | Transparent
+Figure 1 Three retrieval paradigms compared.
+(a) Dense retrieval encodes queries and documents into a shared
+embedding space and performs nearest-neighbor search; the process is one-shot but opaque and requires in-domain
+supervision. (b) Multi-step agent retrieval uses an LLM to iteratively formulate queries, read retrieved passages, and
+reformulate over N rounds; later queries benefit from accumulated retrieval context. (c) SIRA produces an expert-level
+retrieval action in a single shot: the LLM generates an expected-response sketch, validates proposed terms against
+corpus statistics, and compiles a controlled BM25 query with weighted keywords and constraints, all without reading
+any retrieved passages.
+evidence should look like, but it needs index-visible statistics and explicit retrieval controls to make that
+expectation discriminative against the confusing articles that corpus may be flooded with.
+SIRA formalizes the setting of one-shot, controllable BM25 retrieval across broad IR and QA benchmarks,
+building on recent evidence that LLM agents can generate discriminative keyword, grep, and ripgrep queries
+approaching RAG-level QA performance (Subramanian et al., 2025; Wang et al., 2026). Existing results,
+however, are either practitioner-level, code-centric, or multi-turn and context-accumulating (Karpathy, 2026;
+Pan et al., 2025); SIRA targets the stronger single-query regime.
+Goal.
+The central limitation of today’s LLM-driven retrieval agents is that retrieval remains a black-box
+environment they explore through repeated interaction. Existing agents issue a query, inspect returned
+snippets, and reformulate using accumulated evidence, a retrieval-context advantage where later searches
+are conditioned on information exposed by earlier ones. This resembles a domain newcomer learning an
+unfamiliar database through exploration, rather than an expert who anticipates relevant terminology and
+evidence patterns before reading retrieved passages, as illustrated in Figure 1.
+We define superintelligence in retrieval as the ability to replace this multi-round process with a single expert-
+level retrieval action: (i) form a domain-informed expectation of what relevant evidence looks like, (ii) ground
+that expectation using lightweight index-aware signals (document frequency), (iii) compile the result into
+explicit retrieval controls, and (iv) execute retrieval efficiently and transparently.
+1.1
+Our Proposal: SIRA
+We propose the SuperIntelligent Retrieval Agent (SIRA), a retrieval-centric agent that searches like a domain
+expert. Modern LLMs encode substantial parametric knowledge such as terminology, entities, relations, but
+lack a mechanism to convert this knowledge into precise retrieval actions over a target corpus. SIRA provides
+that mechanism through a scalable two-stage framework.
+First, the LLM produces an expected-response sketch: a compact hypothesis of the concepts, entities, and
+discriminative terms likely to appear in relevant evidence. This sketch acts as a retrieval prior, not as evidence.
+Before issuing the final BM25 query, SIRA consults lightweight corpus-statistics tools (document frequencies)
+to validate and prune proposed terms without returning answer passages, avoiding the retrieval-context
+advantage enjoyed by multi-round agents.
+Second, conditioned on the sketch and index statistics, SIRA compiles a retrieval program: a single controlled
+BM25 query with weighted keywords, optional exclusions, and structured composition. We evaluate SIRA
+in this strict one-shot setting: one LLM reasoning step, optional index-statistic checks, and one BM25 call.
+Multiple queries could improve performance, but the one-query regime isolates the central question: how far
+can retrieval go when the agent must formulate the right lexical action without reading retrieved snippets?
+BM25’s reliance on exact matching becomes a strength when the LLM supplies the right vocabulary and
+verifies its discriminative value through corpus statistics.
+Across BEIR-style IR evaluation (Thakur et al., 2021) and downstream QA, SIRA consistently outperforms
+strong dense retrievers, SPLADE, and state-of-the-art agentic baselines. These results suggest that the
+bottleneck in retrieval-augmented agents is the agent’s ability to formulate expert-level retrieval actions
+without relying on accumulated retrieval context, not the sophistication of the retriever or the number of
+search iterations.
+Background and Organization
+BM25 and sparse lexical retrieval.
+BM25 (Robertson and Zaragoza, 2009) is the dominant lexical
+ranking function in modern search systems. It scores a document d against a query q = (q1, . . . , qn) by
+summing per-term contributions:
+BM25(q, d) =
+n
+X
+i=1
+log
+
+1 + N −n(qi) + 0.5
+n(qi) + 0.5
+
+|
+{z
+}
+IDF(qi)
+·
+f(qi, d)
+f(qi, d) + k1
+
+1 −b + b ·
+|d|
+avgdl
+,
+(1)
+where f(qi, d) is the frequency of term qi in d, |d| is the document length in tokens, avgdl is the average
+document length across the corpus, N is the corpus size, and n(qi) is the number of documents containing qi.
+The formula decomposes into two interpretable factors. We use the Lucene variant, which applies log(1 + x)
+to the classical Robertson-Spärck Jones ratio, guaranteeing non-negative IDF for all terms. The IDF term
+down-weights common words and up-weights rare, discriminative terms: a query term appearing in most
+documents contributes near-zero IDF, while one appearing in only a handful of documents receives a large
+weight. The TF saturation term ensures that repeating a word within a document yields diminishing returns,
+controlled by k1. The parameter b governs length normalization: at b=1 the score fully normalizes for
+document length, while at b=0 document length is ignored.
+BM25 is implemented over an inverted index, which maps each vocabulary term to the documents and term
+frequencies in which it appears.
+Index-visible signals.
+BM25 makes corpus contrast observable through the inverted index: before retrieval,
+an agent can check whether a candidate term appears in the corpus, how many documents contain it, and
+how much IDF weight it can contribute. These signals do not reveal answer passages, but they expose
+whether LLM-proposed vocabulary is absent, too common, or likely to create retrieval margin. SIRA uses
+this information to validate, prune, and weight expansion terms so the final query is not merely plausible in
+isolation, but discriminative within the target corpus.
+SIRA: SuperIntelligent Retrieval Agent
+3.1
+Overview
+Most retrieval-augmented agents interact with a search engine through a loop: issue a query, inspect results,
+reformulate, and repeat until useful evidence emerges. SIRA replaces this multi-round loop with a one-shot
+Offline: Corpus-Side Enrichment (Amortized)
+Online: Query-Side Enrichment (Per-Query)
+Corpus Documents
+Frozen LLM
+Propose missing search vocabulary
+DF Filter DF 
+ ·|C|
+Enriched BM25 Index
+User Query q
+Frozen LLM
+Predict answer-document vocabulary
+DF Filter 0 < DF 
+ ·|C|
+Expansion Terms qexp
+Weighted BM25 Retrieval
+score(d) = BM25(qorig, d) + w · BM25(qexp, d)
+Top-k Documents Dk
+qorig
+Figure 2 SIRA pipeline overview. Corpus-side enrichment (left) is performed once offline; query-side enrichment (right)
+runs per query. Both stages apply a DF filter to reject uninformative terms; the query-side filter additionally requires
+DF > 0 to ensure each expansion term exists in the index. The original query qorig bypasses enrichment (dashed) and
+is combined with the expansion terms in a single weighted BM25 call.
+pipeline that bridges the vocabulary gap between queries and documents from both sides simultaneously. The
+full system requires no training, no relevance labels, and no supervised query-document pairs; it operates
+with a frozen LLM and corpus statistics alone.
+How SIRA expertizes a new corpus.
+Given an unseen corpus, SIRA builds domain expertise from both
+the corpus side and the query side, as illustrated in Figure 2. On the corpus side (offline, once per corpus),
+the LLM reads each document, anticipates the search vocabulary a user would need to find it, and proposes
+candidate terms absent from the document text. A document-frequency filter validates each candidate against
+the corpus index, discarding uninformative terms whose frequency exceeds an upper bound (detailed in
+Section 3.2). The surviving terms are injected into the BM25 index as atomic n-gram entries. On the query
+side (online, per query), the LLM first produces an expected-response sketch: a compact set of concepts,
+entities, and discriminative terms likely to appear in a relevant document but absent from the query. The
+same DF filter grounds the sketch in the enriched index. Conditioned on the validated sketch, SIRA then
+compiles a retrieval program and executes a single weighted BM25 call (detailed in Section 3.2):
+score(d) = BM25(qorig, d) + w · BM25(qexp, d),
+(2)
+where qorig is the original query, qexp is the filtered expansion, and w is the expansion weight. After the BM25
+retrieval top-k candidates are picked from the retrurned candidates based on relevance with the query.
+3.2
+Vocabulary Enrichment with SuperIntelligent LLMs
+SIRA bridges the query-document vocabulary gap by enriching both sides with LLM-proposed terms. The
+goal of enrichment is not to add more text indiscriminately, but to surface compact lexical signals: concepts,
+aliases, and phrases that are likely to identify the desired evidence while remaining rare enough to distinguish
+it from the rest of the corpus.
+This requires grounding LLM proposals in corpus statistics. A term that sounds expert-like may be useless for
+query-side enrichment if it never appears in the enriched index, and weak if it appears across many unrelated
+documents. SIRA therefore treats document frequency and BM25/TF-IDF-style salience as lightweight
+corpus-statistic tools: they check query-side term existence, estimate whether proposed terms are too common
+to discriminate, and retain terms that can contribute meaningful retrieval margin.
+DF filter.
+To ensure that only corpus-grounded and discriminative terms enter the retrieval pipeline, both
+enrichment stages share a document-frequency (DF) filter. The filter enforces an upper bound DF ≤τ · |C|,
+pruning terms that are repeated across too much of the corpus and therefore receive little useful IDF weight.
+For query-side enrichment, the filter additionally requires DF > 0, ensuring that every expansion phrase
+actually exists in the enriched index and can affect BM25 scoring. Corpus-side enrichment does not require
+this lower bound, since enrichment itself introduces new vocabulary into the index. The result is a compact
+set of terms that are plausible under the LLM’s domain knowledge and measurable as useful search signals in
+the target corpus.
+Corpus-side enrichment (offline).
+The goal is to anticipate how a user would search for a document
+when the vocabulary they would use is absent from the document text. The prompt explicitly instructs the
+LLM to generate new terms not already present in the document, focusing on discriminative vocabulary:
+synonyms, abbreviations, alternate names, and domain-specific phrasings that maximize lexical contrast with
+existing index terms. Crucially, the prompt is task-aware: for claim-verification corpora, it emphasizes entity
+aliases and factual cues; for argument retrieval, it targets opposing-side vocabulary; for duplicate detection,
+it focuses on intent-preserving synonym substitutions. Phrases that pass the DF filter are decomposed into
+sliding-window n-grams and injected into the corpus index as additional posting-list entries.
+Query-side enrichment (online).
+The goal is the mirror image of corpus-side enrichment: predict
+vocabulary that a relevant answer document would use but that is absent from the query. The prompt
+instructs the LLM to generate discriminative topic and domain vocabulary that narrows the search space,
+while explicitly forbidding it from guessing the answer itself. This distinction is critical for factoid queries,
+where predicting a named entity (e.g., a person or date) would bias retrieval toward a single candidate rather
+than broadening coverage of relevant evidence. As on the corpus side, the prompt is task-aware: factoid QA
+targets contextual terms surrounding the answer, multi-hop QA distributes expansion across all entities and
+reasoning hops, and duplicate detection focuses on intent-preserving synonym substitutions.
+Experiments
+We evaluate SIRA in two stages. First, we test pure retrieval quality on ten BEIR benchmarks (Thakur et al.,
+2021), an unforgiving setting that removes answer generation and measures only whether a system can rank
+relevant evidence above corpus-level distractors. Second, we ask whether this retrieval advantage transfers to
+downstream question answering by measuring answer coverage against recent RL-trained search agents.
+4.1
+Experimental Setup
+We evaluate SIRA on ten BEIR datasets (Thakur et al., 2021) spanning seven retrieval task types: question
+answering (NQ, HotpotQA), opinion retrieval (FIQA), fact-checking (FEVER, Climate-FEVER, SciFact),
+argument retrieval (ArguAna), citation prediction (SciDocs), and duplicate detection (Quora, CQADupStack).
+Table 1 summarizes corpus sizes (5K to 5.4M documents) and the number of relevant documents per query (1.0
+to 29.9), covering a broad range of retrieval regimes. We report Recall@10 and NDCG@10. Recall@10 measures
+the fraction of relevant documents appearing in the top-10 results, directly capturing a system’s ability to
+surface evidence for a downstream reader. NDCG@10 additionally rewards placing relevant documents at
+higher ranks, providing a complementary view of ranking quality.
+BEIR is a particularly stringent testbed for retrieval agents because it evaluates retrieval directly rather than
+end-to-end answer generation. Many recent agentic search systems focus on QA-style benchmarks where a
+reader model, prior knowledge, or multi-round interaction can partially mask weak retrieval. In contrast,
+BEIR exposes the core retrieval problem: given a fixed corpus and a query, can the system surface the relevant
+documents in the top ranks? This makes it the right setting for evaluating SIRA as a retrieval agent rather
+than as a general QA agent.
+Table 1 Overview of the ten BEIR retrieval benchmarks used in our evaluation, spanning diverse reasoning types
+including fact-checking, argumentation, citation prediction, and standard QA. The suite covers a broad range of
+domains and corpus sizes (5K to 5.4M documents), rigorously testing generalization. Rel D/Q denotes the average
+number of relevant documents per query.
+Dataset
+Type
+Queries
+Corpus
+Rel D/Q
+Description
+NQ
+Question Answering
+3,452
+2.68M
+1.22
+Retrieval for real-world Google search questions.
+HotpotQA
+Question Answering
+7,405
+5.23M
+2.00
+Multi-hop reasoning over Wikipedia paragraphs.
+FIQA
+Opinion Retrieval
+57K
+2.63
+Financial QA over StackExchange data.
+ArguAna
+Argument Retrieval
+1,401
+8.67K
+1.00
+Matching counter-arguments for debate topics.
+CQADupStack
+Duplicate Question
+1,570
+40K
+2.40
+Duplicate detection across StackExchange forums.
+Quora
+Duplicate Question
+10,000
+523K
+1.57
+Duplicate detection for Quora questions.
+SciDocs
+Citation Prediction
+1,000
+26K
+29.93
+Predicting citations for scientific papers.
+FEVER
+Fact-Checking
+6,666
+5.42M
+1.19
+Verifying claims against Wikipedia text.
+Climate-FEVER
+Fact-Checking
+1,535
+5.42M
+3.05
+Verifying climate change claims.
+SciFact
+Fact-Checking
+5K
+1.13
+Verifying scientific claims against abstracts.
+Baselines.
+We compare against ten baselines spanning three retrieval paradigms. BM25 (Robertson and
+Zaragoza, 2009) is the standard sparse lexical baseline. Among neural methods, E5 (Wang et al., 2022) is a
+dense bi-encoder trained on large-scale relevance data; SPLADE (Formal et al., 2021) and SPARTA (Zhao
+et al., 2021) are learned sparse retrieval models that preserve inverted-index efficiency while learning term
+importance weights; Doc2Query (Nogueira et al., 2019) performs document expansion by predicting queries a
+document would answer. Among LLM-based methods, HyDE (Gao et al., 2023) generates a hypothetical
+document as a BM25 query expansion; CoT (Wei et al., 2022) uses chain-of-thought prompting to expand
+the query with reasoning-derived terms; Search-R1 (Jin et al., 2025) trains an RL policy for multi-round
+search; GrepRAG (Wang et al., 2026) generates grep-like pattern queries originally designed for code retrieval;
+and ShellAgent (Subramanian et al., 2025) relies on grep-based keyword-search tools within an agentic
+loop for multi-step retrieval. HyDE, CoT, GrepRAG, ShellAgent, and SIRA use the same frozen LLM
+(Qwen3.6-35B-A3B-FP8); Search-R1 (E5) uses its publicly available trained checkpoint with the most potent
+E5 backend. Neural baselines use official checkpoints (see Table 2 caption). SIRA uses Qwen3.6-35B-A3B-FP8
+as its frozen LLM for both corpus-side and query-side enrichment.
+4.2
+Main Results on Large-Scale Information Retrieval
+In Table 2, we report Recall@10 and NDCG@10 across all ten benchmarks, comparing SIRA against sparse,
+dense, and agentic baselines. We structure the analysis around three research questions:
+• RQ1: Can a training-free agentic system match or surpass trained sparse and dense retrievers?
+• RQ2: Why do generic LLM search agents lag behind retrieval-native systems on BEIR, and does SIRA
+close this gap?
+• RQ3: Does SIRA’s retrieval quality translate to downstream QA performance competitive with RL-trained
+agentic QA systems?
+Table 2 evaluates the central claim of this paper: a frozen LLM can turn BM25 from a lexical baseline
+into the strongest retriever in the comparison. SIRA uses the LLM not as a reader and not merely as a
+query-expansion module, but as a controller for the BM25 engine itself. It proposes missing vocabulary,
+grounds those proposals with corpus statistics, weights the surviving terms through BM25’s IDF-sensitive
+scoring surface, and executes the result as a single ranked retrieval call.
+This comparison is deliberately strict. The baselines include supervised dense and sparse retrievers trained on
+large-scale relevance data, as well as LLM-based query-expansion and search-agent baselines. Thus, the key
+question is not whether LLMs can generate plausible search text or perform more search rounds, but whether
+they can produce a corpus-discriminative retrieval action that ranks gold evidence above confusers.
+Table 2 Recall@10 and NDCG@10 on ten BEIR datasets. HyDE, CoT, GrepRAG, ShellAgent, and SIRA use Qwen3.6-
+35B-A3B-FP8 (frozen, 3B active parameters); Search-R1 (E5) uses its publicly available checkpoint with an E5 retrieval
+backend. Neural baselines use official checkpoints: SPARTA (BeIR/sparta-msmarco-distilbert-base-v1), SPLADE
+(naver/splade-cocondenser-ensembledistil), Doc2Query (doc2query/msmarco-t5-base-v1), E5 (intfloat/e5-base-v2).
+Best per dataset in bold; second best underlined.
+ArguAna C-FEVER CQADup FEVER FIQA HotpotQA
+NQ
+Quora SciDocs SciFact
+Avg
+Recall@10
+BM25
+.7738
+.1764
+.4163
+.6747
+.3198
+.6141
+.4543
+.9014
+.1636
+.8078
+.5302
+Doc2Query
+.7824
+.1761
+.4339
+.6769
+.3397
+.6527
+.5068
+.8975
+.1663
+.8270
+.5459
+SPARTA
+.6181
+.1050
+.3100
+.7246
+.2450
+.5356
+.5584
+.7445
+.1303
+.7084
+.4680
+SPLADE
+.8137
+.2881
+.4924
+.8954
+.4139
+.7027
+.7381
+.9206
+.1654
+.8230
+.6253
+E5
+.7909
+.2899
+.5138
+.9109
+.4697
+.7276
+.7877
+.9428
+.1962
+.8489
+.6478
+HyDE
+.7091
+.2598
+.3299
+.7132
+.2845
+.5051
+.4918
+.5151
+.1530
+.8344
+.4796
+CoT
+.7752
+.1867
+.4020
+.6765
+.3086
+.5789
+.4961
+.8704
+.1595
+.7961
+.5250
+Search-R1 (E5)
+.5760
+.3014
+.5008
+.9010
+.4499
+.6705
+.7889
+.9355
+.2018
+.8349
+.6161
+GrepRAG
+.5746
+.0176
+.2400
+.1635
+.1009
+.3434
+.1628
+.5105
+.1027
+.5883
+.2804
+ShellAgent
+.2263
+.0305
+.2084
+.2557
+.1035
+.4327
+.1884
+.3330
+.0843
+.6685
+.2531
+SIRA
+.9036
+.3025
+.6301
+.9114
+.4904
+.7536
+.7883
+.9390
+.2676
+.9216
+.6908
+NDCG@10
+BM25
+.4874
+.1372
+.3481
+.5036
+.2532
+.5851
+.2916
+.8055
+.1565
+.6791
+.4247
+Doc2Query
+.4946
+.1381
+.3667
+.5122
+.2731
+.6299
+.3302
+.7960
+.1589
+.6920
+.4392
+SPARTA
+.3890
+.0852
+.2497
+.6101
+.1925
+.5132
+.3983
+.6294
+.1272
+.5894
+.3784
+SPLADE
+.5253
+.2293
+.4083
+.7933
+.3478
+.6869
+.5369
+.8344
+.1586
+.7025
+.5223
+E5
+.5323
+.2397
+.4196
+.8096
+.3932
+.6905
+.5835
+.8648
+.1855
+.7156
+.5434
+HyDE
+.4366
+.2004
+.2463
+.5507
+.2223
+.4451
+.3315
+.3924
+.1402
+.6565
+.3622
+CoT
+.4951
+.1471
+.3354
+.4932
+.2486
+.5595
+.3168
+.7608
+.1518
+.6647
+.4173
+Search-R1 (E5)
+.3658
+.2654
+.4040
+.8215
+.3765
+.6520
+.5790
+.8543
+.1878
+.7094
+.5216
+GrepRAG
+.3555
+.0122
+.2048
+.0971
+.0763
+.2927
+.0908
+.4557
+.0921
+.4129
+.2090
+ShellAgent
+.1114
+.0206
+.1558
+.1298
+.0686
+.3417
+.1036
+.2476
+.0727
+.4374
+.1689
+SIRA
+.6174
+.2288
+.5327
+.8037
+.3771
+.6904
+.5923
+.8490
+.2449
+.7866
+.5723
+RQ1: SIRA surpasses trained retrievers without supervision.
+SIRA achieves the highest average
+Recall@10 on BEIR, reaching 0.691 compared with 0.648 for E5, 0.625 for SPLADE, and 0.530 for BM25. It
+does so without relevance labels, without fine-tuning a retriever, and without building an embedding index.
+The advantage also holds for ranking quality: SIRA reaches 0.572 average NDCG@10, compared with 0.543
+for E5 and 0.522 for SPLADE. This is the central result: a training-free retrieval agent built on BM25 can
+outperform supervised dense and learned sparse retrievers trained on large-scale relevance data.
+The gains are broad rather than driven by a single dataset. SIRA obtains the best Recall@10 on eight of
+ten benchmarks; the two exceptions are NQ, where Search-R1 (E5) is ahead by 0.06 percentage points, and
+Quora, where E5 is ahead by 0.4 percentage points. The largest improvements over E5 appear on datasets
+with structural query-document vocabulary gaps: +36% relative on SciDocs, +23% on CQADupStack, and
++14% on ArguAna. These are precisely the settings where corpus-grounded enrichment should help: the LLM
+proposes missing terminology, the DF filter removes absent or overly common terms, and BM25 amplifies the
+surviving discriminative vocabulary through IDF-weighted scoring.
+RQ2: SIRA turns LLM reasoning into retrieval-native ranking.
+The LLM-based baselines remain
+below SIRA on pure retrieval metrics, but Search-R1 (E5) clarifies an important distinction. HyDE and
+CoT remain close to BM25 on average, with Recall@10 of 0.480 and 0.525 compared with 0.530 for BM25.
+Search-R1 gains substantially from its E5 backend, reaching 0.616 Recall@10 and 0.522 NDCG@10, but
+still trails SIRA’s 0.691 Recall@10 and 0.572 NDCG@10. Stronger backend retrieval clearly helps, but a
+multi-round search policy on top of that backend still does not close the gap to corpus-grounded BM25 control.
+The gap is even larger for grep-style tool-use agents. GrepRAG and ShellAgent use the same LLM backbone as
+NQ
+HotpotQA
+20
+60
+100
+Accuracy / Answer Coverage (%)
+48.0
+43.3
+43.4
+43.0
+51.4
+49.5
+55.8
+69.0
+62.6
+62.8
+71.2
+62.4
+80.4
+73.1
+84.7
+77.6
+SIRA Retrieval Answer Coverage vs Agentic QA Baselines
+Search-R1
+TIPS
+A²Search
+E-GRPO
+SSP
+HiPRAG
+SIRA Top-5
+SIRA Top-10
+Figure 3 SIRA retrieval answer coverage (top-5 and top-10) vs. six RL-trained agentic QA systems on NQ and
+HotpotQA. Baseline numbers are the best reported results taken directly from each original paper. All baselines
+are end-to-end QA pipelines reporting generated-answer accuracy; SIRA is a pure retriever with no reader. Answer
+coverage requires the gold string to be retreived.
+SIRA, but treat retrieval as pattern generation rather than corpus-aware ranking, yielding average Recall@10
+of only 0.280 and 0.253. Because the backbone is shared, the gap isolates the retrieval interface: grep-style
+agents search with patterns that lack BM25’s document-frequency and IDF-weighted term scoring, while SIRA
+turns LLM proposals into weighted retrieval signals. SIRA therefore outperforms GrepRAG and ShellAgent
+by 41.0 and 43.8 absolute Recall@10 points.
+Recent LLM search agents also show how much performance depends on the retrieval backend: Search-R1
+improves markedly when paired with E5, yet still remains below E5 on average Recall@10 and below SIRA on
+both Recall@10 and NDCG@10. This does not mean E5 reasons better; it means retrieval-native systems are
+optimized for the object BEIR measures: ranking relevant documents above corpus-level distractors. SIRA
+closes this gap by using the LLM to program the retrieval engine itself: proposed terms are grounded by
+corpus statistics, filtered for discriminative value, weighted through BM25’s IDF-sensitive scoring surface, and
+executed in a single ranked retrieval call.
+4.3
+Downstream Question Answering
+Our goal is to test whether SIRA’s retrieval advantage translates into downstream question answering. Since
+SIRA is a retrieval agent rather than an answer generator, the evaluation requires QA datasets with an
+associated retrieval corpus and gold evidence/answer annotations. Among the BEIR benchmarks, this leaves
+NQ and HotpotQA: both provide fixed corpora for retrieval and gold answer strings that allow us to measure
+whether retrieved documents contain the evidence needed to answer.
+This setting directly tests the claim that a better retrieval agent can become a better QA agent by supplying
+stronger evidence to the reader. It is also a difficult comparison for SIRA. The baselines are recent agentic QA
+systems designed for these tasks, and many are trained or reinforced on QA-style objectives closely aligned
+with NQ and HotpotQA. They report end-to-end generated-answer accuracy, so they may receive credit
+even when retrieval is incomplete, because the reader can use parametric knowledge or answer synthesis. In
+contrast, SIRA is counted correct only when the gold answer string appears in the retrieved text.
+We compare against six recent RL-trained agentic QA systems, including Search-R1 (Jin et al., 2025),
+TIPS (Xie et al., 2026), A2Search (Zhang et al., 2025), E-GRPO (Zhang et al., 2026), SSP (Lu et al., 2025),
+and HiPRAG (Wu et al., 2025). We take the best reported numbers directly from the original papers, giving
+each baseline the benefit of its full end-to-end QA pipeline. SIRA uses no reader model in this comparison.
+It also uses no RL fine-tuning, no task-specific supervised training, and no multi-round search; the same
+one-shot SIRA retriever used in the BEIR experiments is evaluated directly. SIRA is evaluated only by answer
+coverage, the fraction of queries for which its retrieved documents contain verifiable answer evidence.
+RQ3: The best retrieval agent yields the strongest QA evidence.
+Despite this disadvantaged
+evaluation, SIRA’s retrieval-only answer coverage exceeds the reported end-to-end QA accuracy of all six
+agentic baselines at top-10. This comparison gives the baselines both their trained search policies and their
+answer generators, while SIRA contributes only retrieved text. As shown in Figure 3, SIRA reaches 84.7%
+on NQ and 77.6% on HotpotQA. The strongest baselines: HiPRAG reaches 71.2% on NQ, while E-GRPO
+reaches 69.0% on HotpotQA. SIRA exceeds both by large margins.
+The result is also strong at a tighter retrieval budget. At top-5, SIRA achieves 80.4% on NQ and 73.1% on
+HotpotQA, still exceeding every baseline in the comparison. These results support a simple conclusion: for
+corpus-grounded QA, improving retrieval can be more important than adding more search rounds or training
+the answer generator. The compared agents are built for end-to-end QA and many are optimized on QA-style
+rewards, yet SIRA surfaces answer-bearing passages more reliably with a single retrieval call.
+Limitations and future work.
+SIRA assumes that the frozen LLM can understand the query and provide
+useful semantic priors about the target corpus. We have not evaluated settings where the corpus is far outside
+the LLM’s pretraining distribution; in such domains, corpus-side adaptation or fine-tuning may be needed
+before the LLM can propose reliable enrichment terms.
+Conclusion
+We introduced SIRA, a retrieval-centric agent that turns LLM reasoning into controllable lexical retrieval.
+Instead of using the LLM to repeatedly query a black-box search tool, SIRA uses it to program the retrieval
+action itself: enrich the corpus with missing user vocabulary, enrich the query with likely evidence vocabulary,
+validate proposed terms with corpus statistics, and execute a single weighted BM25 call.
+The main result is that this simple interface changes the role of BM25. Across ten BEIR benchmarks,
+SIRA achieves the highest average Recall@10 and NDCG@10 in our comparison, outperforming BM25, E5,
+SPLADE, and recent LLM-based search agents while using no relevance labels, no retriever fine-tuning, and
+no embedding index. Its gains are broad, with the best Recall@10 on eight of ten datasets and especially
+large improvements on tasks where query and document vocabularies diverge.
+The downstream QA results show that this retrieval advantage matters beyond BEIR. On NQ and HotpotQA,
+SIRA’s retrieval-only answer coverage exceeds recent RL-trained agentic QA systems, even though those
+systems use trained search policies and answer generators while SIRA contributes only retrieved evidence.
+This supports a simple conclusion: for corpus-grounded QA, the ability to surface the right evidence can
+matter more than adding more search rounds.
+SIRA suggests a different path for retrieval-augmented agents. Rather than making agents search longer and
+accumulate more context, we can make the retrieval action itself more expert, corpus-aware, and interpretable.
+The remaining open question is how far this idea extends to corpora far outside the frozen LLM’s knowledge,
+where corpus adaptation or fine-tuning may be needed before reliable enrichment is possible.
+References
+Payal Bajaj, Daniel Campos, Nick Craswell, Li Deng, Jianfeng Gao, Xiaodong Liu, Rangan Majumder, Andrew
+McNamara, Bhaskar Mitra, Tri Nguyen, et al. Ms marco: A human generated machine reading comprehension
+dataset. arXiv preprint arXiv:1611.09268, 2016.
+Maciej Besta, Nils Blach, Ales Kubicek, Robert Gerstenberger, Michal Podstawski, Lukas Gianinazzi, Joanna Gajda,
+Tomasz Lehmann, Hubert Niewiadomski, Piotr Nyczyk, et al. Graph of thoughts: Solving elaborate problems
+with large language models. In Proceedings of the AAAI conference on artificial intelligence, volume 38, pages
+17682-17690, 2024.
+Olivier Chapelle and Ya Zhang. A dynamic bayesian network click model for web search ranking. In Proceedings of the
+18th international conference on World wide web, pages 1-10, 2009.
+Thibault Formal, Benjamin Piwowarski, and Stéphane Clinchant. Splade: Sparse lexical and expansion model for first
+stage ranking. In Proceedings of the 44th International ACM SIGIR Conference on Research and Development in
+Information Retrieval, pages 2288-2292, 2021.
+Luyu Gao, Xueguang Ma, Jimmy Lin, and Jamie Callan.
+Precise zero-shot dense retrieval without relevance
+labels.
+In Anna Rogers, Jordan Boyd-Graber, and Naoaki Okazaki, editors, Proceedings of the 61st Annual
+Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1762-1777, Toronto,
+Canada, July 2023. Association for Computational Linguistics.
+doi: 10.18653/v1/2023.acl-long.99.
+https:
+//aclanthology.org/2023.acl-long.99/.
+Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon, Sercan Arik, Dong Wang, Hamed Zamani, and Jiawei Han. Search-
+r1: Training llms to reason and leverage search engines with reinforcement learning. arXiv preprint arXiv:2503.09516,
+2025.
+Thorsten Joachims, Laura Granka, Bing Pan, Helene Hembrooke, Filip Radlinski, and Geri Gay. Evaluating the
+accuracy of implicit feedback from clicks and query reformulations in web search. ACM Transactions on Information
+Systems (TOIS), 25(2):7-es, 2007.
+Andrej Karpathy. LLM wiki. GitHub Gist, 
+2026. Accessed: 2026-05-05.
+Vladimir Karpukhin, Barlas Oguz, Sewon Min, Patrick Lewis, Ledell Wu, Sergey Edunov, Danqi Chen, and Wen-tau
+Yih. Dense passage retrieval for open-domain question answering. In Proceedings of the 2020 conference on empirical
+methods in natural language processing (EMNLP), pages 6769-6781, 2020.
+Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich Küttler,
+Mike Lewis, Wen-tau Yih, Tim Rocktäschel, et al. Retrieval-augmented generation for knowledge-intensive nlp tasks.
+Advances in neural information processing systems, 33:9459-9474, 2020.
+Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni, and Percy Liang.
+Lost in the middle: How language models use long contexts. Transactions of the Association for Computational
+Linguistics, 12:157-173, 2024. doi: 10.1162/tacl_a_00638. 
+Hongliang Lu, Yuhang Wen, Pengyu Cheng, Ruijin Ding, Jiaqi Guo, Haotian Xu, Chutian Wang, Haonan Chen, Xiaoxi
+Jiang, and Guanjun Jiang. Search self-play: Pushing the frontier of agent capability without supervision. arXiv
+preprint arXiv:2510.18821, 2025.
+Fengran Mo, Kelong Mao, Ziliang Zhao, Hongjin Qian, Haonan Chen, Yiruo Cheng, Xiaoxi Li, Yutao Zhu, Zhicheng
+Dou, and Jian-Yun Nie. A survey of conversational search. ACM Transactions on Information Systems, 43(6):1-50,
+2025.
+Rodrigo Nogueira, Wei Yang, Jimmy Lin, and Kyunghyun Cho. Document expansion by query prediction. arXiv
+preprint arXiv:1904.08375, 2019.
+Ben Pan, Carlo Baronio, Albert Tam, Pietro Marsella, Mokshit Jain, Daniel Chiu, Swyx, and Silas Alberti. Introducing
+swe-grep and swe-grep-mini: Rl for multi-turn, fast context retrieval. Cognition Blog, 
+e-grep#rl-for-training-fast-parallel-agentic-code-search-models, October 2025. Accessed: 2026-05-05.
+Pew Research Center. Google users are less likely to click on links when an ai summary appears in the results.
+
+i-summary-appears-in-the-results/, July 2025. Accessed 2026-01-26.
+Stephen Robertson and Hugo Zaragoza. The probabilistic relevance framework: BM25 and beyond, volume 4. Now
+Publishers Inc, 2009.
+Stephen E Robertson. The probability ranking principle in ir. Journal of documentation, 33(4):294-304, 1977.
+Anshumali Shrivastava. Understanding the fundamental limitations of vector-based retrieval for building llm-powered
+chatbots- (part 1/3). Medium, 
+f-vector-based-retrieval-for-building-llm-powered-48bb7b5a57b3, June 2023. Accessed: 2026-05-05.
+Anshumali Shrivastava. Deepmind calls out embedding limits: Why single-vector retrieval falls short - an attention
+perspective. Medium, 
+tor-retrieval-falls-short-an-attention-2a930d477d80, September 2025. Accessed: 2026-05-05.
+Shreyas Subramanian, Adewale Akinfaderin, Yanyan Zhang, Ishan Singh, Mani Khanuja, Sandeep Singh, and
+Maira Ladeira Tanke. Keyword search is all you need: Achieving rag-level performance without vector databases
+using agentic tool use. arXiv preprint arXiv:2602.23368, 2025.
+Nandan Thakur, Nils Reimers, Andreas Rücklé, Abhishek Srivastava, and Iryna Gurevych. Beir: A heterogenous
+benchmark for zero-shot evaluation of information retrieval models. arXiv preprint arXiv:2104.08663, 2021.
+Harsh Trivedi, Niranjan Balasubramanian, Tushar Khot, and Ashish Sabharwal. Interleaving retrieval with chain-of-
+thought reasoning for knowledge-intensive multi-step questions. In Anna Rogers, Jordan Boyd-Graber, and Naoaki
+Okazaki, editors, Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume
+1: Long Papers), pages 10014-10037, Toronto, Canada, July 2023. Association for Computational Linguistics. doi:
+10.18653/v1/2023.acl-long.557. 
+Baoyi Wang, Xingliang Wang, Guochang Li, Chen Zhi, Junxiao Han, Xinkui Zhao, Nan Wang, Shuiguang Deng, and
+Jianwei Yin. Greprag: An empirical study and optimization of grep-like retrieval for code completion. arXiv preprint
+arXiv:2601.23254, 2026.
+Liang Wang, Nan Yang, Xiaolong Huang, Binxing Jiao, Linjun Yang, Daxin Jiang, Rangan Majumder, and Furu Wei.
+Text embeddings by weakly-supervised contrastive pre-training. arXiv preprint arXiv:2212.03533, 2022.
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny Zhou, et al.
+Chain-of-thought prompting elicits reasoning in large language models. Advances in neural information processing
+systems, 35:24824-24837, 2022.
+Orion Weller, Michael Boratko, Iftekhar Naim, and Jinhyuk Lee. On the theoretical limitations of embedding-based
+retrieval. arXiv preprint arXiv:2508.21038, 2025.
+Peilin Wu, Mian Zhang, Kun Wan, Wentian Zhao, Kaiyu He, Xinya Du, and Zhiyu Chen. Hiprag: hierarchical process
+rewards for efficient agentic retrieval augmented generation. arXiv preprint arXiv:2510.07794, 2025.
+Yutao Xie, Nathaniel Thomas, Nicklas Hansen, Yang Fu, Li Erran Li, and Xiaolong Wang. TIPS: Turn-level information-
+potential reward shaping for search-augmented LLMs. In The Fourteenth International Conference on Learning
+Representations, 2026. 
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. React: Synergizing
+reasoning and acting in language models. arXiv preprint arXiv:2210.03629, 2022.
+Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Tom Griffiths, Yuan Cao, and Karthik Narasimhan. Tree of
+thoughts: Deliberate problem solving with large language models. Advances in neural information processing systems,
+36:11809-11822, 2023.
+Fengji Zhang, Xinyao Niu, Chengyang Ying, Guancheng Lin, Zhongkai Hao, Zhou Fan, Chengen Huang, Jacky Keung,
+Bei Chen, and Junyang Lin. A2search: Ambiguity-aware question answering with reinforcement learning. arXiv
+preprint arXiv:2510.07958, 2025.
+Shengjun Zhang, Zhang Zhang, Chensheng Dai, and Yueqi Duan.
+E-grpo: High entropy steps drive effective
+reinforcement learning for flow models. arXiv preprint arXiv:2601.00423, 2026.
+Tiancheng Zhao, Xiaopeng Lu, and Kyusong Lee. Sparta: Efficient open-domain question answering via sparse
+transformer matching retrieval. In Proceedings of the 2021 Conference of the North American Chapter of the
+Association for Computational Linguistics: Human Language Technologies, pages 565-575, 2021.

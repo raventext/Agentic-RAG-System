@@ -1,0 +1,861 @@
+Learning to Cut: Reinforcement Learning for Benders
+Decomposition
+Haochen Cai
+Department of Integrated Systems Engineering
+The Ohio State University
+Columbus, OH, USA, 43210
+cai.1256@osu.edu
+Xian Yu
+Department of Integrated Systems Engineering
+The Ohio State University
+Columbus, OH, USA, 43210
+yu.3610@osu.edu
+Abstract
+Benders decomposition (BD) is a widely used solution approach for solving two-
+stage stochastic programs arising in real-world decision-making under uncertainty.
+However, it often suffers from slow convergence as the master problem grows with
+an increasing number of cuts. In this paper, we propose Reinforcement Learning
+for BD (RLBD), a framework that adaptively selects cuts using a neural network-
+based stochastic policy. The policy is trained using a policy gradient method via
+the REINFORCE algorithm. We evaluate the proposed approach on a two-stage
+stochastic electric vehicle charging station location problem and compare it with
+vanilla BD and LearnBD [Jia and Shen, 2021], a supervised learning approach that
+classifies cuts using a support vector machine. Numerical results demonstrate that
+RLBD achieves substantial improvements in computational efficiency and exhibits
+strong generalization to problems with similar structures but varying data inputs
+and decision variable dimensions.
+Introduction
+Two-stage stochastic programs provide a general framework for modeling decision-making under
+uncertainty, where decisions are separated into here-and-now (first-stage) decisions, made before
+uncertainty is realized, and wait-and-see (second-stage) decisions, which adapt to observed outcomes
+through recourse actions after the uncertainty unfolds. This modeling paradigm has been widely
+used in a broad range of applications, including facility location problems [Magnanti and Wong,
+1981, Fischetti et al., 2016, 2017a], supply chain management [Keyvanshokooh et al., 2016, Basciftci
+et al., 2023], scheduling and routing problems [Adulyasak et al., 2015, Bodur and Luedtke, 2017,
+Yu et al., 2021, 2023], energy system operations [Alguacil and Conejo, 2000, Wang et al., 2011,
+Daneshvar et al., 2020], among others. A key challenge in these problems is that the second-stage
+decisions depend on random realizations, leading to large-scale optimization models. As the number
+of scenarios increases, directly solving the resulting extensive-form problem becomes computationally
+prohibitive.
+Benders decomposition (BD) has emerged as a popular method for solving two-stage stochastic
+programs by decomposing the original problem into a master problem and a set of subproblems
+[Benders, 1962]. Specifically, at each iteration, the algorithm generates cuts that approximate the
+Preprint.
+arXiv:2605.06516v1 [math.OC] 7 May 2026
+
+recourse function (the second-stage value function) and iteratively tighten the master problem. As a
+result, the computational performance of BD depends critically on the quality of the cuts that are
+added during this iterative process. In the multi-cut formulation, the algorithm generates separate
+cuts for each scenario or subproblem, producing a tighter and more accurate representation of the
+recourse function; however, adding all of them can significantly increase the size of the master
+problem and slow down subsequent solves. On the other hand, in the single-cut formulation, all
+subproblem (scenario-wise) information is aggregated into one cut per iteration, leading to a smaller
+master problem but potentially weaker approximations of the recourse function. This introduces a
+trade-off between strengthening the master problem and maintaining computational efficiency. We
+refer to Birge and Louveaux [2011] for a detailed introduction of these two formulations.
+In this work, we model cut selection in BD as a sequential decision-making problem. At each
+iteration, the state encodes current convergence statistics, along with features of the master problem,
+subproblems, and individual cuts, while the action corresponds to selecting a subset of candidate
+cuts to add to the master problem. Based on this formulation, we develop a reinforcement learning
+(RL) approach that trains an optimal cut-selection policy using policy gradient algorithms. Our
+contributions can be summarized as follows:
+• Stochastic cut-selection policy. Different than the existing literature in BD that selects
+cuts deterministically, we consider a stochastic policy that selects each cut with a certain
+probability, based on global algorithmic information and local cut features. This allows
+the policy to exploit the most informative cuts given the current information while still
+maintaining the ability to explore alternative cuts that may become important later.
+• Strong generalization to problems with similar structures. Our numerical results demon-
+strate that the trained cut-selection policy exhibits strong generalization to problems with
+similar structures but different data inputs and decision variable dimensions.
+• Substantial improvements over existing benchmarks. Compared to existing benchmarks
+such as vanilla BD and LearnBD [Jia and Shen, 2021], our RLBD reduces computational
+time by up to a factor of five on most testing instances and achieves smaller optimality gaps
+when all methods fail to converge within the prescribed time limit.
+Related Work
+A variety of classical techniques have been developed to accelerate the convergence of BD. Among
+them, cut management is a key technique that carefully controls which cuts to add and retain in
+the master problem. Instead of adding all candidate cuts from solving the subproblems, many
+approaches add only a selected set of informative cuts at each iteration, such as the most violated
+cuts or the Pareto-optimal cuts, to improve convergence without excessively enlarging the master
+problem [Magnanti and Wong, 1981, Fischetti et al., 2017b]. Another widely used heuristic is to
+remove redundant or inactive cuts that no longer contribute to tightening the formulation, thereby
+controlling the size of the master problem. On the other hand, scenario grouping techniques have been
+studied in the literature to improve computational efficiency by aggregating multiple cuts from similar
+scenarios [Adulyasak et al., 2015, Maheo et al., 2019, Ramírez-Pico et al., 2023]. An alternative
+stream of research focuses on reducing the solution time per iteration by solving the master problem
+or subproblem inexactly, leading to the so-called inexact BD [Geoffrion and Graves, 1974, Easwaran
+and Üster, 2009, Poojari and Beasley, 2009].
+Recent works have explored integrating machine learning (ML) and RL into BD to improve its
+efficiency. Jia and Shen [2021] proposed a learning-enhanced framework (LearnBD) that trains a
+support vector machine to classify cuts and selectively adds those likely to be valuable to the master
+problem, thereby reducing the size of the master problem. Choi et al. [2025] replaced the exact
+subproblem solver with a pretrained transformer model, accelerating the convergence of BD by
+generating high-quality approximate solutions for the subproblems. Different than these ML-based
+prediction models, Li et al. [2025] applied RL to learn policies to adaptively select optimality gap
+tolerance for the master problem based on the features of the problem and the solution progress in
+inexact BD. Mana et al. [2023] replaced the master problem with an RL-based surrogate to generate
+candidate solutions, without relying on repeatedly solving expensive master problems.
+In a different line of work, researchers have also investigated ML and RL approaches for general-
+purpose optimization algorithms. For example, ML has been leveraged to solve combinatorial
+optimization problems [Bengio et al., 2021, Khalil et al., 2017, Li et al., 2018, Khalil et al., 2016].
+Recently, Bello et al. [2017] proposed Neural Combinatorial Optimization, a framework that leverages
+policy gradient methods to train neural networks for generating high-quality solutions to traveling
+salesman problems. Tang et al. [2020] introduced a deep RL formulation to adaptively select cuts
+within a branch-and-cut framework for solving integer programs. Chi et al. [2022] proposed a deep
+RL approach for column generation, where the column selection process is modeled as a sequential
+decision-making problem and optimized using Q-learning.
+Preliminaries
+In this section, we review the two-stage stochastic programming framework in Section 3.1, and the
+classical BD in Section 3.2, respectively.
+3.1
+Two-Stage Stochastic Programming
+We consider a class of two-stage stochastic programming problems, where in the first stage, a decision
+vector x ∈X ⊆Rn1 is chosen before the realization of uncertainty, and in the second stage, a
+recourse decision y ∈Rn2 is made after observing the realization of the uncertain parameter ξ. The
+two-stage stochastic program can be written as minx∈X cTx + Eξ[Q(x, ξ)], where c ∈Rn1 is the
+first-stage cost vector, and Eξ[·] denotes the expectation with respect to the distribution of ξ. Here,
+given the first-stage decision x and uncertainty realization ξ, the second-stage recourse function
+Q(x, ξ) is defined as Q(x, ξ) := miny{qTy | Wy ≥h −Tx}, where the uncertain parameter ξ
+includes the data (W, h, T, q).
+We assume that the uncertain parameter ξ can take values from a finite scenario set Ω, where each
+scenario ω ∈Ωcorresponds to a realization ξω = (W ω, hω, T ω, qω) with probability pω, satisfying
+P
+ω∈Ωpω = 1. Then, a sample average approximation (SAA) to the two-stage stochastic program
+can be written as
+min
+x∈X cTx +
+X
+ω∈Ω
+pωQω(x),
+(1)
+where
+Qω(x) := min
+y
+(qω)Ty
+s.t.
+W ωy ≥hω −T ωx.
+(2)
+To ensure a well-defined problem, we further assume that the second-stage problem (2) is always
+feasible (i.e., satisfies relatively complete recourse) and that the recourse function is finite, i.e.,
+|Qω(x)| < +∞for all x ∈X and ω ∈Ω. Our goal is to develop an efficient solution approach for
+the SAA problem (1).
+3.2
+Benders Decomposition
+The extensive-form SAA (1) becomes computationally challenging when the number of scenarios
+increases. BD exploits its separable structure by decomposing it into a master problem and a set of
+scenario-wise subproblems. At each iteration t, we first solve the following master problem (MPt):
+(MPt)
+min
+x∈X,θ
+cTx +
+X
+ω∈Ω
+pωθω
+s.t.
+θω ≥(πω
+τ )T(hω −T ωx),
+∀τ ∈[t −1], ω ∈Ω,
+(3)
+where θω ≥(πω
+τ )T(hω −T ωx), ∀τ ∈[t −1], ω ∈Ωdenote the current optimality cuts to
+approximate the recourse function Qω(x) from below, and no cuts are present when t = 1. The
+problem (MPt) is solved to obtain an optimal first-stage solution (ˆxt, ˆθt) together with a lower bound
+to the original problem (1). Given ˆxt, we construct the following dual of the subproblem for each
+scenario ω ∈Ω:
+(SPω
+t )
+max
+πω≥0 (πω)T(hω −T ωˆxt)
+s.t.
+(W ω)Tπω = qω.
+(4)
+We denote the optimal solution of (4) as πω
+t . By strong duality, Qω(ˆxt) = (πω
+t )T(hω −T ωˆxt),
+and since ˆxt is a feasible first-stage solution, cTˆxt + P
+ω∈ΩpωQω(ˆxt) provides an upper bound for
+(1). The optimal dual solutions {πω
+t }ω∈Ωare then used to generate Benders optimality cuts of the
+following form
+θω ≥(πω
+t )T(hω −T ωx),
+∀ω ∈Ω,
+(5)
+which provide valid lower approximations of the recourse function. If the current (MPt)’s optimal
+solution (ˆxt, ˆθt) satisfies the newly generated cuts (5), then we terminate the algorithm and return
+(ˆxt, ˆθt) as the optimal solution. Otherwise, we add the optimality cuts (5) to the master problem and
+proceed to the next iteration. This iterative process converges to a globally optimal solution in a finite
+number of iterations under mild conditions, as shown in Van Slyke and Wets [1969].
+Despite its effectiveness, classical BD often suffers from slow convergence. In particular, the number
+of generated cuts can grow rapidly, leading to computationally expensive master problems. Motivated
+by this computational challenge, we develop an RL framework to speed up the BD algorithm next.
+Reinforcement Learning for Benders Decomposition
+In this section, we propose Reinforcement Learning for Benders Decomposition (RLBD), a framework
+that adaptively selects Benders cuts to improve computational efficiency. Unlike classical BD, which
+either adds all scenario-wise cuts or aggregates them into a single cut at each iteration, RLBD
+formulates cut selection as a sequential decision-making problem and learns a policy to select the
+most informative cuts at each iteration (see Figure 1 for an illustration). We first introduce the MDP
+formulation in Section 4.1 and the neural network policy parameterization in Section 4.2, respectively.
+The RLBD framework consists of two phases: (i) Training, where the stochastic cut-selection policy
+is learned using a policy gradient method via REINFORCE (Section 4.3), and (ii) Testing, where the
+trained policy is applied in a greedy manner to new problem instances via policy rollout (Section 4.4).
+Figure 1: The RLBD Framework.
+4.1
+Markov Decision Process Formulation
+We model the cut-selection problem in BD as a finite-horizon discounted MDP. In this formulation,
+each Benders iteration corresponds to one decision step. At iteration t, the agent observes the current
+master problem (RLBD-MPt):
+(RLBD-MPt)
+min
+x∈X,θ
+cTx +
+X
+ω∈Ω
+pωθω
+s.t.
+θω ≥(πω
+τ )T(hω −T ωx),
+∀τ ∈[t −1], ω ∈Aτ.
+(6)
+Unlike (MPt) in classical BD (3), where all scenario-wise cuts ω ∈Ωare included, we instead
+maintain only a subset Aτ ⊂Ωfor all τ ∈[t −1]. Moreover, the selected subset Aτ may vary
+across iterations. The agent solves (RLBD-MPt) to obtain an optimal solution (ˆxt, ˆθt) and an optimal
+objective value, which serves as a lower bound for problem (1), denoted by LBt. Based on (ˆxt, ˆθt), the
+agent then solves the same subproblem (SPω
+t ) in (4) and generates scenario-wise cuts of the form (5)
+for all ω ∈Ω. Since the first-stage solution ˆxt is feasible for (1) and Qω(ˆxt) = (πω
+t )T(hω −T ωˆxt),
+the agent constructs an upper bound for problem (1), defined by UBt := cTˆxt+P
+ω∈Ωpω(πω
+t )T(hω−
+T ωˆxt). Then, the agent selects a subset of candidate cuts At ⊂Ω, and the environment advances to
+the next iteration t + 1 by adding the selected cuts At to (6).
+Formally, the finite-horizon discounted MDP is defined by the tuple (S, A, f, r, γ, T), where S is the
+state space, A is the action space, f : S × A →S represents the transition dynamics induced by the
+Benders solver, r(s, a) is the step-wise reward function, γ ∈(0, 1] is the discount factor, and T is the
+number of decision stages. Next, we introduce each component in detail.
+4.1.1
+State Space
+At each iteration t, the state representation contains both global information about the current
+convergence statistics, master problem and subproblem features, shared by all candidate cuts, and
+local information about each candidate cut.
+Convergence statistics. The state includes the current iteration index t, lower bound LBt, upper
+bound UBt, and the current optimality gap, defined by Gapt := (UBt −LBt)/(|UBt| + ϵ). It also
+includes changes in the lower/upper bounds and the optimality gap, defined by ∆LBt := LBt−LBt−1,
+∆UBt := UBt−1 −UBt, and ∆Gapt := Gapt−1 −Gapt, respectively. Based on them, the state
+further includes the gap reduction rate ρGap
+t
+:= ∆Gapt/(Gapt−1 + ϵ), lower-bound improvement
+rate ρLB
+t
+:= ∆LBt/(|LBt−1| + ϵ), and upper-bound improvement rate ρUB
+t
+:= ∆UBt/(|UBt−1| + ϵ),
+which characterize the convergence statistics of the Benders procedure across iterations. Here, ϵ > 0
+is a small positive constant, which is added in the denominator to avoid numerical instability. For
+each candidate cut of the form (5) generated at iteration t, we denote the cut-level violation at the
+current master solution (ˆxt, ˆθt) as vω
+t := (πω
+t )T(hω −T ωˆxt) −ˆθω
+t for all ω ∈Ω. We then record the
+mean violation ¯vt := P
+ω∈Ωpωvω
+t and the maximum violation vmax
+t
+:= maxω∈Ωvω
+t , which reflect
+the approximation quality of the cuts. Note that ¯vt and vmax
+t
+represent the global information, and we
+will include the cut-level violation vω
+t in the local state component, introduced later.
+Master problem features. The state includes the number of cuts added in the previous iteration K,
+the cumulative number of cuts added Ccum
+t
+, and the solve time for (RLBD-MPt), denoted by T MP
+t
+.
+These features reflect the size and computational burden of the master problem.
+Subproblem features. After solving the scenario-wise subproblems (4), the state records summary
+statistics of the scenario-wise recourse costs. Let Qω
+t denote the optimal objective value for (SPω
+t )
+in (4) under the current first-stage solution (ˆxt, ˆθt). We include the average recourse cost ¯Qt =
+P
+ω∈ΩpωQω
+t , the maximum recourse cost Qmax
+t
+= maxω∈ΩQω
+t , the minimum recourse cost Qmin
+t
+=
+minω∈ΩQω
+t , and the standard deviation of the scenario-wise recourse costs {Qω
+t }ω∈Ω.
+Cut-level features. The cut-level state is given by (vω
+t , ∥πω
+t ∥2, |(πω
+t )Thω|, ∥(πω
+t )TT ω∥2, NCω
+t )
+for each ω ∈Ω, where vω
+t is the cut-level violation, πω
+t is the optimal dual variable used to
+generate the cut, (πω
+t )Thω and (πω
+t )TT ω represent the intercept and coefficient of the cut, and
+NCω
+t := Pt−1
+τ=1 1{ω ∈Aτ} records the number of cuts generated by the same scenario ω in previous
+iterations, respectively. These local features capture the quality of each candidate cut, while the
+global features track the current convergence status.
+The initial state s1 is obtained from solving the master problem (RLBD-MP1) without any cuts. The
+initial LB1, UB1, Gap1, cut violation statistics, and recourse-related statistics are computed from
+solving the initial master problem and subproblems. The history-dependent features, such as gap
+reduction and bound improvement rates, are initialized to zero because no previous iteration exists.
+4.1.2
+Action Space, Transition Dynamics, and Reward Function
+Action Space. At each iteration t, we use {1, 2, . . . , |Ω|} to encode all candidate cuts, each cor-
+responding to one optimality cut of the form (5) with coefficients obtained from solving the sub-
+problem (4) for scenario ω ∈Ω. The action corresponds to selecting a subset of K cuts from
+{1, 2, . . . , |Ω|} to be added to the master problem. To this end, we model the action space as
+A = {A ⊂{1, 2, . . . , |Ω|} : |A| = K}. Note that the same cut index at ∈Ωmay correspond to
+different cuts in different iterations t, because even for the same scenario, the cut coefficients obtained
+from solving the subproblem (4) can vary depending on the first-stage solution.
+We use πθ(at|st) to denote the probability of selecting cut at ∈{1, 2, . . . , |Ω|} given state st.
+Note that since the iteration index t is included in state st, this policy πθ(at|st) is naturally time-
+dependent. Given state st, we sample an ordered sequence At = (a(1)
+t , a(2)
+t , . . . , a(K)
+t
+) following
+πθ(·|st) without replacement. The sampling is performed sequentially: after one cut is selected, it is
+masked out, and the remaining probabilities are re-normalized before the next cut is sampled. The
+joint probability of action At ∈A is thus given by Pθ(At|st) = QK
+i=1
+πθ(a(i)
+t
+|st)
+1−P
+j<i πθ(a(j)
+t
+|st).
+This stochastic cut-selection policy naturally introduces exploration through the policy distribution.
+Unlike deterministic selection rules, the use of a stochastic policy allows the agent to sample actions
+according to their relative importance, assigning higher probability to more promising cuts while
+retaining the ability to explore alternative candidates. We will introduce a neural network architecture
+to parameterize πθ(at|st) based on both global information and cut-level features in Section 4.2.
+Transition Dynamics. Given the current state st and action At, the environment advances to the next
+state st+1 = f(st, At) by adding the selected cuts At to the master problem (6). The updated master
+problem (RLBD-MPt+1) is re-optimized to obtain a new first-stage solution. Based on this solution,
+we solve the subproblems (SPω
+t+1) for all scenarios ω ∈Ωand generate a new set of candidate cuts.
+The resulting information from the master problem and subproblems, including updated bounds,
+optimality gap, violation, and other summary statistics, is used to construct the next state st+1.
+Reward Function. The step-wise reward is defined as r(st, At) := α · Ft + β · Lt −λ, where
+Ft denotes the gap-based reward term, Lt denotes the reward associated with the master problem
+solve time, and −λ is a per-step penalty. First of all, the gap-based reward is defined by Ft :=
+log(Gapt−1) −log(Gapt), which is scale-invariant and designed to reflect the convergence progress
+of BD. Second, Lt := −T MP
+t
+Tref , where T MP
+t
+is the master problem solve time at iteration t, and Tref
+is a normalization constant chosen based on the problem scale. Finally, the per-step penalty −λ
+is introduced to encourage convergence within fewer iterations, which accumulates over time and
+imposes an increasing penalty on prolonged solution trajectories. Note that the parameters α, β and
+λ are user-defined weights that balance these components and will be tuned in Section 5.2.
+Combining all components above, the value function of this MDP takes the following form:
+max
+θ
+Vθ(s1) := E
+" T
+X
+t=1
+γtr(st, At)
+#
+, where At ∼Pθ(·|st), st+1 = f(st, At), ∀t ∈[T].
+4.2
+Neural Network Policy Parameterization
+We parameterize the cut-selection policy πθ(at|st) using a shared feedforward neural network (see
+Figure 2). The purpose of the network is to assign a scalar score to each candidate cut, which is later
+converted into a probability distribution for stochastic cut selection. Specifically, at iteration t, for each
+candidate cut ω ∈Ω, we construct a cut-specific state representation sω
+t ∈R28. The first 23 entries
+of sω
+t include the global state information shared by all candidate cuts, and the last 5 entries describe
+the local properties of candidate cut ω, given by (vω
+t , ∥πω
+t ∥2, |(πω
+t )Thω|, ∥(πω
+t )TT ω∥2, NCω
+t ).
+Each input vector sω
+t is passed through a multilayer perceptron with two hidden layers and ReLU
+activations: zω = NNθ(sω
+t ) = W3 · ReLU(W2 · ReLU(W1sω
+t + b1) + b2) + b3, for all ω ∈Ω, where
+θ = (Wl, bl)3
+l=1 denotes the network parameters, and zω ∈R is the output logit assigned to candidate
+cut ω. Given the logits produced by the neural network, we apply a softmax function to transform
+them into a probability distribution: πθ(·|st) = Softmax(z1, z2, . . . , z|Ω|). Here, πθ(ω|st) denotes
+the probability of selecting cut ω, which is used to construct the joint action probability Pθ(At|st).
+Figure 2: The shared neural network is applied to each candidate cut using the concatenation of
+common state vector and local cut features, producing one logit per candidate cut.
+Algorithm 1: Training Cut-Selection Policy via REINFORCE
+Input
+:Training problem, initial policy network parameter θ, discount factor γ, number of cuts added per
+iteration K, maximum iterations Tmax, number of episodes E, learning rate η, optimality gap
+tolerance ϵtol, reward weights α, β, λ, reference master problem solve time Tref
+Output :Trained cut-selection policy πθ
+1 for e = 1, . . . , E do
+Initialize the master problem (RLBD-MP1) based on the training problem without any cuts;
+for t = 1, . . . , Tmax do
+Solve (RLBD-MPt) to obtain an optimal solution (ˆxt, ˆθt) and a lower bound LBt;
+Based on (ˆxt, ˆθt), solve (SPω
+t ) to construct candidate cuts (5) and obtain an upper bound UBt;
+Construct state st according to the global information and cut-level features;
+Compute policy distribution πθ(·|st) = Softmax(NNθ(s1
+t), . . . , NNθ(s|Ω|
+t
+));
+Sample K cuts following πθ(·|st) without replacement and set the selected subset as action At;
+Compute the stepwise reward rt = r(st, At) = α · Ft + β · Lt −λ;
+Add the selected cuts At to the master problem and advance to the next iteration;
+if (UBt −LBt)/|UBt| < ϵtol then
+break;
+Compute the return-to-go backward: GT = 0 and Gt = rt + γGt+1 for t = T −1, . . . , 0;
+Update the policy parameter: θ ←θ + η PT
+t=1 ∇θ log Pθ(At | st) · Gt;
+15 return πθ.
+4.3
+Training: Policy Gradient Algorithm via REINFORCE
+In this section, we leverage policy gradient methods to train the stochastic cut-selection policy πθ via
+the REINFORCE algorithm [Williams, 1992] (see Algorithm 1). One training episode corresponds
+to one complete BD trajectory. During each episode, at each iteration t, the algorithm records the
+current state st, the selected cuts At, their log-probabilities log Pθ(At|st), and the stepwise reward rt.
+After the episode terminates (either BD converges or hits the maximum iterations Tmax), the return-
+to-go is computed for each step: Gt = PT
+ℓ=t γℓ−trℓ. According to Williams [1992], the gradient
+of the value function Vθ(s1) can be estimated as ∇θVθ(s1) ≈E[PT
+t=1 ∇θ log Pθ(At|st) · Gt],
+where ∇θ log Pθ(At|st) = PK
+i=1 ∇θ log(
+πθ(a(i)
+t
+|st)
+1−P
+j<i πθ(a(j)
+t
+|st)). At the end of each episode, we apply
+backpropagation to update the policy network parameter θ in the gradient ascent direction.
+4.4
+Testing: Policy Rollout using the Trained Cut-Selection Greedy Policy
+Once the cut-selection policy πθ is trained, it can be applied to solve problems with similar structures
+but different inputs. We consider a setting in which a decision maker needs to repeatedly solve a
+collection of two-stage stochastic programs that share the same problem structure but differ in their
+realizations of uncertain parameters and/or dimensions of the decision variables. This setting naturally
+arises in applications where similar decision problems must be solved under different scenarios or
+operating conditions. For example, in supply chain management, one may solve a sequence of
+stochastic facility location problems that share the same objective function and constraints but differ
+in demand realizations or decision dimensions. Since the policy network πθ is designed to be
+independent of the problem size, it can naturally generalize to such instances with different demand
+realizations and varying numbers of candidate facilities and customer sites. For a given test problem,
+we then implement BD with the trained cut-selection policy in a greedy manner: at each iteration, we
+select the top-K cuts with the largest logits from the policy network to add to the master problem.
+Numerical Results
+We test our RLBD on a two-stage stochastic electric vehicle (EV) charging station location problem
+and compare it with existing benchmarks. We first introduce our experimental setup in Section
+5.1, report the hyperparameter tuning results in Section 5.2, and compare our RLBD with other
+benchmarks in Section 5.3, respectively. Finally, we provide some managerial insights from the
+trained cut-selection policy in Section 5.4.
+5.1
+Experimental Setup
+We consider a two-stage stochastic EV charging station location problem, where we have a set I
+of candidate charging stations and a set J of customer sites with uncertain demand dj, j ∈J . In
+the first stage, a subset of charging stations is selected to open, and their capacities are determined
+before demand realization. In the second stage, demand is realized and fulfilled by the open stations.
+The objective is to minimize first-stage investment costs and second-stage transportation and unmet-
+demand penalties, while maximizing total revenue. In the training phase, we generate |I| = 8
+candidate charging stations and |J | = 12 customer sites. For each customer site j ∈J , the demand
+dj follows a Normal distribution. We first sample µj uniformly from [20, 100] and set σj = 0.1µj and
+then generate |Ω| = 100 demand scenarios {dω
+j }ω∈Ωfollowing N(µj, σ2
+j ). This forms our training
+problem. Please refer to (7)-(13) in Appendix A for the full model formulation and parameter setup.
+We train the policy network using the Adam optimizer, with learning rate 10−3, and discount factor
+γ = 0.99. All experiments are conducted on the Pitzer cluster at the Ohio Supercomputer Center with
+16 CPU cores. We use Gurobi 12.0.0 coded in Python 3.10 for solving all optimization problems.
+5.2
+Training: Hyperparameter Tuning
+We first tune the hyperparameters in defining the reward function. We fix β = 0.001 and Tref =
+0.1 and perform a grid search over the other weight parameters α ∈{0.01, 0.1, 1.0} and λ ∈
+{0.001, 0.01, 0.1}, resulting in nine reward configurations. For each configuration, we train the
+policy network in five independent runs and evaluate the learned cut-selection policies in a greedy
+manner on the same training problem. The evaluation results are summarized in Figure 3, where
+we plot the episodic elapsed time, final optimality gap, and number of Benders iterations across
+different reward configurations. The shaded area represents the 90% confidence interval among the
+five independent runs. Based on these curves, α = 0.01 and λ = 0.001 perform the best in all three
+metrics, and we fix α = 0.01 and λ = 0.001 in the following experiments.
+After fixing the reward setting, we now tune the number of cuts added per iteration K from
+{10, 20, 30}. The average evaluation results over five independent runs are shown in Figure 4,
+where we report the overall trends of elapsed time, final optimality gap, and the number of Benders
+iterations under different values of K. Note that in these experiments, even under the same initialized
+policy, different values of K lead to different BD performance, and therefore, the three curves do not
+start from the same initial point. We also provide additional results of total reward and their close-up
+in Figures 6 in Appendix B. Overall, K = 10 achieves the most stable convergence behavior and
+computational efficiency, and we adopt K = 10 in the next benchmark experiments.
+(a) Elapsed Time
+(b) Final Optimality Gap
+(c) Number of Steps
+Figure 3: Hyperparameter tuning results under different combinations of α and λ.
+5.3
+Testing: Comparison with Existing Benchmarks
+Once the cut-selection policy πθ is trained in our RLBD framework, we apply it to solve testing
+instances with various demand distributions and problem sizes and compare it with the following
+benchmarks: (i) vanilla BD presented in Section 3.2; and (ii) LearnBD proposed in Jia and Shen
+[2021], where we train a support vector machine classifier on the same training problem. We consider
+several distribution-shift settings in which we sample |Ω| = 100 testing demand scenarios from the
+same Normal distribution as the training problem, as well as from left-skewed and right-skewed
+Normal distributions.
+(a) Elapsed Time
+(b) Final Optimality Gap
+(c) Number of Steps
+Figure 4: Evaluation results under different numbers of cuts added per iteration K.
+Table 1 summarizes the comparison between BD, LearnBD, and RLBD on different testing instances,
+where we report the average solution time (Time), master problem solve time (Master), number of
+iterations (Iter.), and the final optimality gap (Gap) over five independent testing datasets. The time
+limit is set to one hour and the optimality gap tolerance is set to ϵtol = 1% for all instances. From
+Table 1, when |I| × |J | = 8 × 12 or 10 × 15, all methods solve the problem to the prescribed
+optimality gap tolerance, while RLBD achieves approximately a fivefold reduction in computational
+time. This improvement is primarily due to smaller master problems with adaptive cut selection (see
+the "Master" column). When the problem size increases to |I| × |J | = 20 × 30, none of the methods
+can solve the problem within one hour; however, RLBD attains a smaller final optimality gap.
+Table 1: Performance comparison between BD, LearnBD, and RLBD on testing instances with
+various demand distributions and problem sizes
+|I| × |J |
+Method
+Normal
+Left-skewed Normal
+Right-skewed Normal
+Time (s)
+Master (s)
+Iter.
+Gap (%)
+Time (s)
+Master (s)
+Iter.
+Gap (%)
+Time (s)
+Master (s)
+Iter.
+Gap (%)
+8 × 12
+BD
+237.63
+222.03
+90.2
+0.55
+244.52
+227.63
+90.6
+0.57
+252.60
+234.63
+90.4
+0.56
+LearnBD
+234.77
+212.56
+124.2
+0.55
+239.75
+215.14
+125.0
+0.57
+246.73
+221.81
+124.6
+0.56
+RLBD
+44.43
+25.62
+106.6
+0.95
+46.00
+26.39
+108.0
+0.90
+48.32
+27.16
+106.6
+0.87
+10 × 15
+BD
+446.70
+418.17
+121.4
+0.69
+436.67
+404.55
+118.4
+0.87
+454.84
+423.42
+122.2
+0.82
+LearnBD
+448.74
+408.87
+163.8
+0.71
+440.99
+396.62
+161.2
+0.87
+453.92
+410.03
+164.2
+0.82
+RLBD
+97.37
+60.25
+154.4
+0.86
+102.26
+62.00
+151.4
+0.97
+102.77
+62.66
+150.8
+0.79
+20 × 30
+BD
+3600
+185.0
+38.89
+3600
+185.8
+35.48
+3600
+186.4
+39.07
+LearnBD
+3600
+210.2
+38.64
+3600
+210.2
+35.45
+3600
+211.6
+39.07
+RLBD
+3600
+325.2
+28.39
+3600
+329.0
+29.41
+3600
+332.0
+29.21
+5.4
+Managerial Insights from the Learned Cut-Selection Policy
+To understand the relationship between the behavior of the trained cut-selection policy πθ in RLBD
+and the characteristics of the input dataset, we rank the scenarios based on the number of cuts
+generated by each scenario across all iterations (NCω
+T ) and plot their corresponding total demand
+P
+j∈J dω
+j , total penalty exposure P
+j∈J pjdω
+j , and total revenue exposure P
+j∈J rjdω
+j in Figure 5.
+On the x-axis, scenarios are sorted by the selected count NCω
+T in descending order, where Scenario
+#1 corresponds to the most frequently selected scenario. We focus on the testing instance with
+right-skewed Normal distribution and |I| × |J | = 10 × 15. From Figure 5, the trained policy tends
+to select cuts from scenarios with higher total demand, penalty exposure, and revenue exposure,
+suggesting that high-load demand realizations correspond to more critical scenarios and are more
+likely to generate informative cuts.
+Conclusions
+In this work, we proposed an RLBD framework for adaptively selecting Benders cuts to improve
+the efficiency of solving two-stage stochastic programs. The cut-selection process was modeled as
+an MDP, and the stochastic cut-selection policy was trained using the REINFORCE algorithm. The
+learned policy can be deployed on testing instances with varying uncertainty distributions and problem
+sizes. Numerical experiments on a stochastic EV charging station location problem demonstrated that
+RLBD generalizes effectively to problems with similar structures but different data inputs (including
+distribution shifts) and decision variable dimensions. Compared with existing benchmark methods,
+(a) Total Demand
+(b) Total Penalty Exposure
+(c) Total Revenue Exposure
+Figure 5: Scenario-level exposure metrics sorted by scenario rank.
+RLBD achieves up to a fivefold reduction in computational time in small to medium testing instances
+and obtains smaller optimality gaps in larger testing instances.
+References
+Yossiri Adulyasak, Jean-François Cordeau, and Raf Jans. Benders decomposition for production
+routing under demand uncertainty. Operations Research, 63(4):851-867, 2015.
+N. Alguacil and A. J. Conejo. Multiperiod optimal power flow using benders decomposition. IEEE
+Transactions on Power Systems, 15(1):196-201, 2000. doi: 10.1109/59.852121.
+Beste Basciftci, Xian Yu, and Siqian Shen. Resource distribution under spatiotemporal uncertainty
+of disease spread: Stochastic versus robust approaches. Computers & Operations Research, 149:
+106028, 2023.
+Irwan Bello, Hieu Pham, Quoc V. Le, Mohammad Norouzi, and Samy Bengio. Neural combinatorial
+optimization with reinforcement learning. In International Conference on Learning Representations
+(ICLR), 2017.
+J. F. Benders. Partitioning procedures for solving mixed-variables programming problems. Nu-
+merische Mathematik, 4:238-252, 1962. doi: 10.1007/BF01386316. URL 
+10.1007/BF01386316.
+Yoshua Bengio, Andrea Lodi, and Antoine Prouvost. Machine learning for combinatorial optimization:
+A methodological tour d’horizon. European Journal of Operational Research, 290(2):405-421,
+2021.
+John R. Birge and François Louveaux. Introduction to Stochastic Programming. Springer, 2011.
+Merve Bodur and James R Luedtke. Mixed-integer rounding enhanced benders decomposition
+for multiclass service-system staffing and scheduling with arrival rate uncertainty. Management
+Science, 63(7):2073-2091, 2017.
+Cheng Chi, Amine Mohamed Aboussalah, Elias B. Khalil, Juyoung Wang, and Zoha Sherkat-
+Masoumi. A deep reinforcement learning framework for column generation. In Advances in
+Neural Information Processing Systems, 2022.
+Seung Jin Choi, Kimiya Jozani, Joshua F Cooper, and I Esra Buyuktahtakin. Learning to optimize at
+scale: A Benders decomposition-transformers framework for stochastic combinatorial optimization.
+In NeurIPS 2025 Workshop MLxOR: Mathematical Foundations and Operational Integration of
+Machine Learning for Uncertainty-Aware Decision-Making, 2025.
+Mohammadreza Daneshvar, Behnam Mohammadi-Ivatloo, Kazem Zare, and Somayeh Asadi. Two-
+stage stochastic programming model for optimal scheduling of the wind-thermal-hydropower-
+pumped storage system considering the flexibility assessment. Energy, 193:116657, 2020.
+Gopalakrishnan Easwaran and Halit Üster. Tabu search and Benders decomposition approaches for
+a capacitated closed-loop supply chain network design problem. Transportation Science, 43(3):
+301-320, 2009.
+Matteo Fischetti, Ivana Ljubi´c, and Markus Sinnl. Benders decomposition without separability: A
+computational study for capacitated facility location problems. European Journal of Operational
+Research, 253(3):557-569, 2016.
+Matteo Fischetti, Ivana Ljubi´c, and Markus Sinnl. Redesigning Benders decomposition for large-scale
+facility location. Management Science, 63(7):2146-2162, 2017a.
+Matteo Fischetti, Domenico Salvagnin, and Andrea Zanette. A note on the selection of Benders’ cuts.
+Mathematical Programming, 161(1-2):407-415, 2017b.
+Arthur M Geoffrion and Glenn W Graves. Multicommodity distribution system design by benders
+decomposition. Management Science, 20(5):822-844, 1974.
+Huiwen Jia and Siqian Shen. Benders cut classification via support vector machines for solving
+two-stage stochastic programs. INFORMS Journal on Optimization, 3(3):278-297, 2021.
+Esmaeil Keyvanshokooh, Sarah M Ryan, and Elnaz Kabir. Hybrid robust and stochastic optimization
+for closed-loop supply chain network design using accelerated Benders decomposition. European
+Journal of Operational Research, 249(1):76-92, 2016.
+Elias Khalil, Pierre Le Bodic, Le Song, George Nemhauser, and Bistra Dilkina. Learning to branch
+in mixed integer programming. In Proceedings of the AAAI Conference on Artificial Intelligence,
+volume 30, 2016.
+Elias Khalil, Hanjun Dai, Yuyu Zhang, Bistra Dilkina, and Le Song. Learning combinatorial
+optimization algorithms over graphs. Advances in Neural Information Processing Systems, 30,
+2017.
+Zhe Li, Bernard T. Agyeman, Ilias Mitrai, and Prodromos Daoutidis. Learning to control inexact
+Benders decomposition via reinforcement learning. arXiv preprint arXiv:2508.06700, 2025.
+Zhuwen Li, Qifeng Chen, and Vladlen Koltun. Combinatorial optimization with graph convolutional
+networks and guided tree search. Advances in Neural Information Processing Systems, 31, 2018.
+Thomas L. Magnanti and Richard T. Wong. Accelerating Benders decomposition: Algorithmic
+enhancement and model selection criteria. Operations Research, 29(3):464-484, 1981.
+Arthur Maheo, Philip Kilby, and Pascal Van Hentenryck. Benders decomposition for the design of a
+hub and shuttle public transit system. Transportation Science, 53(1):77-88, 2019.
+Kyle Mana, Stephen Mak, Parisa Zehtabi, Michael Cashmore, Daniele Magazzeni, and Manuela
+Veloso. Accelerating Benders decomposition via reinforcement learning surrogate models. In
+Proceedings of the AAAI Conference on Artificial Intelligence, 2023.
+Chandra A Poojari and John E Beasley. Improving Benders decomposition using a genetic algorithm.
+European Journal of Operational Research, 199(1):89-97, 2009.
+Cristian Ramírez-Pico, Ivana Ljubi´c, and Eduardo Moreno. Benders adaptive-cuts method for
+two-stage stochastic programs. Transportation Science, 57(5):1252-1275, 2023.
+Huangrong Sun, Xian Yu, and Guzin Bayraksan. Contextual stochastic optimization for determining
+electric vehicle charging station locations with decision-dependent demand learning. Available at
+SSRN 5078715, 2025.
+Yunhao Tang, Shipra Agrawal, and Yuri Faenza. Reinforcement learning for integer programming:
+Learning to cut. In International Conference on Machine Learning, pages 9367-9376. PMLR,
+2020.
+Richard M Van Slyke and Roger Wets. L-shaped linear programs with applications to optimal control
+and stochastic programming. SIAM Journal on Applied Mathematics, 17(4):638-663, 1969.
+Qianfan Wang, Yongpei Guan, and Jianhui Wang. A chance-constrained two-stage stochastic program
+for unit commitment with uncertain wind power output. IEEE Transactions on Power Systems, 27
+(1):206-215, 2011.
+Ronald J. Williams. Simple statistical gradient-following algorithms for connectionist reinforcement
+learning. Machine Learning, 8(3-4):229-256, 1992.
+Xian Yu, Siqian Shen, and Huizhu Wang. Integrated vehicle routing and service scheduling under time
+and cancellation uncertainties with application in nonemergency medical transportation. Service
+Science, 13(3):172-191, 2021.
+Xian Yu, Siqian Shen, Babak Badri-Koohi, and Haitham Seada. Time window optimization for
+attended home service delivery under multiple sources of uncertainties. Computers & Operations
+Research, 150:106045, 2023.
+Appendix
+A
+Two-stage Stochastic EV Charging Station Location problem
+Let I, J , and Ωdenote the set of candidate charging stations, customer sites, and demand scenarios,
+respectively. Define the first-stage decision variables as yi ∈{0, 1} and zi ∈Z+ for all i ∈I, where
+yi = 1 if station i is selected to open and zi denotes the number of chargers installed at station i.
+Define the second-stage decision variables xij and sj as the amount of demand at customer site
+j ∈J fulfilled by charging station i and the unmet demand at customer site j for all i ∈I, j ∈J ,
+respectively. Parameters fi, bi, cij, pj, rj, Ci denote the investment cost for opening station i ∈I,
+unit cost for installing one charger at station i ∈I, unit transportation cost from station i ∈I to
+customer site j ∈J, unit penalty for unmet demand at customer site j ∈J, unit revenue for demand
+fulfillment at site j ∈J, and the maximum number of EV demand each charger can fulfill at location
+i ∈I, respectively.
+Following Sun et al. [2025], the two-stage stochastic EV charging station location model is given by
+min
+y,z
+X
+i∈I
+fiyi +
+X
+i∈I
+bizi + 1
+|Ω|
+X
+ω∈Ω
+Qω(z)
+(7)
+s.t.
+zi ≤Miyi, ∀i ∈I
+(8)
+yi ∈{0, 1}, zi ∈Z+, ∀i ∈I
+(9)
+where constraints (8) enforce that chargers can be installed at location i ∈I only if a charging station
+is opened there, and that the number of installed chargers at each location i is bounded above by Mi.
+For each scenario ω ∈Ω, the recourse function is defined as
+Qω(z) = min
+x,u
+X
+i∈I
+X
+j∈J
+cijxij +
+X
+j∈J
+pjuj −
+X
+j∈J
+rjdω
+j
+(10)
+s.t.
+X
+i∈I
+xij + uj = dω
+j , ∀j ∈J
+(11)
+X
+j∈J
+xij ≤Cizi, ∀i ∈I
+(12)
+xij ≥0, uj ≥0, ∀i ∈I, j ∈J
+(13)
+where constraints (11) ensure that the demand at each customer site j ∈J is either satisfied by an
+open charging station or accounted for as unmet demand. Constraints (12) enforce capacity limits
+by requiring that the total demand served at each open station i ∈I does not exceed the product of
+the number of installed chargers zi and the per-charger capacity Ci. Finally, constraints (13) impose
+non-negativity on both satisfied and unmet demand variables.
+In our experiments, we set |I| = 8 and |J | = 12. The other parameters are uniformly sampled
+within the following ranges: fi ∈[80, 300], bi ∈[5, 40], cij ∈[1, 80], pj ∈[30, 120], rj ∈[5, 60],
+Ci ∈[40, 120], and Mi ∈[10, 80].
+B
+Additional Numerical Results
+(a) Total Reward
+(b) Total Reward (Close-up)
+(c) Elapsed Time (Close-up)
+Figure 6: Evaluation results under different numbers of cuts added per iteration K.

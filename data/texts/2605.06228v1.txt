@@ -1,0 +1,1716 @@
+Soft Deterministic Policy Gradient with Gaussian
+Smoothing
+Hyunjun Na
+Donghwan Lee∗
+School of Electrical Engineering, KAIST
+291 Daehak-ro, Yuseong-gu, Daejeon 34141, Korea
+{nhjun,donghwan}@kaist.ac.kr
+Abstract
+Deterministic policy gradient (DPG) is widely utilized for continuous control;
+however, it inherently relies on the differentiability of the critic with respect to the
+action during policy updates. This assumption is violated in practical control prob-
+lems involving sparse or discrete rewards, leading to ill-defined policy gradients
+and unstable learning. To address these challenges, we propose a principled alter-
+native based on a smoothed Bellman equation formulated via Gaussian smoothing.
+Specifically, we define a novel action-value function based on a smoothed Bellman
+equation and derive the soft deterministic policy gradient (Soft-DPG). Our formu-
+lation eliminates explicit dependence on critic action-gradients and ensures that the
+gradient remains well-defined even for non-smooth Q-functions. We instantiate
+this framework into a deep reinforcement learning algorithm, which we call soft
+deep deterministic policy gradient (Soft DDPG). Empirical evaluations on standard
+continuous control benchmarks and their discretized-reward variants show that Soft
+DDPG remains competitive in dense-reward settings and provides clear gains in
+most discretized-reward environments, where standard DDPG is more sensitive to
+irregular critic landscapes.
+Introduction
+Reinforcement learning (RL) has been successfully applied to a wide range of domains, including
+robotics, autonomous driving, and control systems, by learning optimal policies through interactions
+with the environment [9, 18, 25]. Depending on how the optimal policy is represented and optimized,
+RL algorithms are commonly categorized into value-based and policy-based approaches. Value-based
+methods such as Deep Q-Networks (DQN) [13] have demonstrated remarkable success in discrete
+action spaces [14, 8, 27], while policy-based methods, particularly policy gradient approaches, have
+been widely used for continuous control problems [23, 11, 21, 22, 7]. Unlike value-based methods,
+policy-based methods directly parameterize the policy and optimize its parameters via gradient-
+based methods. This direct optimization makes them particularly suitable for high-dimensional or
+continuous action spaces [29, 24]. Early approaches primarily focused on stochastic policies, known
+as stochastic policy gradient (SPG) methods, where the policy gradient involves an expectation over
+the state and action distributions. However, such estimators typically suffer from high variance,
+which can lead to unstable and inefficient learning. To address the computational inefficiency
+and high variance inherent in SPG, deterministic policy gradient (DPG) was proposed by Silver
+et al. [23]. Unlike stochastic policies, which require expectations over both state and action spaces,
+deterministic policies only require expectations over the state space. This structural difference results
+in more efficient estimation and reduces variance, as the estimator no longer needs to integrate over
+a stochastic action distribution. However, deterministic policies suffer from limited exploration
+∗Corresponding author.
+Preprint.
+arXiv:2605.06228v1 [cs.LG] 7 May 2026
+
+capability compared to stochastic policies, as the latter inherently explore the environment through
+stochasticity. To overcome this limitation, off-policy learning with exploratory behavior policies has
+been introduced [23]. This approach facilitates effective exploration while learning a deterministic
+target policy.
+Building upon these advantages, deep RL algorithms such as Deep Deterministic Policy Gradient
+(DDPG) [11] and Twin Delayed DDPG (TD3) [6] have been developed. These methods have
+demonstrated strong performance and robustness, not only on standard continuous control benchmarks
+but also across a wide range of real-world scenarios, including autonomous driving, robotics, and
+complex industrial control [17, 30, 4, 12, 31].
+Despite their success, DPG relies on a critical assumption: the action-value function must be
+differentiable with respect to the action. However, in many practical environments, this assumption
+is violated. For example, sparse or discrete reward structures are commonly used in robotics and
+autonomous driving [9, 28], leading to non-smooth or even non-differentiable Q-functions. When
+such non-smoothness is present, DPG may become ill-defined and can result in unstable or degraded
+performance in practice. To circumvent these limitations, we propose soft deterministic policy
+gradient (Soft-DPG), a principled framework that relaxes the stringent differentiability assumption of
+the critic. Our approach is based on a novel smoothed Bellman equation formulated via Gaussian
+smoothing (GS) [16], which induces a well-behaved action-value function. By leveraging this
+smoothed Bellman equation, we derive a new policy gradient theorem that eliminates the explicit
+dependence on the critic’s action-gradient. Consequently, the resulting policy gradient remains
+well-defined and stable even when the underlying Q-function is non-smooth.
+The contributions of this work are as follows:
+(a) We introduce Soft-DPG, a novel framework designed to overcome the limitations of standard
+DPG in environments with non-smooth action-value functions. To derive the Soft-DPG, we
+introduce a smoothed Bellman equation and provide a rigorous theoretical derivation of the
+Soft-DPG theorem.
+(b) We establish analytical upper bounds for the approximation errors in both the action-value
+and state-value functions between the original MDP and the one induced by the smoothed
+Bellman equation. These bounds provide a formal guarantee on the bias introduced by the
+smoothing parameter.
+(c) We instantiate our theoretical framework into a practical deep RL algorithm named soft deep
+deterministic policy gradient (Soft DDPG). Through extensive experiments on standard
+continuous control benchmark and their discretized reward variants, we empirically validate
+that Soft DDPG offers competitive stability and performance, particularly in challenging
+control tasks with irregular reward surfaces.
+Related works
+Deterministic policy gradient (DPG) updates the actor using the gradient of the critic with respect to
+the action. Unlike stochastic policy gradient (SPG), where the accuracy of the value estimate is the
+primary concern, DPG critically depends on the accuracy, and even the existence, of action gradients
+of the critic. This fundamental dependency has motivated several prior studies.
+For example, Balduzzi and Ghifary [2] argued that, in DPG, the standard critic learned via temporal-
+difference (TD) learning is not necessarily suitable for policy optimization. To address this, they
+proposed an approach that explicitly learns action gradients using an additional deviant network.
+While this approach addresses the mismatch between TD learning and gradient estimation, it in-
+troduces extra networks and increases the number of learnable parameters. They also considered
+zeroth-order gradient estimation techniques, which are conceptually related to our motivation, but at
+the cost of additional architectural complexity. The most closely related works to ours are those by
+Nachum et al. [15], Kumar et al. [10], Saglam and Kalogerias [19]. These works share the common
+idea of using smoothed value functions as alternatives to the original Q-function, without introducing
+additional networks and within a model-free framework. In particular, Nachum et al. [15] introduced
+smoothed Q-functions in the context of stochastic policies. Their objective was not to derive DPG,
+but rather to enable Gaussian policy optimization by extracting gradients of both the mean and
+covariance from the smoothed value function. Kumar et al. [10] and Saglam and Kalogerias [19]
+employed smoothed Q-functions as surrogates for the action gradients of the original critic in DPG.
+By smoothing the Q-function directly, these approaches reduce sensitivity to local non-smoothness
+and noisy gradient estimates. Our formulation differs from these approaches in where smoothing
+is applied. Rather than externally smoothing a learned critic or using smoothed values only as
+surrogate action-gradient estimators, we incorporate Gaussian smoothing (GS) directly into the
+Bellman backup. A related idea of smoothing has also been explored in Fujimoto et al. [6]; however,
+their approach applies smoothing at the level of the target as a regularization technique, whereas
+our method introduces smoothing directly into the Bellman backup, leading to a Bellman-consistent
+formulation.
+Preliminaries
+3.1
+Markov decision problem
+We consider the infinite-horizon discounted Markov decision problem and Markov decision process
+(MDP), where the agent sequentially takes actions to maximize cumulative discounted rewards. In a
+MDP with the state-space S := {1, 2, . . . , |S|} and action-space A := {1, 2, . . . , |A|}, the decision
+maker selects an action a ∈A at the current state s ∈S, then the state transits to the next state s′ ∈S
+with probability P(s′|s, a), and the transition incurs a reward r(s, a, s′) ∈R, where P(s′|s, a) is
+the state transition probability from the current state s ∈S to the next state s′ ∈S under action
+a ∈A, and r(s, a, s′) is the reward function. Moreover, |S| and |A| denote cardinalities of S and
+A, respectively. For convenience, we consider a deterministic reward function and simply write
+r(sk, ak, sk+1) =: rk+1, k ∈{0, 1, . . .}. A deterministic policy, π : S →A, maps a state s ∈S to
+an action π(s) ∈A. The objective of the Markov decision problem is to find an optimal policy, π∗,
+such that the cumulative discounted rewards over infinite time horizons is maximized, i.e.,
+π∗:= arg max
+π∈Θ
+E
+" ∞
+X
+k=0
+γkrk+1
+ π
+#
+,
+where γ ∈[0, 1) is the discount factor, Θ is the set of all deterministic policies, (s0, a0, s1, a1, . . .) is
+a state-action trajectory generated by the Markov chain under policy π, and E[·|π] is an expectation
+conditioned on the policy π. Moreover, for finite state-action pairs (s, a) ∈S × A, the Q-function
+under policy π is defined as
+Qπ(s, a) = E
+
+X
+k≥0
+γkrk+1 | s0 = s, a0 = a, π
+
+.
+and the optimal Q-function is defined as Q∗(s, a) = Qπ∗(s, a) for all (s, a) ∈S × A. Once Q∗is
+known, then an optimal policy can be retrieved by the greedy policy π∗(s) = arg maxa∈A Q∗(s, a).
+Throughout, we assume that the MDP is ergodic so that the stationary state distribution exists.
+3.2
+Deterministic policy gradient
+DPG is a class of policy gradient algorithms that optimize deterministic policies in continuous action
+spaces [23]. Unlike SPG, which model the policy as a probability distribution, DPG assumes a
+deterministic policy of the form a = πθ(s) which directly maps states to actions. Accordingly, the
+objective of a deterministic policy can be written as
+J(θ) = Es∼dπθ [Qπθ(s, πθ(s))] ,
+(1)
+where dπθ denotes the discounted state visitation distribution under policy πθ, defined as dπθ(s′) ∝
+P∞
+t=0 γt Pr(st = s′ | s0 ∼p0, πθ), that is, the discounted occupancy measure induced by following
+πθ from the initial state distribution. In contrast to SPG, no expectation over the action space is
+required. As a result, the policy gradient admits a simplified form that depends only on an expectation
+over the state distribution. Silver et al. [23] derived the DPG, given by
+∇θJ(θ) = Es∼dπθ
+h
+∇θπθ(s) ∇aQπθ(s, a)
+
+a=πθ(s)
+i
+,
+(2)
+As a consequence, DPG benefits from reduced gradient variance, often resulting in improved sample
+efficiency in continuous control tasks. However, deterministic policy suffers from limited exploration
+capability, as they lack inherent stochasticity. To mitigate this issue, Silver et al. [23] showed that
+DPG can be estimated in an off-policy manner using importance sampling. This allows learning a
+deterministic target policy πθ from data generated by a stochastic behavior policy, thereby decoupling
+exploration from policy optimization and enabling more efficient exploration in continuous action
+spaces.
+3.3
+Gaussian smoothing
+GS is a fundamental technique in zeroth-order optimization, where gradients are estimated using
+only function evaluations when direct differentiation is difficult or infeasible [16]. The core idea is to
+construct a smoothed surrogate of the original function by perturbing the input with Gaussian noise.
+This procedure yields a function that is differentiable everywhere, even when the original function is
+non-smooth or non-differentiable. We now formally define the Gaussian-smoothed function used
+throughout this paper.
+Definition 3.1. [16] For a given function f : Rn →R, the Gaussian-smoothed function fσ is defined
+as
+fσ(x) := Ew∼N(0,I)[f(x + σw)] =
+Z
+Rn f(x + σw) N(w; 0, I) dw,
+(3)
+where σ > 0 is the smoothing parameter, and N(w; 0, I) is the probability density function of the
+n-dimensional standard Gaussian distribution.
+The Gaussian-smoothed function admits a well-defined gradient, which can be expressed without
+requiring access to the gradient of the original function. The following result gives a gradient
+representation of the Gaussian-smoothed function that does not require differentiating the original
+function.
+Definition 3.2. [16] For any function f : Rn →R, the Gaussian-smoothed function fσ(x) is
+differentiable for all x, and its gradient is given by
+∇xfσ(x) = Ew∼N (0,I)
+f(x + σw)
+σ
+w
+
+.
+(4)
+This identity forms the basis of zeroth-order gradient estimators. Moreover, when the original function
+f is differentiable, the convergence of the smoothed gradient to the true gradient can be formally
+stated as the following lemma:
+Lemma 3.3. [16] Let f : Rn →R be a differentiable function. As the smoothing parameter σ
+approaches zero, the gradient of the Gaussian-smoothed function fσ(x) converges to the true gradient
+of the original function f(x), such that:
+lim
+σ→0 ∇xfσ(x) = ∇xf(x).
+(5)
+Under mild regularity conditions, the Euclidean distance between the gradients of the original function
+and its smoothed counterpart can be explicitly bounded [16]. As a result, optimizing the smoothed
+function serves as a practical surrogate for optimizing the original objective. It has also been shown
+that the maximum of the smoothed function provides a lower bound on the maximum of the original
+function, often inducing a smoother and more favorable optimization landscape [20].
+3.4
+From stochastic to deterministic policy gradient via Gaussian smoothing
+In this section, we show that DPG can be interpreted as a limiting case of SPG through the lens of
+GS. For completeness and pedagogical clarity, we provide a self-contained derivation that makes this
+connection explicit. Our analysis highlights how DPG naturally arises from smoothed value functions
+as formalized in the following lemma:
+Lemma 3.4. Let νθ(a|s) be a Gaussian policy of the form νθ(a|s) = N(a; πθ(s), σ2I), where
+a = πθ(s) + σw, w ∼N(0, I). Let J(νθ) denote the expected discounted return under νθ.
+Recall the original stochastic policy gradient theorem:
+∇θJ(νθ) =
+1 −γ
+X
+s
+dνθ(s)
+Z
+a
+Qνθ(s, a) ∇θνθ(a|s) da.
+(6)
+For this Gaussian policy, the stochastic policy gradient can be equivalently expressed as
+∇θJ(νθ) =
+1 −γ Es∼dνθ ,w∼N (0,I)
+
+∇θπθ(s) Qνθ(s, πθ(s) + σw) w
+σ
+
+.
+(7)
+Moreover, as σ →0, by Lemma 3.3, we have
+lim
+σ↓0 ∇θJ(νθ) =
+1 −γ Es∼dνθ
+h
+∇θπθ(s) ∇aQπθ(s, a)
+
+a=πθ(s)
+i
+,
+(8)
+which recovers the deterministic policy gradient.
+The proof is in Section A.1 of Appendix. A closely related idea already appears implicitly in Silver
+et al. [23], where DPG is derived as a limiting case of SPG. By making the role of GS explicit, the
+above result provides a simpler and more transparent derivation.
+Action-gradient dependence of the critic
+(a) Q(s, a) landscape
+(b) |∇aQ(s, a)| landscape
+Figure 1: Visualization of the learned critic
+and its action-gradients in the toy environ-
+ment with a discrete reward.
+DPG updates the actor by leveraging the gradient of
+the critic with respect to the action. Thus, the policy
+improvement direction is determined by ∇aQ(s, a)
+evaluated at the current policy action. This formula-
+tion implicitly assumes that the action-gradient of the
+critic provides a reliable and stable direction for pol-
+icy improvement. However, in practical implemen-
+tations of DPG within the actor-critic framework,
+the critic is trained by minimizing a TD error ob-
+jective, which enforces accuracy of the value func-
+tion but does not explicitly constrain the correctness
+or smoothness of its action-gradient. Particularly
+in such discrete reward environments, standard TD
+learning may fail to construct an accurate Q-function
+landscape, rendering the subsequent action-gradients
+inherently unreliable. As a result, there is no guaran-
+tee that the learned ∇aQ(s, a) accurately reflects the
+true policy improvement direction.
+To illustrate this issue, we construct a simple toy
+environment designed to expose instability in the
+critic action-gradient. The environment consists of a
+single dummy state s = [1] and a continuous action
+a ∈[−1, 1]. The reward function is deliberately
+discrete: a positive reward is given only when the
+action lies within a narrow interval around a = 0.5,
+and zero otherwise. Formally, the reward is defined
+as
+r(a) =
+1,
+if |a −0.5| < ϵ,
+0,
+otherwise,
+where ϵ > 0 is a small threshold. The episode lasts
+for a fixed number of steps to allow TD learning. To
+instantiate the DPG framework in practice, we em-
+ploy the DDPG algorithm to learn the critic, and subsequently analyze both the learned Q(s, a) and its
+action-gradient ∇aQ(s, a). We visualize the learned critic landscape Q(s, a) and the corresponding
+action-gradient magnitude |∇aQ(s, a)| after training in Figure 1. The results show that the critic can
+exhibit irregular variations across the action space, which directly translate into noisy and unstable
+gradients. Since DPG relies directly on these gradients for policy updates, such irregularities can
+degrade the stability of actor learning. In contrast, as a preview of our proposed method, we also
+plot the landscape of soft deep deterministic policy gradient (Soft-DDPG) which will be formally
+introduced in next section. Empirically, we observe that the proposed method yields a more structured
+critic landscape, which better captures the underlying reward region. Consequently, the induced
+action-gradients become more stable and informative compared to those of standard DDPG.
+5
+Soft deterministic policy gradient
+To address the limitations of DPG discussed above, we propose a smoothed variant based on
+GS, which we call soft deterministic policy gradient (Soft-DPG). Rather than applying smoothing
+heuristically at the policy or action level, our approach incorporates GS directly into the Bellman
+backup operator. This modification induces a smoothed action-value function that leads to stable and
+well-defined policy gradients.
+5.1
+σ-smoothed Bellman equation
+To address the instability caused by the action-gradient dependence of the critic in DPG, we introduce
+a σ-smoothed Bellman equation, where σ > 0 is a smoothing parameter. Our approach applies GS at
+the level of the Bellman backup operator. This leads to a new smoothed action-value function that
+induces stable and well-defined policy gradient. Formally, the smoothed action-value function Qπ
+σ is
+defined as the solution to the following Bellman equation:
+Qπ
+σ(s, a) = R(s, a) + γ
+Z
+S
+V π
+σ (s′) P(s′ | s, a) ds′,
+(9)
+where the associated smoothed value function is given by
+V π
+σ (s) = Ew∼N (0,I)
+
+Qπ
+σ(s, π(s) + σw)
+
+.
+(10)
+Substituting (10) into (9) explicitly yields the σ-smoothed Bellman equation for Qπ
+σ:
+Qπ
+σ(s, a) = R(s, a) + γEs′∼P (·|s,a), w∼N (0,I)
+
+Qπ
+σ(s′, π(s′) + σw)
+
+.
+(11)
+This relationship motivates the definition of the σ-smoothed Bellman expectation operator T π
+σ .
+Definition 5.1. The σ-smoothed Bellman expectation operator T π
+σ is defined for any function
+Q : S × A →R as (T π
+σ Q)(s, a) := R(s, a) + γEs′∼P (·|s,a), w∼N (0,I)
+
+Q(s′, π(s′) + σw)
+
+.
+By comparing (11) and Definition 5.1, it directly follows that Qπ
+σ is a fixed point of the operator T π
+σ ,
+satisfying Qπ
+σ = T π
+σ Qπ
+σ. To guarantee the uniqueness of this fixed point, we must verify that T π
+σ is a
+contraction mapping. The following lemma establishes a key contraction property of the σ-smoothed
+Bellman operator:
+Lemma 5.2. The operator T π
+σ is a γ-contraction mapping under the supremum norm. That is, for
+any two functions Q, Q′ : S × A →R,
+∥T π
+σ Q −T π
+σ Q′∥∞≤γ∥Q −Q′∥∞.
+The proof is in Section A.2 of Appendix. Note that it is important to distinguish Qπ
+σ from the GS
+of the original action-value function Qπ. In general, Qπ
+σ(s, a)
+̸=
+Ew∼N (0,I)
+
+Qπ(s, a + σw)
+
+.
+This distinction is crucial for preserving Bellman consistency and enables a principled derivation of
+Soft-DPG. We next quantify the approximation error introduced by GS. First, we establish the error
+bound for the state-value function through the following lemma:
+Lemma 5.3. Let V π be the value function of the original MDP and V π
+σ the value function induced
+by the σ-smoothed Bellman equation. Assume that the reward function R(s, a) is LR-Lipschitz
+continuous and the transition density P(s′ | s, a) is LP -Lipschitz continuous with respect to a. Then
+∥V π −V π
+σ ∥∞≤σ√m
+1 −γ
+
+LR + γ
+2 LP Vmax
+
+,
+where m is the dimensionality of the action space, and Vmax = Rmax/(1 −γ).
+The proof is in Section A.4 of Appendix. This result indicates that the bias introduced by GS on the
+overall value landscape is bounded and can be controlled by the smoothing parameter σ. Building
+upon the Lipschitz continuity of the reward and transition dynamics, we next show that the smoothed
+action-value function is Lipschitz continuous with respect to the action in the following lemma:
+Lemma 5.4. Under the same assumptions as Lemma 5.3, for all s ∈S, the smoothed action-value
+function Qπ
+σ(s, ·) is LQ-Lipschitz continuous with respect to the Euclidean norm on the action space,
+where the Lipschitz constant is given by LQ = LR + γLP Vmax.
+The proof is provided in Section A.5 of Appendix. We can now formally bound the approximation
+error between the original action-value function Qπ and its smoothed counterpart Qπ
+σ.
+Lemma 5.5. Under the assumptions of Lemma 5.3, the approximation error between the original
+and smoothed action-value functions satisfies
+∥Qπ −Qπ
+σ∥∞≤γLQσ√m
+1 −γ
+,
+where m is the dimensionality of the action space.
+The proof is in Section A.6 of Appendix. The above results show that the smoothed action-value
+function Qπ
+σ approximates the original action-value function with a controllable bias determined by
+the smoothing parameter σ.
+5.2
+Theoretical formulation of Soft-DPG
+In this section, we explicitly derive the Soft-DPG. Building upon the σ-smoothed Bellman equation
+introduced in the previous section, we show how GS at the Bellman operator level leads to a well-
+defined and stable policy gradient that does not rely on fragile action-gradients of the critic. We begin
+by deriving a gradient Bellman equation for the smoothed value function V π
+σ , which serves as a key
+intermediate result. The following lemma presents this result:
+Lemma 5.6. Let V πθ
+σ
+be the value function induced by the σ-smoothed Bellman equation. Then its
+gradient satisfies
+∇θV πθ
+σ (s) = γ
+Z
+S
+∇θV πθ
+σ (s′) Pσ(s′ | s, πθ(s)) ds′ + ∇θ
+Z
+Rm Qπθ
+σ (s, πθ(s) + σw) ϕ(w) dw
+
+π=πθ
+,
+where ϕ(w) denotes the standard Gaussian density.
+The proof is in Section A.7 of Appendix. Lemma 5.6 shows that the gradient of the smoothed
+value function is governed by a Bellman-type recursion, with the policy appearing only through
+Gaussian-perturbed actions. This structure plays a crucial role in eliminating the direct dependence
+on the action-gradient of the critic. Building on this gradient Bellman equation, we now present the
+main result of this section, which provides an explicit form of the Soft-DPG.
+Theorem 5.7. Let the smoothed action be ˜a = πθ(s) + σw, where w ∼N(0, I), and define the GS
+distribution νθ(˜a | s) = N
+ ˜a; πθ(s), σ2I
+
+. Then the Soft-DPG is given by
+∇θJσ = Es∼ρνθ ,˜a∼νθ
+
+−1
+2σ2 ∇θ
+˜a −πθ(s)
+2 Qπθ
+σ (s, ˜a)
+
+= Es∼ρνθ ,˜a∼νθ
+ 1
+σ2 ∇θπθ(s) (˜a −πθ(s)) Qπθ
+σ (s, ˜a)
+
+,
+where ρνθ is the discounted state visitation distribution induced by νθ.
+The proof is provided in Section A.8 of the Appendix, alongside a simpler alternative derivation
+based on the standard policy gradient in Section A.9. Theorem 5.7 reveals a key distinction from the
+classical DPG. While standard DPG requires the critic Q(s, a) to be differentiable with respect to the
+action, as shown in (2), the proposed Soft-DPG depends only on function evaluations of the smoothed
+critic at perturbed actions, and is therefore well-defined even when the original action-value function
+is non-smooth. Moreover, unlike prior work that applies GS directly to the original Q-function
+[15, 10, 19], our approach uses the smoothed action-value function defined as the fixed point of a
+smoothed Bellman operator. This distinction enables a principled application of smoothing during
+critic learning.
+5.3
+Soft deep deterministic policy gradient
+To demonstrate the practical applicability of the proposed Soft-DPG, we instantiate our framework
+within a deep RL algorithm. Algorithm 1 summarizes the proposed method. The overall structure
+closely follows that of standard DDPG, with two key modifications corresponding to the critic and
+actor updates. For the critic update, the target value is computed using a Gaussian-perturbed target
+Algorithm 1 Soft DDPG
+1: Initialize Qw, πθ, targets ¯w, ¯θ, buffer D
+2: for t = 1 to T do
+3:
+a = πθ(s) + ϵ, ϵ ∼N(0, σ2
+explI) and observe (r, s′), store in D, sample B
+4:
+Sample wi ∼N(0, I) and compute target action ˜a′ = clip(π¯θ(s′) + σwi, amin, amax)
+5:
+Compute target value yi = r + γQ ¯
+w(s′, ˜a′)
+6:
+Update critic parameter by minimizing:
+2|B|N
+PN
+i=1
+P
+(s,a,r,s′)∈B(yi −Qw(s, a))2
+7:
+Sample wi ∼N(0, I) and compute perturbed action ai = clip(πθ(s) + σwi, amin, amax)
+8:
+Update actor parameter by minimizing:
+2|B|Nσ2
+PN
+i=1
+P
+(s,a,r,s′)∈B ∥ai −πθ(s)∥2Qw(s, ai)
+9:
+Update targets: ¯w ←(1 −τ) ¯w + τw, ¯θ ←(1 −τ)¯θ + τθ
+10: end for
+action, ˜a′ = π¯θ(s′) + σw, and w∼N(0, I), resulting in a smoothed target value. Note that a similar
+target-smoothing idea was introduced in Fujimoto et al. [6] as a heuristic regularization technique to
+stabilize critic learning. However, in our framework, this target smoothing arises directly from the
+σ-smoothed Bellman equation that defines the smoothed action-value function Qπ
+σ. Consequently, the
+critic is trained to approximate the fixed point of the smoothed Bellman operator, ensuring consistency
+with the theoretical formulation. For the actor update, instead of relying on the action-gradient of the
+critic, the policy is updated by sampling Gaussian-perturbed actions. This update depends only on
+evaluations of the smoothed critic and avoids explicit differentiation of the action-value function with
+respect to the action, thereby mitigating instability caused by non-smooth critics.
+Experiments
+We evaluate the proposed Soft DDPG algorithm on standard MuJoCo [26] continuous control
+benchmarks available in OpenAI Gym [5] and their discrete-reward variants to assess its performance
+and robustness under different reward structures. Specifically, we compare Soft DDPG with the
+standard DDPG baseline to isolate the effect of smoothing the DPG. For Soft DDPG, the smoothing
+parameters, including the smoothing scale σ and the number of Monte Carlo samples N, are selected
+based on the sensitivity analysis detailed in Section A.10 of Appendix. All other hyperparameters are
+kept identical for a fair comparison (see Section A.11 of Appendix for detailed configurations).
+Continuous reward environments: Figure 2 (top) and Table 1 present the learning curves and
+final performance averaged over five random seeds. In standard continuous environments where
+reward signals are dense , vanilla DDPG generally achieves higher performance (e.g., HalfCheetah,
+Hopper, Walker2d, and Humanoid). This behavior is theoretically expected, as the introduction of
+GS may introduce approximation bias. Nevertheless, Soft DDPG still achieves competitive results,
+outperforming the baseline in specific tasks such as Ant and Inverted Double Pendulum.
+Discrete reward environments: The primary strength of Soft DDPG is prominently revealed in
+environments with non-smooth, discretized reward surfaces (see Section A.11 of the Appendix for
+the detailed discrete-reward settings). As shown in Figure 2 (bottom) and Table 1, Soft DDPG
+demonstrates consistent performance gains across most environments, including Ant, HalfCheetah,
+Hopper, Walker2d, Inverted Pendulum, and Inverted Double Pendulum. In these challenging settings,
+the standard DDPG suffers from degraded performance due to the non-differentiable nature of the
+discrete rewards, which induces highly unstable action-gradients. In contrast, operating on the
+σ-smoothed Bellman equation allows Soft DDPG to maintain well-defined policy gradients, and it
+leads to improved stability and higher final returns. For additional experimental results, please refer
+to Section B of Appendix.
+Conclusion and limitations
+In this paper, we proposed Soft-DPG, a principled extension of DPG based on GS at the Bellman
+operator level. By removing the dependence on critic action-gradients, the proposed method ensures
+well-defined policy updates even for non-smooth Q-functions. We further instantiated this framework
+(a) Ant (Cont.)
+(b) HalfCheetah (Cont.)
+(c) Hopper (Cont.)
+(d) Walker2d (Cont.)
+(e) Humanoid (Cont.)
+(f) Inverted Double Pendu-
+lum (Cont.)
+(g)
+Inverted
+Pendulum
+(Cont.)
+(h) Ant (Disc.)
+(i) HalfCheetah (Disc.)
+(j) Hopper (Disc.)
+(k) Walker2d (Disc.)
+(l) Humanoid (Disc.)
+(m) Inverted Double Pendu-
+lum (Disc.)
+(n)
+Inverted
+Pendulum
+(Disc.)
+Figure 2: The first two rows show results in the continuous-reward environments, while the last two
+rows show the corresponding discrete-reward variants. Solid lines denote the mean performance over
+multiple random seeds, and shaded regions indicate one standard deviation.
+Table 1: Performance comparison (mean ± std over 5 seeds).
+Environment
+Discrete
+Continuous
+DDPG
+Soft DDPG
+DDPG
+Soft DDPG
+Ant
+190.56 ± 60.23
+271.93 ± 5.54
+1703.54 ± 696.72
+3742.10 ± 721.19
+HalfCheetah
+1599.42 ± 350.34
+1698.09 ± 223.51
+4275.58 ± 657.75
+188.81 ± 1483.14
+Hopper
+14.85 ± 4.29
+22.29 ± 9.26
+1243.69 ± 567.00
+883.59 ± 144.27
+Walker2d
+12.52 ± 4.13
+79.53 ± 46.71
+2218.03 ± 1036.51
+1650.24 ± 381.54
+Humanoid
+580.11 ± 320.87
+143.89 ± 14.73
+2496.36 ± 695.18
+437.65 ± 2.81
+Inverted Pendulum
+10275.08 ± 53.76
+10383.10 ± 3.35
+892.73 ± 81.95
+857.69 ± 132.33
+Inverted Double Pendulum 14678.94 ± 4693.22 19284.25 ± 58.15
+280.40 ± 34.71
+9343.24 ± 22.42
+as Soft DDPG and demonstrated competitive performance on both standard and discretized-reward
+benchmarks. However, the proposed method introduces a smoothing parameter σ, which requires
+careful tuning. In addition, as a DDPG-based method, it inherits sensitivity to hyperparameters and
+lacks convergence guarantees in the deep RL setting.
+References
+[1] Alekh Agarwal, Nan Jiang, Sham M Kakade, and Wen Sun. Reinforcement learning: Theory
+and algorithms. CS Dept., UW Seattle, Seattle, WA, USA, Tech. Rep, 32:96, 2019.
+[2] David Balduzzi and Muhammad Ghifary. Compatible value gradients for reinforcement learning
+of continuous deep policies. arXiv preprint arXiv:1509.03005, 2015.
+[3] Christopher M Bishop and Nasser M Nasrabadi. Pattern recognition and machine learning,
+volume 4. Springer, 2006.
+[4] Omar Bouhamed, Hakim Ghazzai, Hichem Besbes, and Yehia Massoud. Autonomous uav
+navigation: A ddpg-based deep reinforcement learning approach. In 2020 IEEE International
+Symposium on circuits and systems (ISCAS), pages 1-5. IEEE, 2020.
+[5] Greg Brockman, Vicki Cheung, Ludwig Pettersson, Jonas Schneider, John Schulman, Jie Tang,
+and Wojciech Zaremba. Openai gym. arXiv preprint arXiv:1606.01540, 2016.
+[6] Scott Fujimoto, Herke Hoof, and David Meger. Addressing function approximation error in
+actor-critic methods. In International conference on machine learning, pages 1587-1596, 2018.
+[7] Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey Levine. Soft actor-critic: Off-
+policy maximum entropy deep reinforcement learning with a stochastic actor. In International
+conference on machine learning, pages 1861-1870, 2018.
+[8] Matteo Hessel, Joseph Modayil, Hado Van Hasselt, Tom Schaul, Georg Ostrovski, Will Dabney,
+Dan Horgan, Bilal Piot, Mohammad Azar, and David Silver. Rainbow: Combining improve-
+ments in deep reinforcement learning. In Proceedings of the AAAI conference on artificial
+intelligence, volume 32, 2018.
+[9] B Ravi Kiran, Ibrahim Sobh, Victor Talpaert, Patrick Mannion, Ahmad A Al Sallab, Senthil
+Yogamani, and Patrick Pérez. Deep reinforcement learning for autonomous driving: A survey.
+IEEE transactions on intelligent transportation systems, 23(6):4909-4926, 2021.
+[10] Harshat Kumar, Dionysios S Kalogerias, George J Pappas, and Alejandro Ribeiro. Zeroth-order
+deterministic policy gradient. arXiv preprint arXiv:2006.07314, 2020.
+[11] Timothy P Lillicrap, Jonathan J Hunt, Alexander Pritzel, Nicolas Heess, Tom Erez, Yuval Tassa,
+David Silver, and Daan Wierstra. Continuous control with deep reinforcement learning. arXiv
+preprint arXiv:1509.02971, 2015.
+[12] Yen-Chen Liu and Chi-Yu Huang. Ddpg-based adaptive robust tracking control for aerial
+manipulators with decoupling approach. IEEE Transactions on Cybernetics, 52(8):8258-8271,
+2021.
+[13] Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Alex Graves, Ioannis Antonoglou, Daan
+Wierstra, and Martin Riedmiller. Playing atari with deep reinforcement learning. arXiv preprint
+arXiv:1312.5602, 2013.
+[14] Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Andrei A Rusu, Joel Veness, Marc G
+Bellemare, Alex Graves, Martin Riedmiller, Andreas K Fidjeland, Georg Ostrovski, et al.
+Human-level control through deep reinforcement learning. nature, 518(7540):529-533, 2015.
+[15] Ofir Nachum, Mohammad Norouzi, George Tucker, and Dale Schuurmans. Smoothed action
+value functions for learning gaussian policies. In International Conference on Machine Learning,
+pages 3692-3700, 2018.
+[16] Yurii Nesterov and Vladimir Spokoiny. Random gradient-free minimization of convex functions.
+Foundations of Computational Mathematics, 17(2):527-566, 2017.
+[17] Chengrun Qiu, Yang Hu, Yan Chen, and Bing Zeng. Deep deterministic policy gradient (ddpg)-
+based energy harvesting wireless communications. IEEE Internet of Things Journal, 6(5):
+8577-8588, 2019.
+[18] Benjamin Recht. A tour of reinforcement learning: The view from continuous control. Annual
+Review of Control, Robotics, and Autonomous Systems, 2(1):253-279, 2019.
+[19] Baturay Saglam and Dionysis Kalogerias. Compatible gradient approximations for actor-critic
+algorithms. arXiv preprint arXiv:2409.01477, 2024.
+[20] Tim Salimans, Jonathan Ho, Xi Chen, Szymon Sidor, and Ilya Sutskever. Evolution strategies
+as a scalable alternative to reinforcement learning. arXiv preprint arXiv:1703.03864, 2017.
+[21] John Schulman, Sergey Levine, Pieter Abbeel, Michael Jordan, and Philipp Moritz. Trust
+region policy optimization. In International conference on machine learning, pages 1889-1897.
+PMLR, 2015.
+[22] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal
+policy optimization algorithms. arXiv preprint arXiv:1707.06347, 2017.
+[23] David Silver, Guy Lever, Nicolas Heess, Thomas Degris, Daan Wierstra, and Martin Riedmiller.
+Deterministic policy gradient algorithms. In International conference on machine learning,
+pages 387-395, 2014.
+[24] Richard S Sutton, David McAllester, Satinder Singh, and Yishay Mansour. Policy gradient meth-
+ods for reinforcement learning with function approximation. Advances in neural information
+processing systems, 12, 1999.
+[25] Chen Tang, Ben Abbatematteo, Jiaheng Hu, Rohan Chandra, Roberto Martín-Martín, and Peter
+Stone. Deep reinforcement learning for robotics: A survey of real-world successes. Annual
+Review of Control, Robotics, and Autonomous Systems, 8(1):153-188, 2025.
+[26] Emanuel Todorov, Tom Erez, and Yuval Tassa. Mujoco: A physics engine for model-based
+control. In 2012 IEEE/RSJ international conference on intelligent robots and systems, pages
+5026-5033. IEEE, 2012.
+[27] Hado Van Hasselt, Arthur Guez, and David Silver. Deep reinforcement learning with double
+q-learning. In Proceedings of the AAAI conference on artificial intelligence, volume 30, 2016.
+[28] Mel Vecerik, Todd Hester, Jonathan Scholz, Fumin Wang, Olivier Pietquin, Bilal Piot, Nicolas
+Heess, Thomas Rothörl, Thomas Lampe, and Martin Riedmiller. Leveraging demonstrations
+for deep reinforcement learning on robotics problems with sparse rewards. arXiv preprint
+arXiv:1707.08817, 2017.
+[29] Ronald J Williams. Simple statistical gradient-following algorithms for connectionist reinforce-
+ment learning. Machine learning, 8(3):229-256, 1992.
+[30] Yi-Han Xu, Cheng-Cheng Yang, Min Hua, and Wen Zhou. Deep deterministic policy gradient
+(ddpg)-based resource allocation scheme for noma vehicular communications. IEEE Access, 8:
+18797-18807, 2020.
+[31] Yu Yu, Jie Tang, Jiayi Huang, Xiuyin Zhang, Daniel Ka Chun So, and Kai-Kit Wong. Multi-
+objective optimization for uav-assisted wireless powered iot networks based on extended ddpg
+algorithm. IEEE Transactions on Communications, 69(9):6361-6374, 2021.
+A
+Proof
+A.1
+Proof of Lemma 3.4
+We start from the stochastic policy gradient theorem:
+∇θJ(νθ) =
+1 −γ
+X
+s
+dνθ(s)
+Z
+a
+Qνθ(s, a) ∇θνθ(a|s) da,
+(12)
+where
+dνθ(s) = (1 −γ)
+∞
+X
+t=0
+γtP(st = s | νθ, s0 ∼ρ)
+is the discounted state visitation distribution under νθ. Consider the Gaussian policy
+νθ(a|s) = N(a; πθ(s), σ2I),
+(13)
+which admits the reparameterization
+a = πθ(s) + σw,
+w ∼N(0, I).
+(14)
+The gradient of the policy is given by
+∇θνθ(a|s) = νθ(a|s) 1
+σ2 ∇θπθ(s) (a −πθ(s)).
+(15)
+Substituting this into the standard stochastic policy gradient theorem yields:
+∇θJ(νθ) =
+1 −γ Es∼dνθ , a∼νθ
+
+Qνθ(s, a) 1
+σ2 ∇θπθ(s) (a −πθ(s))
+
+.
+(16)
+Using the reparameterization a = πθ(s) + σw, we obtain
+∇θJ(νθ) =
+1 −γ Es∼dνθ , a∼νθ
+
+∇θπθ(s) Qνθ(s, πθ(s) + σw) w
+σ
+
+,
+(17)
+which proves the first statement.
+For the second statement, by Lemma 3.3, we have the Gaussian smoothing limit
+lim
+σ↓0 Ew∼N(0,I)
+Qνθ(s, πθ(s) + σw) w
+σ
+
+= ∇aQπθ(s, a)
+
+a=πθ(s).
+(18)
+Therefore,
+lim
+σ↓0 ∇θJ(νθ) =
+1 −γ Es∼dνθ
+h
+∇θπθ(s) ∇aQπθ(s, a)
+
+a=πθ(s)
+i
+,
+(19)
+which recovers the deterministic policy gradient.
+A.2
+Proof of Lemma 5.2
+Consider the difference between the two operators:
+(T π
+σ Q)(s, a) −(T π
+σ Q′)(s, a)
+= (R(s, a) + γ Es′,w[Q(s′, π(s′) + σw)]) −(R(s, a) + γ Es′,w[Q′(s′, π(s′) + σw)])
+= γ Es′∼P (·|s,a), w∼N(0,I)[Q(s′, π(s′) + σw) −Q′(s′, π(s′) + σw)] .
+Taking absolute values, we obtain
+|(T π
+σ Q)(s, a) −(T π
+σ Q′)(s, a)| = γ |Es′,w [Q(s′, π(s′) + σw) −Q′(s′, π(s′) + σw)]| .
+Using Jensen’s inequality (or |E[X]| ≤E[|X|]),
+|(T π
+σ Q)(s, a) −(T π
+σ Q′)(s, a)| ≤γ Es′,w [|Q(s′, π(s′) + σw) −Q′(s′, π(s′) + σw)|] .
+For every (s′, a′), the following inequality holds:
+|Q(s′, a′) −Q′(s′, a′)| ≤∥Q −Q′∥∞.
+Therefore, we have
+|(T π
+σ Q)(s, a) −(T π
+σ Q′)(s, a)| ≤γ Es′,w [∥Q −Q′∥∞]
+= γ ∥Q −Q′∥∞.
+Taking the supremum over all (s, a) yields
+∥T π
+σ Q −T π
+σ Q′∥∞=
+sup
+(s,a)∈S×A
+|(T π
+σ Q)(s, a) −(T π
+σ Q′)(s, a)|
+≤γ ∥Q −Q′∥∞.
+Hence, T π
+σ is a γ-contraction under the supremum norm.
+A.3
+Simulation lemma
+In this subsection, we state a standard simulation lemma for discounted MDPs. This lemma quantifies
+how errors in the reward function and transition kernel propagate to the value function under a fixed
+policy. It will be used in the proof of Lemma 5.3 to bound the difference between the original value
+function V π and the smoothed value function V π
+σ .
+Lemma A.1. [1] Let M = (S, A, P, R, γ) and c
+M = (S, A, bP, bR, γ) be two MDPs with the same
+state space, action space, and discount factor. Suppose that
+max
+s∈S, a∈A | bR(s, a) −R(s, a)| ≤ϵR
+and
+max
+s∈S, a∈A ∥bP(· | s, a) −P(· | s, a)∥1 ≤ϵP .
+Then, for any policy π : S →A,
+∥V π
+c
+M −V π
+M∥∞≤
+ϵR
+1 −γ + γϵP Vmax
+2(1 −γ) ,
+where
+Vmax := Rmax
+1 −γ .
+A.4
+Proof of Lemma 5.3
+Let m denote the dimension of the action space, and let w ∼N(0, I). Recall that
+V π
+σ (s) = Ew∼N (0,I) [Qπ
+σ(s, π(s) + σw)] .
+By expanding Qπ
+σ using the σ-smoothed Bellman equation, we obtain
+V π
+σ (s) = Ew∼N(0,I)
+
+R(s, π(s) + σw) + γ
+Z
+S
+V π
+σ (s′)P(s′ | s, π(s) + σw) ds′
+
+.
+Using linearity of expectation, this can be written as
+V π
+σ (s) = Ew∼N(0,I) [R(s, π(s) + σw)] + γ
+Z
+S
+V π
+σ (s′)Ew∼N (0,I) [P(s′ | s, π(s) + σw)] ds′.
+Define the smoothed reward function and transition kernel by
+Rσ(s, a) := Ew∼N (0,I) [R(s, a + σw)] ,
+and
+Pσ(s′ | s, a) := Ew∼N (0,I) [P(s′ | s, a + σw)] .
+Then
+V π
+σ (s) = Rσ(s, π(s)) + γ
+Z
+S
+V π
+σ (s′)Pσ(s′ | s, π(s)) ds′.
+Hence, V π
+σ is the value function of the modified MDP Mσ = (S, A, Pσ, Rσ, γ).
+Applying the simulation lemma in Lemma A.1 with c
+M = Mσ, bR = Rσ, and bP = Pσ, we obtain
+∥V π −V π
+σ ∥∞≤
+1 −γ ∥R −Rσ∥∞+ γVmax
+2(1 −γ)∥P −Pσ∥∞,1.
+(20)
+Here,
+∥R −Rσ∥∞:=
+sup
+(s,a)∈S×A
+|R(s, a) −Rσ(s, a)|,
+and
+∥P −Pσ∥∞,1 :=
+sup
+(s,a)∈S×A
+Z
+S
+|P(s′ | s, a) −Pσ(s′ | s, a)| ds′.
+We now bound the two error terms. Assume that the reward function is LR-Lipschitz continuous with
+respect to the Euclidean norm on the action space; that is, for all s ∈S and a, a′ ∈A,
+|R(s, a) −R(s, a′)| ≤LR∥a −a′∥2.
+(21)
+Then
+∥R −Rσ∥∞=
+sup
+(s,a)∈S×A
+R(s, a) −Ew∼N (0,I) [R(s, a + σw)]
+
+≤
+sup
+(s,a)∈S×A
+Ew∼N (0,I) [|R(s, a) −R(s, a + σw)|]
+≤Ew∼N (0,I) [LRσ∥w∥2]
+= LRσEw∼N (0,I) [∥w∥2]
+≤LRσ√m.
+(22)
+The last inequality follows from Jensen’s inequality and the properties of the standard multivariate
+normal distribution [3]:
+Ew∼N(0,I)[∥w∥2] ≤
+q
+Ew∼N (0,I)[∥w∥2
+2] = √m,
+Next, assume that the transition kernel is LP -Lipschitz continuous with respect to the action argument
+in the L1 sense; that is, for all s ∈S and a, a′ ∈A,
+Z
+S
+|P(s′ | s, a) −P(s′ | s, a′)| ds′ ≤LP ∥a −a′∥2.
+(23)
+Using this assumption,
+∥P −Pσ∥∞,1 =
+sup
+(s,a)∈S×A
+Z
+S
+P(s′ | s, a) −Ew∼N (0,I) [P(s′ | s, a + σw)]
+ ds′
+≤
+sup
+(s,a)∈S×A
+Ew∼N (0,I)
+Z
+S
+|P(s′ | s, a) −P(s′ | s, a + σw)| ds′
+
+≤Ew∼N(0,I) [LP σ∥w∥2]
+= LP σ√m.
+(24)
+Substituting (22) and (24) into (20), we obtain
+∥V π −V π
+σ ∥∞≤LRσ√m
+1 −γ
++ γVmax
+2(1 −γ)LP σ√m.
+Therefore,
+∥V π −V π
+σ ∥∞≤σ√m
+1 −γ
+
+LR + γ
+2 LP Vmax
+
+.
+This completes the proof.
+A.5
+Proof of Lemma 5.4
+Recall the definition of the smoothed action-value function:
+Qπ
+σ(s, a) = R(s, a) + γ
+Z
+S
+V π
+σ (s′)P(s′ | s, a)ds′.
+For any state s ∈S and two actions a, a′ ∈A, we can bound the difference as follows:
+|Qπ
+σ(s, a) −Qπ
+σ(s, a′)| ≤|R(s, a) −R(s, a′)|
++ γ
+Z
+S
+V π
+σ (s′) |P(s′ | s, a) −P(s′ | s, a′)| ds′.
+By the assumptions in Lemma 5.3, the reward function is LR-Lipschitz continuous, which gives:
+|R(s, a) −R(s, a′)| ≤LR∥a −a′∥2.
+(25)
+For the second term, we know that the value function is bounded by Vmax, i.e., V π
+σ (s′) ≤Vmax =
+Rmax/(1 −γ). Furthermore, since the transition density is assumed to be LP -Lipschitz continuous
+with respect to the action in the L1 sense, we have:
+Z
+S
+V π
+σ (s′) |P(s′ | s, a) −P(s′ | s, a′)| ds′ ≤Vmax
+Z
+S
+|P(s′ | s, a) −P(s′ | s, a′)| ds′
+≤VmaxLP ∥a −a′∥2.
+(26)
+Combining (25) and (26) yields:
+|Qπ
+σ(s, a) −Qπ
+σ(s, a′)| ≤LR∥a −a′∥2 + γVmaxLP ∥a −a′∥2
+= (LR + γLP Vmax) ∥a −a′∥2.
+This demonstrates that for any given state s, the smoothed action-value function Qπ
+σ(s, ·) is LQ-
+Lipschitz continuous with respect to the action, where the Lipschitz constant is given by LQ =
+LR + γLP Vmax. This completes the proof.
+A.6
+Proof of Lemma 5.5
+Let m denote the dimension of the action space. Since Qπ = T πQπ and Qπ
+σ = T π
+σ Qπ
+σ,
+∥Qπ −Qπ
+σ∥∞= ∥T πQπ −T π
+σ Qπ
+σ∥∞≤∥T πQπ −T πQπ
+σ∥∞+ ∥T πQπ
+σ −T π
+σ Qπ
+σ∥∞.
+The first term is bounded by the contraction of T π:
+∥T πQπ −T πQπ
+σ∥∞≤γ∥Qπ −Qπ
+σ∥∞.
+(27)
+For the second term, note that the reward and transition kernel are not smoothed; the only difference
+is in the value of the next action:
+(T πQ)(s, a) = R(s, a) + γEs′∼P (·|s,a) [Q(s′, π(s′))] ,
+(T π
+σ Q)(s, a) = R(s, a) + γEs′∼P (·|s,a),w∼N (0,I) [Q(s′, π(s′) + σw)] .
+By assumption, for every s ∈S and a, a′ ∈A,
+|Qπ
+σ(s, a) −Qπ
+σ(s, a′)| ≤LQ∥a −a′∥2.
+Thus, taking a = π(s′) and a′ = π(s′) + σw, we obtain
+|Qπ
+σ(s′, π(s′)) −Qπ
+σ(s′, π(s′) + σw)| ≤LQ∥σw∥2 = LQσ∥w∥2.
+Therefore, for any (s, a) ∈S × A,
+|(T πQπ
+σ)(s, a) −(T π
+σ Qπ
+σ)(s, a)|
+= γ
+Es′∼P (·|s,a)Ew∼N (0,I) [Qπ
+σ(s′, π(s′)) −Qπ
+σ(s′, π(s′) + σw)]
+
+≤γEs′∼P (·|s,a)Ew∼N (0,I) [|Qπ
+σ(s′, π(s′)) −Qπ
+σ(s′, π(s′) + σw)|]
+≤γEs′∼P (·|s,a)Ew∼N (0,I) [LQσ∥w∥2]
+≤γEs′∼P (·|s,a)Ew∼N (0,I) [LQσ∥w∥2]
+= γLQσEw∼N(0,I)[∥w∥2]
+≤γLQσ√m.
+(28)
+The last inequality follows from Jensen’s inequality and the properties of the standard multivariate
+normal distribution [3]: Ew∼N(0,I)[∥w∥2] ≤
+q
+Ew∼N (0,I)[∥w∥2
+2] = √m. Since this bound holds
+for every (s, a), taking the supremum over (s, a) yields
+∥T πQπ
+σ −T π
+σ Qπ
+σ∥∞≤γLQσ√m.
+(29)
+Combining (27) and (29), we obtain
+∥Qπ −Qπ
+σ∥∞≤γ∥Qπ −Qπ
+σ∥∞+ γLQσ√m.
+Rearranging gives
+∥Qπ −Qπ
+σ∥∞≤γLQσ√m
+1 −γ
+.
+This completes the proof.
+A.7
+Proof of Lemma 5.6
+Using the chain rule, we have
+∇θV πθ
+σ (s) =∇θEw∼N(0,I)[Qπθ
+σ (s, πθ(s) + σw)]
+=∇θEw∼N(0,I)[Qπθ
+σ (s, a + σw)]
+
+a=πθ(s) + ∇θEw∼N(0,I)[Qπ
+σ(s, πθ(s) + σw)]
+
+π=πθ,
+where
+∇θEw∼N(0,I)[Qπθ
+σ (s, a + σw)]
+
+a=πθ(s) =∇θ
+
+Rσ(s, a) + γ
+Z
+s′∈S
+V πθ
+σ (s′)Pσ(s′|s, a)ds′
+
+a=πθ(s)
+=γ
+Z
+s′∈S
+∇θV πθ
+σ (s′)Pσ(s′|s, πθ(s))ds′.
+This completes the proof.
+A.8
+Proof of Theorem 5.7
+The objective function is defined as the expected return from the initial state distribution ρ0:
+Jπθ
+σ
+= Es0∼ρ0
+
+V πθ
+σ (s0)
+
+.
+Taking the gradient with respect to θ yields:
+∇θJπθ
+σ
+=
+Z
+S
+ρ0(s0)∇θV πθ
+σ (s0)ds0.
+By substituting the gradient Bellman equation (Lemma 5.6) into the above expression, we obtain the
+first unrolling step:
+∇θJπθ
+σ
+=
+Z
+S
+ρ0(s0)
+
+∇θEw∼N(0,I)
+
+Qπθ
+σ (s0, πθ(s0) + σw)
+
+π=πθ
++ γ
+Z
+S
+Pσ(s1|s0, πθ(s0))∇θV πθ
+σ (s1)ds1
+
+ds0
+=
+Z
+S
+ρ0(s) ∇θEw∼N(0,I)
+
+Qπθ
+σ (s, πθ(s) + σw)
+
+π=πθ ds0 + γ
+Z
+S
+ρ1(s1)∇θV πθ
+σ (s1)ds1,
+where ρ1(s1) =
+R
+S ρ0(s0)Pσ(s1|s0, πθ(s0))ds0 is the state distribution at time step 1.We can
+recursively substitute the gradient Bellman equation for ∇θV πθ
+σ (s1) to reveal the second unrolling
+step:
+∇θJπθ
+σ
+=
+Z
+S
+ρ0(s) ∇θEw∼N(0,I)
+
+Qπθ
+σ (s, πθ(s) + σw)
+
+π=πθ ds
++ γ
+Z
+S
+ρ1(s1)
+
+∇θEw ∼N(0, I)
+
+Qπθ
+σ (s1, πθ(s1) + σw)
+
+π=πθ
++ γ
+Z
+S
+Pσ(s2|s1, πθ(s1))∇θV πθ
+σ (s2)ds2
+
+ds1
+=
+Z
+S
+ρ0(s) ∇θEw∼N(0,I)
+
+Qπθ
+σ (s, πθ(s) + σw)
+
+π=πθ ds
++ γ
+Z
+S
+ρ1(s) ∇θEw∼N(0,I)
+
+Qπθ
+σ (s, πθ(s) + σw)
+
+π=πθ ds + γ2
+Z
+S
+ρ2(s)∇θV πθ
+σ (s)ds
+where ρ2(s) =
+R
+S ρ1(s1)Pσ(s|s1, πθ(s1))ds1.
+By continuing this recursive unrolling process for infinite time steps, the terms form a geometric
+series weighted by the state distributions at each step t:
+∇θJπθ
+σ
+=
+Z
+S
+∞
+X
+t=0
+γtρt(s) ∇θEw∼N (0,I)
+
+Qπθ
+σ (s, πθ(s) + σw)
+
+π=πθ ds.
+Recognizing that the discounted state visitation distribution is defined as ρνθ(s) = P∞
+t=0 γtρt(s),
+this simplifies compactly to an expectation over ρνθ:
+∇θJπθ
+σ
+= Es∼ρνθ , w∼N (0,I)
+
+∇θQπθ
+σ (s, πθ(s) + σw)
+
+π=πθ .
+From here, we proceed with the derivation of the policy gradient using the chain rule and the Gaussian
+log-derivative trick:
+Moreover, we have
+∇θJπθ
+σ
+= Ew∼N(0,I), s∼ρνθ
+
+∇θQπθ
+σ (s, πθ(s) + σw)
+
+π=πθ
+= Ew∼N(0,I), s∼ρνθ
+h
+∇θπθ(s) ∇aQπθ
+σ (s, a + σw)|a=πθ(s)
+i
+= Es∼ρνθ
+h
+∇θπθ(s) ∇aEw∼N (0,I)
+
+Qπθ
+σ (s, a + σw)
+
+a=πθ(s)
+i
+= Ew∼N(0,I), s∼ρνθ
+
+∇θπθ(s) w Qπθ
+σ (s, πθ(s) + σw)
+σ
+
+= Ew∼N(0,I), s∼ρνθ
+
+∇θπθ(s) ˜a −πθ(s)
+σ
+Qπθ
+σ (s, ˜a)
+σ
+
+= Es∼ρνθ , ˜a∼νθ
+
+−1
+2σ2 ∇θ ∥˜a −πθ(s)∥2
+2 Qπθ
+σ (s, ˜a)
+
+,
+where the fourth equality follows from the definition of the gradient of Gaussian smoothing. The fifth
+equality is obtained by applying the change of variable ˜a = πθ(s) + σw. Finally, the last equality
+uses the gradient identity ∇θ∥˜a−πθ(s)∥2
+2 = −2(˜a−πθ(s))∇θπθ(s), with νθ(·|s) = N(πθ(s), σ2I)
+denoting the Gaussian smoothing distribution. This completes the proof.
+A.9
+Alternative proof of Theorem 5.7 via standard policy gradient
+The result in Theorem 5.7 can also be derived more directly from the standard stochastic policy
+gradient theorem. Define the Gaussian policy
+νθ(˜a | s) = N(˜a; πθ(s), σ2I).
+The σ-smoothed Bellman equation can be interpreted as the Bellman equation induced by this
+Gaussian policy. In particular,
+Qπθ
+σ (s, a) = R(s, a) + γEs′∼P (·|s,a),a′∼νθ(·|s′) [Qπθ
+σ (s′, ˜a′)] .
+Thus, Qπθ
+σ coincides with the action-value function associated with the Gaussian policy νθ.
+Let ρνθ(s) := P∞
+t=0 γtρt(s) denote the unnormalized discounted state visitation measure induced by
+νθ, where ρt is the state distribution at time step t. Then, using the standard stochastic policy gradient
+theorem with this unnormalized measure, we obtain
+∇θJσ =
+Z
+S
+ρνθ(s)
+Z
+Rm ∇θνθ(˜a | s)Qπθ
+σ (s, ˜a) d˜a ds
+= Es∼ρνθ , ˜a∼νθ [∇θ log νθ(˜a | s)Qπθ
+σ (s, ˜a)] .
+For the Gaussian policy νθ(˜a | s), the log-probability is
+log νθ(˜a | s) = −1
+2σ2
+˜a −πθ(s)
+2 −m
+2 log(2πσ2).
+Taking the gradient with respect to θ yields
+∇θ log νθ(˜a | s) = −1
+2σ2 ∇θ
+˜a −πθ(s)
+2 = 1
+σ2 ∇θπθ(s)(˜a −πθ(s)).
+Substituting this identity into the policy gradient expression gives
+∇θJσ = Es∼ρνθ , ˜a∼νθ
+
+−1
+2σ2 ∇θ
+˜a −πθ(s)
+2Qπθ
+σ (s, ˜a)
+
+= Es∼ρνθ , ˜a∼νθ
+ 1
+σ2 ∇θπθ(s)(˜a −πθ(s))Qπθ
+σ (s, ˜a)
+
+.
+This recovers the Soft-DPG formulation and completes the alternative proof.
+A.10
+Sensitivity analysis of smoothing parameters
+The proposed Soft DDPG introduces two key hyperparameters: the smoothing scale σ and the number
+of Monte Carlo samples N used to approximate the Gaussian smoothing expectation. To better
+understand the influence of these parameters, we conduct a sensitivity analysis.
+We perform this analysis on the Ant environment from OpenAI Gym [5] as a representative benchmark.
+While the optimal hyperparameters may vary across environments due to differences in dynamics and
+reward structures, our objective is not to perform exhaustive per-environment tuning, but to identify a
+robust configuration that generalizes well across tasks.
+Effect of the number of samples N.
+We first evaluate the impact of the Monte Carlo sample
+size by fixing the smoothing scale to σ = 0.2 and varying N ∈{10, 20, 50, 100}. As shown in
+Figure 3a, increasing N initially improves performance, as the approximation of the smoothed
+Bellman expectation becomes more accurate. However, beyond a certain point, the gains saturate
+and even slightly degrade due to increased variance and computational overhead. Empirically, we
+observe that N = 50 achieves the best overall performance, providing a favorable trade-off between
+approximation accuracy and efficiency. While the optimal choice of N may vary across environments,
+we find that N = 50 provides a robust and effective setting in practice. Therefore, we use N = 50 in
+all experiments.
+Effect of the smoothing scale σ.
+Next, we analyze the influence of the smoothing scale by fixing the
+number of samples to N = 10 and varying σ ∈{0.001, 0.01, 0.1, 0.2, 0.5}. The results in Figure 3b
+show that excessively small values of σ lead to a significant performance degradation. In particular,
+when σ = 0.001, the performance collapses, as the smoothing effect becomes negligible. On the other
+hand, overly large values of σ (e.g., σ = 0.5) introduce excessive bias in the smoothed value function,
+leading to suboptimal performance. Empirically, σ = 0.2 provides the best performance, striking a
+balance between stabilizing the learning dynamics and controlling approximation bias. Similarly,
+although the optimal σ may depend on the specific environment, σ = 0.2 consistently provides stable
+and effective performance across tasks. Accordingly, we use σ = 0.2 in all experiments.
+(a) Sensitivity to the number of samples N (σ = 0.1)
+(b) Sensitivity to the smoothing scale σ (N = 10)
+Figure 3: Sensitivity analysis of Soft DDPG hyperparameters on the Ant environment. (Left)
+Performance as a function of the number of samples N with σ = 0.2. (Right) Performance as a
+function of the smoothing scale σ with N = 10. The results show that N = 50 and σ = 0.2 provide
+the best trade-off between performance and stability.
+A.11
+Discrete reward experiment setting
+In this section, we provide a detailed description of the discrete reward settings used in the main
+experiments. Specifically, we first describe the overall experimental setup, including the hyperpa-
+rameter configurations used for both DDPG and Soft DDPG. We then present the construction of
+discrete reward environments, where standard dense reward functions are replaced with discontinuous
+and quantized reward signals. These environments are designed to explicitly violate the smoothness
+assumptions underlying deterministic policy gradients, thereby providing a controlled setting to
+evaluate the robustness of the proposed method. All experiments, including those presented in the
+main paper and appendix, were conducted on a single workstation equipped with an Intel Core
+i9-10900K CPU, an NVIDIA GeForce RTX 3080 Ti GPU with 12 GB memory, and 32 GB RAM.
+Each experiment was run on a single GPU. We begin by summarizing the hyperparameter settings
+used in all experiments. Unless otherwise specified, these configurations are shared across both
+continuous and discrete reward environments to ensure a fair comparison.
+Table 2: Hyperparameter settings for the experiments
+Hyperparameter
+Value
+σ (Smoothing noise)
+0.2
+N (Number of smooth samples)
+Discount factor (γ)
+0.99
+Batch size
+Target update rate (τ)
+0.005
+Actor learning rate
+10−4
+Critic learning rate
+10−4
+Replay buffer size
+1, 000, 000
+Hidden units per layer
+400, 300
+Number of hidden layers
+Total timesteps
+1, 000, 000
+Next, we describe the construction of the discrete reward functions for each environment. In all cases,
+the original dense reward components are removed and replaced with discontinuous, task-specific
+reward signals designed to induce non-smooth learning dynamics.
+Ant discrete reward setup
+In the modified Ant environment, the original dense reward components,
+such as forward-progress shaping and survival incentives, are removed and replaced with a sparse
+milestone-based reward structure along the forward direction. The modifications are as follows:
+• Milestone-based distance rewards: The agent receives a discrete bonus only when its
+horizontal position along the x-axis exceeds predefined distance thresholds for the first time.
+The milestone positions are set to x ∈{0.5, 1.5, 3.0, 5.0, 10.0, 20.0}, and each milestone
+grants a reward of 50.0.
+• Sparse curriculum structure: The milestones are placed more densely in the early stage
+and more sparsely at longer distances. This design provides an initial learning signal
+even for short forward movements, while still encouraging the agent to achieve sustained
+long-horizon locomotion.
+• Flip penalty: A terminal penalty of −10.0 is applied when the episode ends due to failure,
+such as the ant flipping over, excluding time-limit truncation. This discourages unstable
+postures during exploration.
+• Survival reward removal: The standard per-step survival reward is set to zero. This
+prevents the agent from exploiting a local optimum in which it simply remains alive without
+making meaningful forward progress.
+HalfCheetah discrete reward setup
+In the modified HalfCheetah environment, the original dense
+reward composed of forward velocity and control-related shaping is replaced with a discretized
+velocity-based reward. The modifications are as follows:
+• Velocity-binned reward: The agent’s forward velocity vx is partitioned into discrete
+intervals defined by the thresholds {0.0, 1.0, 3.0, 5.0}. The reward is assigned according to
+the velocity bin in which the agent currently lies.
+• Reward assignments: The step reward is given as
+- 0.0 if vx ≤0.0,
+- 0.5 if 0.0 < vx ≤1.0,
+- 1.0 if 1.0 < vx ≤3.0,
+- 2.0 if 3.0 < vx ≤5.0,
+- 3.0 if vx > 5.0.
+• Quantized performance signal: As the forward speed increases, the reward changes only
+when the velocity crosses one of the bin boundaries, thereby creating a piecewise-constant
+and discontinuous learning signal.
+• Dense shaping removal: The original dense shaping terms are discarded so that the learning
+behavior is driven entirely by the discretized velocity levels.
+Hopper discrete reward setup
+In the modified Hopper environment, the original dense reward
+is replaced with a sparse milestone-based reward defined on the agent’s forward displacement. The
+modifications are as follows:
+• Forward milestone reward: The agent receives a discrete reward whenever its horizontal
+position increases by more than a predefined threshold relative to the last rewarded position.
+Specifically, if the forward displacement exceeds ∆x = 0.5, a reward of 5.0 is granted for
+each crossed milestone.
+• Accumulated milestone counting: If the agent advances by multiple thresholds within a
+single step, the reward is scaled proportionally to the number of crossed milestones. This
+preserves the cumulative forward-progress information while maintaining a discretized
+signal.
+• Minimal survival reward: A very small survival reward is provided at each non-terminal
+step. This weak auxiliary signal prevents the agent from immediately collapsing while
+ensuring that the primary learning signal still comes from forward milestone crossings.
+• Dense reward removal: All original continuous reward components, including forward-
+velocity shaping and control-related terms, are discarded so that the agent is trained entirely
+under the proposed discrete reward structure.
+Walker2d discrete reward setup
+In the modified Walker2d environment, the original dense reward
+is replaced with a sparse milestone-based forward-progress reward. The modifications are as follows:
+• Forward milestone reward: The agent receives a discrete reward only when its horizontal
+displacement from the last rewarded position exceeds a threshold of ∆x = 0.2. Each
+crossed milestone yields a reward of 2.0.
+• Accumulated milestone counting: If multiple displacement thresholds are crossed within a
+single step, the reward is scaled proportionally to the number of crossed milestones. This
+preserves coarse forward-progress information while maintaining a discontinuous reward
+signal.
+• Minimal survival reward: A very small constant reward is added at each step. This
+prevents immediate degeneration of behavior while ensuring that the dominant learning
+signal still comes from milestone-based forward progress.
+• Discontinuity emphasis: Between milestone crossings, the forward reward remains zero,
+and reward is generated only when the agent passes the threshold. This creates a highly
+discontinuous signal and makes the task substantially harder than the standard dense-reward
+setting.
+• Dense reward removal: The original dense reward components are discarded so that the
+agent is trained entirely under the proposed discrete locomotion reward structure.
+Humanoid discrete reward setup
+In the modified Humanoid environment, the original dense
+reward is replaced with an extremely sparse and highly discretized reward function defined by posture
+and velocity conditions. The modifications are as follows:
+• Posture constraint: Rewards are provided only when the humanoid maintains an upright
+and stable posture. Specifically, the torso height must satisfy z > 1.18, and the lateral
+velocity magnitude must remain below 0.18.
+• Low-speed reward: If the posture constraint is satisfied and the forward velocity is smaller
+than 0.12, the agent receives a reward of 3.0. This provides a small discrete signal for stable
+but slow locomotion.
+• High-speed reward: If the posture constraint is satisfied and the forward velocity exceeds
+1.6, the agent becomes eligible for a larger reward. However, the reward of 20.0 is granted
+only after this high-speed condition is maintained for at least six consecutive steps.
+• Persistence requirement: The consecutive-step counter is reset whenever the posture
+constraint is violated or the forward velocity leaves the high-speed regime. This makes the
+large reward dependent on sustained stable locomotion rather than transient bursts of speed.
+• Dense reward removal: All original dense reward components are discarded so that the
+agent is trained solely under the proposed discrete reward mechanism.
+InvertedDoublePendulum discrete reward setup
+In the modified InvertedDoublePendulum en-
+vironment, the original dense reward is replaced with a discrete reward structure based on angular
+stability and long-term survival. The modifications are as follows:
+• Step-wise angular reward: Let θ1 and θ2 denote the two pendulum angles, and define
+m = max(|θ1|, |θ2|). At each step, the agent receives a discrete reward according to the
+angular region:
+- 20.0 if m < 0.05,
+- 5.0 if 0.05 ≤m < 0.15,
+- 1.0 if 0.15 ≤m < 0.4,
+- 0.0 otherwise.
+This creates a staircase-shaped reward landscape in which more accurate balancing yields a
+larger discrete reward.
+• Survival milestone bonus: Additional sparse bonuses are given when the agent survives
+for a sufficiently long duration. Specifically, rewards of 500.0 are granted once when the
+step count reaches 500 and 1000, respectively.
+• Long-horizon credit assignment: The survival milestones introduce large delayed rewards,
+making the task suitable for testing whether the algorithm can propagate long-term value
+information under sparse feedback.
+• Failure penalty: If the episode terminates due to failure, excluding time-limit truncation, the
+reward is overwritten to −10.0. This penalizes collapse while keeping the penalty moderate
+enough to avoid completely suppressing exploration.
+• Dense reward removal: All original dense reward components are discarded so that the
+agent is trained entirely under the proposed discrete balancing reward structure.
+InvertedPendulum discrete reward setup
+In the modified InvertedPendulum environment, the
+original dense reward is replaced with a highly sparse reward structure based on angular stability and
+long-term survival. The modifications are as follows:
+• Angular reward: Let θ denote the pendulum angle from the upright position. At each
+step, the agent receives a reward of 10.0 only when |θ| < 0.02, and receives 0.0 otherwise.
+This creates a narrow success region in which reward is available only for highly accurate
+balancing.
+• Survival milestone bonus: Additional sparse bonuses are granted when the agent survives
+for a sufficiently long duration. Specifically, rewards of 200.0 are given once when the step
+count reaches 500 and 1000, respectively.
+• Long-horizon credit assignment: The survival milestones provide delayed rewards that
+encourage sustained stabilization, making the task suitable for testing long-term value
+propagation under sparse feedback.
+• Failure penalty: If the episode terminates due to failure, excluding time-limit truncation,
+the reward is overwritten to −20.0. This discourages immediate collapse and distinguishes
+catastrophic failure from ordinary zero-reward states.
+• Dense reward removal: All original dense reward components are discarded so that the
+agent is trained entirely under the proposed discrete balancing reward structure.
+B
+Additional discrete reward experiment
+To further validate the robustness of the proposed method, we conduct additional experiments on
+a diverse set of Gym environments [5], including BipedalWalker, LunarLander, Pendulum, and
+MountainCar. These environments differ significantly in their dynamics and control objectives,
+providing a broader evaluation beyond the benchmarks presented in the main text.
+All experiments follow the same training protocol and hyperparameter settings as described in
+Section A.11, ensuring consistency and fair comparison. For each environment, we construct discrete
+reward variants by replacing the original dense reward functions with quantized or sparse reward
+signals, following the same design principle used in the main experiments.
+The quantitative results are summarized in Table 3. Consistent with the main experiments, Soft
+DDPG demonstrates clear advantages in the discrete reward settings across most environments.
+In particular, it outperforms the baseline in BipedalWalker, MountainCar, and Pendulum, while
+achieving comparable performance in LunarLander.
+These results further support our main claim that Soft DDPG is particularly effective in environments
+with non-smooth or quantized reward structures, where the action-gradient of the critic becomes
+unreliable. By leveraging the σ-smoothed Bellman formulation, the proposed method maintains
+stable and informative policy updates, leading to improved performance under such challenging
+conditions.
+In contrast, under continuous reward settings, vanilla DDPG generally achieves better performance.
+This behavior is expected, as the smoothing mechanism introduces bias when the underlying value
+function is already smooth and well-behaved.
+Overall, these results demonstrate Soft DDPG provides substantial gains in robustness and stability
+when the reward landscape is discontinuous or non-differentiable.
+The detailed discrete reward formulations for each environment are described below.
+(a) Bipedalwalker (Cont.)
+(b) Lunarlander (Cont.)
+(c) Pendulum (Cont.)
+(d) Mountaincar (Cont.)
+(e) Bipedalwalker (Disc.)
+(f) Lunarlander (Disc.)
+(g) Pendulum (Disc.)
+(h) Mountaincar (Disc.)
+Figure 4: Learning curves on various benchmarks: Continuous (top) vs. Discrete (bottom) control.
+The solid lines represent the mean and the shaded areas represent the standard deviation across
+multiple seeds.
+Table 3: Performance comparison in discrete- and continuous-reward environments (mean ± std over
+5 seeds). Bold values indicate the better result within each reward setting.
+Environment
+Discrete
+Continuous
+DDPG
+Soft DDPG
+DDPG
+Soft DDPG
+Bipedalwalker
+16.13 ± 6.22
+25.42 ± 5.46
+76.95 ± 164.00
+−80.48 ± 23.73
+Lunarlander
+99.03 ± 3.13
+98.56 ± 5.17
+273.11 ± 3.77
+−787.54 ± 252.02
+Pendulum
+1797.67 ± 860.55
+2182.19 ± 19.22
+−149.60 ± 2.84
+−156.72 ± 3.28
+Mountaincar
+15.06 ± 9.40
+19.36 ± 0.93
+−1.00 ± 0.00
+−1.00 ± 0.00
+BipedalWalker discrete reward setup
+In the modified BipedalWalker environment, the original
+dense reward is replaced with a sparse distance-based milestone reward together with a discrete
+terminal fall penalty. The modifications are as follows:
+• Distance milestone reward: The agent receives a discrete reward when its forward position
+crosses a predefined distance threshold for the first time during an episode. The thresholds
+are set to x ∈{0.5, 1.0, 5.0, 10.0} with corresponding rewards {1.0, 2.0, 10.0, 20.0}.
+• One-time reward per threshold: Each milestone reward is granted only once per episode,
+based on the maximum forward distance achieved so far. This ensures that the reward
+reflects genuine progress rather than repeated oscillations around the same position.
+• Fall penalty: If the episode terminates due to failure rather than time-limit truncation, the
+agent receives a terminal penalty of −10.0. This penalizes collapse and encourages stable
+walking behavior.
+• Dense reward removal: All original dense reward components, including forward-progress
+shaping and torque-related penalties, are discarded so that the agent is trained entirely under
+the proposed discrete milestone structure.
+LunarLander discrete reward setup
+In the modified LunarLander environment, the original dense
+reward is replaced with a staged discrete reward structure that reflects the sequential procedure of
+successful landing. The modifications are as follows:
+• Approach reward: A reward of 5.0 is granted once when the lander enters the central
+horizontal region of the landing pad, i.e., when |x| < 0.2.
+• Hover reward: After the approach milestone has been achieved, an additional reward of
+10.0 is granted once when the lander descends below a low-altitude threshold, i.e., when
+y < 0.3.
+• Success reward: If the episode terminates with both legs in contact with the ground and the
+lander remains within the landing zone (|x| < 0.2), a terminal reward of 100.0 is assigned.
+• Crash penalty: If the episode terminates without both legs contacting the ground, excluding
+time-limit truncation, a terminal penalty of −50.0 is applied.
+• One-time milestone reward: The approach and hover rewards are granted only once per
+episode, preventing repeated reward collection from oscillatory motion around the same
+region.
+• Dense reward removal: All original dense reward components, such as fuel-related penal-
+ties and continuous shaping terms, are discarded so that the agent is trained entirely under
+the proposed discrete landing reward structure.
+Pendulum discrete reward setup
+In the modified Pendulum environment, the original dense
+reward is replaced with a discrete reward structure designed to encourage swing-up, near-upright
+stabilization, and sustained balancing. The modifications are as follows:
+• Angle-band reward: Let θ denote the pendulum angle from the upright position. A discrete
+reward is assigned according to the angular deviation:
+- 8.0 if |θ| < 0.10,
+- 4.0 if 0.10 ≤|θ| < 0.25,
+- 2.0 if 0.25 ≤|θ| < 0.50,
+- 0.5 if 0.50 ≤|θ| < 1.00,
+- 0.0 otherwise.
+This provides a staircase-shaped reward signal that guides the swing-up process toward the
+upright region.
+• Near-upright stabilization bonus: When the pendulum is sufficiently close to upright
+(|θ| < 0.25), an additional reward is given based on the angular velocity magnitude | ˙θ|:
+- 4.0 if | ˙θ| < 0.5,
+- 2.0 if 0.5 ≤| ˙θ| < 1.0.
+This encourages not only reaching the upright region but also reducing oscillatory motion
+around it.
+• Sustained hold bonus: If the pendulum remains within a near-upright and low-velocity
+region defined by |θ| < 0.15 and | ˙θ| < 0.7, a hold counter is accumulated. Additional
+bonuses are granted when this condition is maintained for 10, 30, and 60 consecutive steps,
+with rewards of 20.0, 40.0, and 80.0, respectively.
+• Hierarchical discrete feedback: The resulting reward structure combines coarse swing-up
+guidance, local stabilization incentives, and delayed persistence rewards, thereby forming a
+hierarchical discrete control objective.
+• Dense reward removal: All original dense reward components are discarded so that the
+agent is trained entirely under the proposed discrete reward mechanism.
+MountainCar discrete reward setup
+In the modified MountainCar environment, the original dense
+reward is replaced with a staged discrete reward structure that reflects the characteristic swing-up
+behavior required to reach the goal. The modifications are as follows:
+• Backward swing reward: A reward of 10.0 is granted once when the car first reaches the
+backward position threshold x < −0.7. This encourages the agent to perform the necessary
+backswing motion to build momentum.
+• Forward milestone reward: A reward of 20.0 is granted once when the car first reaches
+the forward position threshold x > −0.1. This provides an intermediate sparse signal for
+successful forward progress after the backswing phase.
+• Goal reward: If the car reaches the goal position x ≥0.5, an additional reward of 100.0 is
+assigned and the episode is terminated.
+• One-time milestone reward: The backward-swing and forward-progress rewards are
+granted only once per episode, preventing repeated reward collection from oscillation
+around the same thresholds.
+• Per-step penalty: A small step penalty of −0.01 is applied at every step. This weakly
+encourages faster completion while keeping the main learning signal dominated by the
+discrete milestones.
+• Dense reward removal: All original dense reward components are discarded so that the
+task is learned entirely from the proposed sparse staged reward structure.

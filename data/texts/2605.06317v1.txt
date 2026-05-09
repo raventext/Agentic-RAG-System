@@ -1,0 +1,1095 @@
+NavOne: One-Step Global Planning for
+Vision-Language Navigation on Top-Down Maps
+Dijia Zhan∗, Jinyi Li∗, Chenxi Zheng, Shaoyu Huang, Yong Li†, Jie Tang†, Xuemiao Xu†
+South China University of Technology
+∗Equal contribution
+†Corresponding authors
+Abstract: Existing Vision-Language Navigation (VLN) methods typically adopt
+an egocentric, step-by-step paradigm, which struggles with error accumulation and
+limits efficiency. While recent approaches attempt to leverage pre-built environment
+maps, they often rely on incrementally updating memory graphs or scoring discrete
+path proposals, which restricts continuous spatial reasoning and creates discrete
+bottlenecks. We propose Top-Down VLN (TD-VLN), reformulating navigation as
+a one-step global path planning problem on pre-built top-down maps, supported by
+our newly constructed R2R-TopDown dataset. To solve this, we introduce NavOne,
+a unified framework that directly predicts dense path probabilities over multi-modal
+maps in a single end-to-end forward pass. NavOne features a Top-Down Map Fuser
+for joint multi-modal map representation, and extends Attention Residuals for
+spatial-aware depth mixing. Extensive experiments on R2R-TopDown show that
+NavOne achieves state-of-the-art performance among map-based VLN methods,
+with a planning-stage speedup of 8× over existing map-based baselines and 80×
+over egocentric methods, enabling highly efficient global navigation.
+Keywords: Vision-Language Navigation, Top-Down Maps, Global Planning,
+Vision Transformer, Multi-Modal Fusion, Embodied AI
+Figure 1: Overview of NavOne. Given a language instruction and multi-modal top-down map inputs
+(RGB, occupancy, and semantic layers), NavOne processes them through three components-Top-
+Down Map Fuser, Path Former, and Path Extractor-to predict a complete navigation path in
+a single forward pass. The predicted path (red) and goal (red dot) closely follow the ground-truth
+trajectory (green) and goal (yellow dot).
+Introduction
+Vision-Language Navigation (VLN) [1, 2] is a core problem in embodied AI, requiring agents to
+interpret natural language instructions and navigate physical environments. Existing methods largely
+adopt an egocentric, step-by-step decision-making paradigm [3, 4], iteratively selecting actions based
+on local visual observations and partial state histories [5, 6]. This formulation has been extended
+arXiv:2605.06317v1 [cs.CV] 7 May 2026
+
+through graph-based planning, memory mechanisms, pre-training strategies, and continuous 3D
+environments [7], achieving strong performance on established benchmarks.
+Despite steady progress, egocentric and sequential formulations continue to face fundamental chal-
+lenges in long-horizon navigation [8]: errors compound over time, global spatial structure is weakly
+modeled, and inference requires repeated action prediction at each timestep, resulting in substantial
+computational cost in large environments [7].
+These limitations, however, are not fundamental. A key observation is that many real-world robots
+already operate with access to full or partial environment maps, obtained via pre-exploration using
+standard SLAM pipelines [9]. Recent map-based VLN methods attempt to exploit this by explicitly
+building memory graphs to track sequential exploration [10] or by generating and scoring discrete
+path proposals [11]. However, reliance on incrementally updated, discrete pipelines limits continuous
+spatial reasoning and remains computationally bottlenecked by candidate generation. A more
+principled approach would directly predict a complete navigation path over the full map in a single
+forward pass, jointly optimizing all components end-to-end.
+We introduce Top-Down VLN (TD-VLN), reformulating navigation as a one-step global planning
+problem on top-down maps, where an agent must predict a complete navigation path from a single
+top-down map observation given a language instruction, bypassing the need for step-by-step actions or
+discrete proposals. To support this, we construct the R2R-TopDown dataset, providing multi-modal
+map representations (RGB, occupancy, semantics) paired with instructions and trajectories.
+To this end, we propose NavOne (Figure 1), a unified end-to-end framework that generates complete
+navigation paths in a single forward pass. NavOne consists of: 1) a Top-Down Map Fuser for
+joint multi-modal map representation; 2) a Path Former encoder-decoder that integrates language,
+pose, and spatial inputs to predict dense path and goal distributions; and 3) a Path Extractor that
+converts predictions into executable trajectories. By eliminating iterative action prediction, NavOne
+achieves a planning-stage speedup of 8× over existing map-based baselines and 80× over egocentric
+methods, enabling highly efficient global navigation. Ablation studies further validate the benefits of
+spatial-aware depth queries for position-dependent feature mixing.
+Related Work
+Vision-Language Navigation. Vision-Language Navigation (VLN) traditionally maps language
+to sequential egocentric actions [1, 12, 13, 4, 14]. Despite advances [15], the dominant continuous
+decision-making formulation remains computationally expensive and prone to compounding errors
+over long horizons [7, 16, 17]: errors accumulate at each decision step [18], global spatial structure is
+weakly modeled [19], and repeated action prediction incurs substantial cost in large environments
+[20]. We circumvent these issues by reformulating VLN as a one-step global planning problem when
+top-down maps are available.
+Map-Based and Top-Down Navigation. Top-down maps provide spatial priors to improve general-
+ization, interpretability, and long-horizon reasoning [21, 22, 23, 24, 25]. Recent advances in indoor
+mapping and robotic perception have made rich multi-modal spatial representations increasingly
+accessible, including RGB maps, occupancy grids, and semantic maps [26, 27]. Related efforts in
+cross-modal map learning [26] and neural topological representations [27] demonstrate the value of
+structured spatial knowledge for navigation. While previous works often use maps as auxiliary cues
+or hierarchical guides with discrete proposal bottlenecks [11], or build incrementally updated memory
+graphs [10], TD-VLN places them at the center to directly predict complete, dense navigation paths
+in a single forward pass.
+Environment Map Construction via Pre-Exploration. Rich top-down environment maps can be
+acquired in a one-time pre-exploration phase using modern SLAM pipelines, with frontier-based
+exploration [28] providing a principled strategy for systematic coverage. Traditional 2D LiDAR
+SLAM systems such as Cartographer [29] and RTAB-Map [9] produce stable occupancy grids via
+pose graph optimization and loop closure; LiDAR-inertial approaches including LIO-SAM [30] and
+FAST-LIO2 [31] further improve trajectory accuracy in medium-scale indoor environments. More
+recently, neural implicit SLAM [32] and 3D Gaussian Splatting SLAM [33] enable photorealistic
+dense reconstruction, though their 3D outputs typically require additional projection to yield 2D
+navigable maps.
+R2R-TopDown Dataset
+We construct the R2R-TopDown dataset for TD-VLN by transferring R2R-CE trajectories to top-
+down maps. Each scene from Matterport3D (MP3D) environments is represented by three types of
+2D top-down maps: an RGB map, an occupancy map indicating navigable areas, and a semantic map
+with 41 object categories. Detailed construction procedures are provided in Appendix A. Figure 2
+shows representative examples of these multi-modal map inputs.
+Figure 2: Examples of multi-modal map inputs from
+R2R-TopDown. From left to right: RGB map, occupancy
+map (white=navigable, black=obstacle), semantic map
+(color-coded categories), and ground truth trajectory.
+Figure 3: Scene-level visualization of all
+training episodes. Each colored line is a
+distinct episode with start (blue circle) and
+goal (red star).
+Metric
+Train
+Val Seen
+Val Unseen
+Path Len. (m)
+9.58
+9.92
+9.83
+Instr. Len.
+26.5
+27.3
+26.8
+Total Samples
+439
+Table 1:
+Statistics of the R2R-TopDown
+dataset across training and validation splits.
+Dataset Statistics. The dataset comprises 6,196
+training, 439 validation seen, and 1,003 validation
+unseen single-floor episodes across MP3D scenes.
+We exclude multi-floor trajectories from R2R-CE
+as they cannot be represented by a single top-down
+map. Table 1 summarizes key statistics across splits,
+and Figure 3 illustrates the spatial coverage, task
+diversity, and navigability of episodes across a rep-
+resentative scene.
+NavOne
+4.1
+Task Definition and Preliminaries
+We address the problem of VLN in continuous environments from a novel global perspective. Given a
+natural language instruction L, an RGB map Mrgb, an occupancy map Mocc, a semantic map Msem,
+and the agent’s initial state (position p0 and rotation r0), the goal is to generate a navigation path P
+that guides the agent to the goal location.
+Let the input observation be defined as a multi-channel tensor X ∈RH×W ×C, where C is the total
+number of channels combining RGB, occupancy, and semantic information. The instruction L is
+tokenized into a sequence of tokens T = {t1, t2, ..., tN}. The agent’s start position is a 2D coordinate
+p0 ∈R2 and a quaternion rotation r0 ∈R4.
+4.2
+Method Overview
+We propose NavOne, a unified end-to-end framework for the TD-VLN task that operates on global top-
+down maps. As illustrated in Figure 4, NavOne comprises three components: 1) a Top-Down Map
+Fuser that fuses multi-modal map inputs (RGB, occupancy, semantic) via channel-wise concatenation
+Figure 4: Overview of our NavOne architecture. Multi-modal maps (RGB, occupancy, semantic)
+are concatenated and patch-embedded into visual tokens, while language instructions are encoded
+by BERT. Pose information (position and rotation) is injected via element-wise addition into visual
+tokens, which then attend to language features through stacked cross-attention layers. The resulting
+instruction-conditioned features are processed by a ViT encoder with Attention Residuals and decoded
+via progressive transposed convolutions to produce dense path and goal probability maps.
+prior to patch embedding; 2) a Path Former encoder-decoder that integrates language instructions,
+pose, and fused map features through stacked cross-attention and a ViT encoder equipped with
+Attention Residuals extended by spatial-aware depth queries for position-dependent feature mixing,
+then decodes to dense path and goal probability maps; and 3) a Path Extractor that applies A*
+search over the predicted probability maps to compute the final executable navigation path. Unlike
+traditional egocentric VLN methods that require iterative action prediction at each step, NavOne
+generates the complete navigation path in a single forward pass, enabling efficient global spatial
+reasoning.
+4.3
+Top-Down Map Fuser: Multi-Modal Map Representation
+The input to the model is a Cin-channel tensor:
+Xinput = Concat(Mrgb, Mocc, Embed(Msem)),
+(1)
+where Mrgb ∈RH×W ×3 is the RGB map, Mocc ∈RH×W ×1 is the occupancy map, and
+Embed(Msem) ∈RH×W ×Dsem is the embedded semantic map. We employ a learnable embedding
+layer to map discrete semantic categories into a Dsem-dimensional continuous feature space for
+efficient learning.
+4.4
+Path Former: Encoder-Decoder Architecture
+4.4.1
+Multi-Modal Fusion
+We project heterogeneous inputs into a shared D-dimensional embedding space. The fused multi-
+modal map Xinput is divided into P × P patches and linearly projected to obtain visual tokens
+Hvisual ∈RNv×D, with learned patch positional embeddings {en}Nv
+n=1 added token-wise, where
+Nv = H
+P · W
+P is the number of visual tokens. Language instructions are encoded by frozen BERT and
+projected to Htext ∈RNt×D, where Nt is the number of text tokens. The agent’s position p0 ∈R2
+and rotation r0 ∈R4 are each linearly projected to D-dimensional vectors hpos, hrot ∈RD.
+We adopt a multi-modal fusion strategy. First, we anchor visual features with pose information
+via element-wise addition: Hvp = Hvisual + hpos + hrot. Next, we employ Lcross stacked cross-
+attention layers where pose-aware visual patches query language instructions:
+H(l)
+fused = CrossAttention(l)(H(l−1)
+vp
+, Htext, Htext),
+(2)
+where H(l−1)
+vp
+serves as queries and Htext as keys and values. This progressive fusion allows visual
+tokens to retrieve task-relevant instruction information at multiple semantic levels. The final output
+Hfused = H(Lcross)
+fused
+captures instruction-conditioned spatial features.
+4.4.2
+ViT Encoder with Attention Residuals
+We employ a ViT architecture as visual backbone, where the fused pose-aware and language-grounded
+features Hfused are processed through Lencoder Transformer layers with Pre-LayerNorm [34] and
+H-head self-attention to extract global contextual features from the multi-modal maps with full
+receptive field.
+However, standard transformer layers form a fixed chain in which each layer receives only its
+immediate predecessor’s output, limiting direct access to representations from earlier depths. In top-
+down navigation, different spatial regions may benefit from different levels of abstraction. Moreover,
+a single global depth query imposes the same depth-mixing pattern across all spatial positions,
+motivating a per-token spatially conditioned formulation.
+Attention Residuals with Spatial-Aware Depth Query. We extend Attention Residuals [35] with
+spatial-aware depth queries to enable position-dependent feature mixing across transformer layers.
+We adopt the Full Attention Residuals, where every layer maintains a depth-wise attention mix over
+all previous layer outputs-as opposed to the Block Attention Residuals which groups layers and
+applies residual mixing only within blocks. Given our relatively shallow 12-layer ViT encoder, the
+Full Attention Residuals is computationally feasible and allows each layer to attend to the complete
+representation history without approximation. However, the original formulation uses a single global
+depth query shared across all spatial positions. We address this limitation by introducing a per-token
+spatial bias:
+q(n)
+l
+= wl + fθ(en),
+(3)
+where each token’s depth query is conditioned on its patch positional embedding en via a learned
+projection fθ. This introduces a position-conditioned modulation of depth mixing, allowing different
+spatial locations to express different preferences over representation depth. Both wl and fθ are
+zero-initialized, ensuring uniform depth mixing at the start of training for optimization stability.
+Decoder. To recover full spatial resolution from the ViT patch representation, we employ a lightweight
+progressive upsampling decoder. The Transformer output is reshaped to a spatial feature map and
+upsampled through multiple transposed convolution stages to resolution H × W. A final K × K
+convolution produces the 2-channel output (path map and goal map).
+4.5
+Path Extractor
+The neural network outputs two probability maps: a path map Ppath ∈[0, 1]H×W indicating the
+likelihood of each pixel belonging to the navigation path, and a goal map Pgoal ∈[0, 1]H×W
+representing the predicted goal location distribution. We employ a modified A* search algorithm to
+extract the final discrete navigation path from these continuous predictions.
+Goal Localization. The predicted goal position g∗= (rg, cg) is obtained by taking the argmax over
+the goal probability map:
+g∗= arg max
+(r,c) Pgoal(r, c).
+(4)
+Cost Map Construction. We construct a traversal cost map that combines the predicted path
+probabilities with occupancy constraints. For navigable regions, we invert the path probabilities to
+obtain traversal costs: pixels with high path probability receive low cost, encouraging the planner to
+follow the predicted trajectory. For non-navigable regions identified by the occupancy map, we assign
+a large penalty cost Cobs to prevent traversal through obstacles. The complete cost formulation is:
+C(r, c) =
+(
+Cobs
+if Mocc(r, c) = 0
+Ppath(r,c)+ϵ
+otherwise
+,
+(5)
+where ϵ is a small constant to prevent division by zero.
+A* Search. Given the start position p0, predicted goal g∗, and cost map C, we apply A* search with
+8-connectivity (including diagonal movements) to find the optimal path. The algorithm maintains the
+standard priority queue with f-scores:
+f(n) = g(n) + h(n),
+(6)
+where g(n) denotes the accumulated cost from the start position to node n, and h(n) is the Euclidean
+distance heuristic to the goal. When expanding to a neighbor node n′, the accumulated cost is updated
+as g(n′) = g(n) + C(n′).
+The search expands nodes in order of increasing f-score until reaching g∗, then reconstructs the path
+by backtracking through parent pointers. This formulation ensures that the extracted path follows
+regions with high predicted path probability, avoids obstacles indicated by the occupancy map, and
+reaches predicted goal location with shortest path.
+Failure Handling. If A* cannot reach the predicted goal g∗, we snap the planning target to the
+nearest reachable free cell and rerun planning to recover an executable path.
+4.6
+Optimization Objective
+NavOne is trained with a multi-task objective that simultaneously predicts the path and goal location.
+Standard Binary Cross Entropy (BCE) loss is applied pixel-wise to both output maps. To further
+enforce smoothness and connectivity in the predicted path, a multi-component regularization term
+Lcontinuity is introduced, consisting of: Lgrad to penalize large spatial gradients, Lstart to enforce
+high path probabilities around the start position, and Lerosion utilizing morphological erosion to
+penalize fragmented predictions:
+Lcontinuity = β1Lgrad + β2Lstart + β3Lerosion.
+(7)
+This weighted combination promotes spatially smooth, connected paths anchored at the start position.
+Complete formulations are detailed in Appendix B. The final training objective is a weighted
+combination of path, goal, and continuity losses:
+Ltotal = Lpath + αLgoal + λLcontinuity,
+(8)
+where Lpath and Lgoal are the standard BCE losses for their respective targets, and α and λ control
+goal prediction and continuity regularization. Hyperparameter values are detailed in Appendix C.
+Experiments
+5.1
+Datasets and Evaluation Metrics
+We evaluate our approach on the R2R-TopDown dataset and adopt standard VLN evaluation metrics.
+Success Rate (SR) measures the percentage of episodes where the agent stops within 3 meters of the
+goal location. Success weighted by Path Length (SPL) normalizes SR by the ratio of shortest path
+length to actual trajectory length, penalizing inefficient navigation. Trajectory Length (TL) computes
+the average length of predicted navigation paths in meters. Navigation Error (NE) measures the mean
+distance in meters between the agent’s final position and the ground truth goal. Full implementation
+details including architecture specifications, training hyperparameters, and inference configurations
+are provided in Appendix C.
+Table 2: Performance comparison with top-down map-based VLN methods on the R2R-TopDown
+dataset. All methods leverage global top-down maps for navigation. "-" indicates metrics not reported
+by the original paper. WS-MGMap, MapNav, and IPPD report results on the full R2R Val Unseen
+episodes; IPPD∗denotes IPPD results on our filtered R2R-TopDown Val Unseen episodes, as the
+official paper only releases detailed results for the unseen split. WS-MGMap and MapNav numbers
+are taken directly from their original papers (full R2R Val Unseen); direct numerical comparison with
+NavOne (R2R-TopDown Val Unseen subset, 1003 episodes) should be interpreted with caution. Std.
+Attn: standard self-attention; AR-Full: Full Attention Residuals; SQ: Spatial-Aware Depth Query.
+Val Seen
+Val Unseen
+Method
+SR ↑
+SPL ↑
+TL ↓
+NE ↓
+SR ↑
+SPL ↑
+TL ↓
+NE ↓
+WS-MGMap [36]
+0.47
+0.43
+10.12
+5.65
+0.39
+0.34
+10.00
+6.28
+MapNav [10]
+-
+-
+-
+-
+0.40
+0.37
+-
+4.93
+IPPD [11]
+0.57
+0.54
+-
+-
+0.45
+0.42
+-
+-
+IPPD∗[11]
+-
+-
+-
+-
+0.37
+0.31
+-
+-
+NavOne (Std. Attn)
+0.65
+0.60
+10.60
+3.47
+0.40
+0.37
+11.85
+6.17
+NavOne (AR-Full)
+0.59
+0.52
+9.55
+3.77
+0.44
+0.40
+9.50
+5.40
+NavOne (AR-Full+SQ)
+0.57
+0.50
+9.79
+4.35
+0.47
+0.43
+9.20
+5.18
+5.2
+Comparison with State-of-the-Art Methods
+We compare NavOne against recent top-down map-based VLN methods: WS-MGMap [36], which in-
+troduced weakly-supervised multi-granularity map learning; MapNav [10], which leverages annotated
+semantic maps with a memory-based representation; and IPPD [11], which applies diffusion-based
+path planning on indoor maps. We specifically compare against methods that operate within the
+global map paradigm rather than purely egocentric exploration models (e.g., ETPNav), ensuring a
+fair comparison where all methods benefit from the same pre-computed global spatial information.
+Results are summarized in Table 2.
+On Val Seen, NavOne (Std. Attn) achieves the highest SR (0.65), SPL (0.60), and NE (3.47),
+outperforming IPPD by +0.08 SR, while NavOne (AR-Full) yields the shortest trajectory (TL 9.55m).
+On Val Unseen, NavOne (AR-Full+SQ) achieves the highest SR (0.47) and SPL (0.43), surpassing
+WS-MGMap by +0.08 SR, MapNav by +0.07 SR, and IPPD by +0.02 SR. Notably, IPPD∗(re-
+evaluated on our filtered episodes) yields a lower SR (0.37) than the original IPPD result (0.45),
+indicating that our R2R-TopDown Val Unseen subset is more challenging than the full validation
+set. MapNav reports the lowest navigation error (4.93m) among all compared methods; nonetheless,
+NavOne significantly outperforms it on the primary success metrics.
+5.3
+Ablation on Architectural Components
+The three NavOne variants in Table 2 also serve as an ablation over key architectural components.
+Replacing AR-Full+SQ with standard self-attention (Std. Attn) improves Val Seen SR (0.65 vs. 0.57)
+but substantially hurts Val Unseen SR (0.40 vs. 0.47), suggesting weaker generalization to unseen
+map layouts. Adding Full Attention Residuals (AR-Full) recovers Val Unseen SR to 0.44 and narrows
+the seen-unseen gap from 25 pp to 15 pp, consistent with the benefit of mixing information from
+multiple network depths. Adding Spatial-Aware Depth Queries (AR-Full+SQ) further improves Val
+Unseen SR to 0.47 and reduces the gap to 10 pp, indicating that position-conditioned depth mixing is
+beneficial in our setting. To isolate the contribution of each map modality, we additionally ablate the
+input channels of the Top-Down Map Fuser; results are provided in Appendix G.
+5.4
+Computational Efficiency
+We benchmark NavOne against two baselines on the same NVIDIA 4090D GPU: IPPD as a rep-
+resentative map-based planner, and ETPNav [12] as a representative sequential egocentric method.
+Method
+Nav. Steps
+Time (ms)
+ETPNav
+1∼15
+IPPD
+N/A
+Ours
+37
+Table 3: Avg. planning time per episode.
+N/A: IPPD uses a two-stage pipeline.
+All times are measured end-to-end from instruction in-
+put to final executable path output. This yields an 8×
+speedup over IPPD (300ms) and a ∼80× reduction com-
+pared to ETPNav (2970ms), as shown in Table 3. Note
+that the comparison with ETPNav reflects pure planning
+speed under the assumption of a pre-built map; ETPNav
+must build its representation online during exploration.
+The efficiency gain makes NavOne well-suited for rapid
+real-time re-planning in map-available settings.
+5.5
+Qualitative Analysis
+Figure 5: Qualitative result: (a) predicted path
+(red) and ground truth (green) on the RGB map,
+(b) goal probability map, (c) path probability map.
+We present a representative success case in
+Figure 5, where NavOne accurately grounds
+complex multi-step instructions into spatial pre-
+dictions, correctly interpreting directional com-
+mands, spatial references, and landmark cues.
+The predicted goal map (b) shows a focused dis-
+tribution at the correct doorway location, and
+the path map (c) exhibits high confidence along
+the navigable trajectory. The final A* path (red)
+closely matches the ground truth (green), vali-
+dating that NavOne effectively bridges language
+understanding and geometric path planning. Ad-
+ditional qualitative examples are provided in Appendix E.
+Discussion and Limitations
+NavOne operates within a "Map-then-Navigate" paradigm, where multi-modal top-down maps are
+constructed once via standard SLAM pipelines (e.g., RTAB-Map [9]) and semantic segmentation
+models (e.g., Mask2Former [37]), yielding several appealing properties: single-pass global path
+reasoning eliminates the iterative perception-action loop required by egocentric methods and, unlike
+discrete map-based methods, enables end-to-end learning from raw map inputs to continuous path
+outputs. Nevertheless, several limitations remain. First, maps constructed via SLAM may contain
+noise, and we evaluate NavOne’s resilience to such combined map degradation (semantic noise,
+occupancy flips, and RGB corruption) in Appendix F. Second, real-world environments contain
+dynamic obstacles absent from the static pre-built map; future work will explore online map updates
+that incorporate real-time sensor observations to enable reactive replanning. Third, R2R instructions
+frequently reference fine-grained objects (e.g., photos, signs) absent from the 41-class semantic map
+vocabulary, limiting performance on unseen environments and motivating richer map representations.
+Conclusion
+We presented NavOne, a novel framework for Top-Down Vision-Language Navigation (TD-VLN)
+that formulates VLN as global planning on top-down maps by directly predicting interpretable path
+probability maps and goal probability maps from multi-modal spatial inputs and language. To support
+this paradigm, we introduce R2R-TopDown, a multi-modal benchmark derived from R2R-CE with
+RGB, occupancy, and semantic map representations. Results demonstrate state-of-the-art performance
+among top-down map-based methods with efficient single-pass inference. While TD-VLN assumes
+access to pre-computed maps, it complements exploration-based VLN and motivates future work on
+online mapping, multi-floor environments, and hybrid global-egocentric navigation systems.
+Acknowledgments
+This work was supported by Guangdong Provincial Natural Science Foundation for Outstanding
+Youth Team Project (No. 2024B1515040010), National Natural Science Foundation of China
+under Grant U23A20391, 62372188, and Guangdong Natural Science Foundation under Grant
+2024A1515010100.
+References
+[1] P. Anderson, Q. Wu, D. Teney, J. Bruce, M. Johnson, N. S¨underhauf, I. Reid, S. Gould, and
+A. Van Den Hengel. Vision-and-language navigation: Interpreting visually-grounded navigation
+instructions in real environments. In Proceedings of the IEEE conference on computer vision
+and pattern recognition, pages 3674-3683, 2018.
+[2] Y. Qi, Q. Wu, P. Anderson, X. Wang, W. Y. Wang, C. Shen, and A. v. d. Hengel. Reverie:
+Remote embodied visual referring expression in real indoor environments. In Proceedings of
+the IEEE conference on computer vision and pattern recognition, pages 9982-9991, 2020.
+[3] S. Banerjee, J. Thomason, and J. Corso. The robotslang benchmark: Dialog-guided robot
+localization and navigation. In Conference on Robot Learning, pages 1384-1393. PMLR, 2021.
+[4] J. Krantz, E. Wijmans, A. Majumdar, D. Batra, and S. Lee. Beyond the nav-graph: Vision-and-
+language navigation in continuous environments. In European Conference on Computer Vision,
+pages 104-120. Springer, 2020.
+[5] S. Chen, P.-L. Guhur, C. Schmid, and I. Laptev. History aware multimodal transformer for vision-
+and-language navigation. Advances in neural information processing systems, 34:5834-5847,
+2021.
+[6] S. Chen, P.-L. Guhur, M. Tapaswi, C. Schmid, and I. Laptev. Think global, act local: Dual-scale
+graph transformer for vision-and-language navigation. In Proceedings of the IEEE conference
+on computer vision and pattern recognition, pages 16537-16547, 2022.
+[7] Y. Zhang, Z. Ma, J. Li, Y. Qiao, Z. Wang, J. Chai, Q. Wu, M. Bansal, and P. Kordjamshidi.
+Vision-and-language navigation today and tomorrow: A survey in the era of foundation models.
+CoRR, 2024.
+[8] X. Song, W. Chen, Y. Liu, W. Chen, G. Li, and L. Lin. Towards long-horizon vision-language
+navigation: Platform, benchmark and method. In Proceedings of the IEEE conference on
+computer vision and pattern recognition, pages 12078-12088, 2025.
+[9] M. Labb´e and F. Michaud. Rtab-map as an open-source lidar and visual simultaneous local-
+ization and mapping library for large-scale and long-term online operation. Journal of field
+robotics, 36(2):416-446, 2019.
+[10] L. Zhang, X. Hao, Q. Xu, Q. Zhang, X. Zhang, P. Wang, J. Zhang, Z. Wang, S. Zhang, and
+R. Xu. Mapnav: A novel memory representation via annotated semantic maps for vlm-based
+vision-and-language navigation. In Proceedings of the 63rd Annual Meeting of the Association
+for Computational Linguistics (Volume 1: Long Papers), pages 13032-13056, 2025.
+[11] Z. Wang, M. Li, M. Wu, M.-F. Moens, and T. Tuytelaars. Instruction-guided path planning with
+3d semantic maps for vision-language navigation. Neurocomputing, 625:129457, 2025.
+[12] D. An, H. Wang, W. Wang, Z. Wang, Y. Huang, K. He, and L. Wang. Etpnav: Evolving topolog-
+ical planning for vision-language navigation in continuous environments. IEEE Transactions
+on Pattern Analysis and Machine Intelligence, 2024.
+[13] X. Wang, Q. Huang, A. Celikyilmaz, J. Gao, D. Shen, Y.-F. Wang, W. Y. Wang, and L. Zhang.
+Reinforced cross-modal matching and self-supervised imitation learning for vision-language
+navigation. In Proceedings of the IEEE conference on computer vision and pattern recognition,
+pages 6629-6638, 2019.
+[14] J. Krantz, A. Gokaslan, D. Batra, S. Lee, and O. Maksymets. Waypoint models for instruction-
+guided navigation in continuous environments. In Proceedings of the IEEE/CVF International
+Conference on Computer Vision, pages 15162-15171, 2021.
+[15] J. Gao, X. Yao, and C. Xu. Fast-slow test-time adaptation for online vision-and-language
+navigation. In International conference on machine learning, 2023.
+[16] A. Szot, B. Mazoure, H. Agrawal, R. D. Hjelm, Z. Kira, and A. Toshev. Grounding multimodal
+large language models in actions. Advances in neural information processing systems, 37:
+20198-20224, 2024.
+[17] J. Chen, B. Lin, X. Liu, L. Ma, X. Liang, and K.-Y. K. Wong. Affordances-oriented planning
+using foundation models for continuous vision-language navigation. In Proceedings of the AAAI
+Conference on Artificial Intelligence, volume 39, pages 23568-23576, 2025.
+[18] S. Wang, Y. Wang, W. Li, X. Cai, Y. Wang, M. Chen, K. Wang, Z. Su, D. Li, and Z. Fan.
+Aux-think: Exploring reasoning strategies for data-efficient vision-language navigation. In
+Advances in neural information processing systems, 2025.
+[19] D. An, Y. Qi, Y. Li, Y. Huang, L. Wang, T. Tan, and J. Shao. Bevbert: Multimodal map
+pre-training for language-guided navigation. Proceedings of the IEEE/CVF International
+Conference on Computer Vision, 2023.
+[20] D. Kang, A. Perincherry, Z. Coalson, A. Gabriel, S. Lee, and S. Hong. Harnessing input-
+adaptive inference for efficient vln. In Proceedings of the IEEE/CVF International Conference
+on Computer Vision, pages 8219-8229, 2025.
+[21] L. Zhao and L. L. Wong. Learning to navigate in mazes with novel layouts using abstract
+top-down maps. In Reinforcement Learning Conference, 2024.
+[22] C. Li, C. Zhang, S. Teufel, R. S. Doddipatla, and S. Stoyanchev. Semantic map-based generation
+of navigation instructions. arXiv preprint arXiv:2403.19603, 2024.
+[23] Y. Hong, Y. Zhou, R. Zhang, F. Dernoncourt, T. Bui, S. Gould, and H. Tan. Learning naviga-
+tional visual representations with semantic map supervision. In Proceedings of the IEEE/CVF
+International Conference on Computer Vision, pages 3055-3067, 2023.
+[24] S. Feng, Z. Wang, Y. Li, R. Kong, H. Cai, S. Wang, G. H. Lee, P. Li, and S. Jiang. Vpn: Visual
+prompt navigation. arXiv preprint arXiv:2508.01766, 2025.
+[25] L. Zhong, C. Gao, Z. Ding, Y. Liao, H. Ma, S. Zhang, X. Zhou, and S. Liu. Topv-nav: Unlocking
+the top-view spatial reasoning potential of mllm for zero-shot object navigation. arXiv preprint
+arXiv:2411.16425, 2024.
+[26] G. Georgakis, K. Schmeckpeper, K. Wanchoo, S. Dan, E. Miltsakaki, D. Roth, and K. Daniilidis.
+Cross-modal map learning for vision and language navigation. In Proceedings of the IEEE
+conference on computer vision and pattern recognition, pages 15460-15470, 2022.
+[27] D. S. Chaplot, R. Salakhutdinov, A. Gupta, and S. Gupta. Neural topological slam for visual
+navigation. In Proceedings of the IEEE conference on computer vision and pattern recognition,
+pages 12875-12884, 2020.
+[28] B. Yamauchi. A frontier-based approach for autonomous exploration. In Proceedings 1997
+IEEE International Symposium on Computational Intelligence in Robotics and Automation
+CIRA’97.’Towards New Computational Principles for Robotics and Automation’, pages 146-151.
+IEEE, 1997.
+[29] W. Hess, D. Kohler, H. Rapp, and D. Andor. Real-time loop closure in 2d lidar slam. In 2016
+IEEE international conference on robotics and automation (ICRA), pages 1271-1278. IEEE,
+2016.
+[30] T. Shan, B. Englot, D. Meyers, W. Wang, C. Ratti, and D. Rus. Lio-sam: Tightly-coupled lidar
+inertial odometry via smoothing and mapping. In 2020 IEEE/RSJ international conference on
+intelligent robots and systems (IROS), pages 5135-5142. IEEE, 2020.
+[31] W. Xu, Y. Cai, D. He, J. Lin, and F. Zhang. Fast-lio2: Fast direct lidar-inertial odometry. IEEE
+Transactions on Robotics, 38(4):2053-2073, 2022.
+[32] Z. Zhu, S. Peng, V. Larsson, W. Xu, H. Bao, Z. Cui, M. R. Oswald, and M. Pollefeys. Nice-slam:
+Neural implicit scalable encoding for slam. In Proceedings of the IEEE/CVF conference on
+computer vision and pattern recognition, pages 12786-12796, 2022.
+[33] N. Keetha, J. Karhade, K. M. Jatavallabhula, G. Yang, S. Scherer, D. Ramanan, and J. Luiten.
+Splatam: Splat track & map 3d gaussians for dense rgb-d slam. In Proceedings of the IEEE/CVF
+conference on computer vision and pattern recognition, pages 21357-21366, 2024.
+[34] R. Xiong, Y. Yang, D. He, K. Zheng, S. Zheng, C. Xing, H. Zhang, Y. Lan, L. Wang, and T. Liu.
+On layer normalization in the transformer architecture. In International conference on machine
+learning, pages 10524-10533. PMLR, 2020.
+[35] K. Team, G. Chen, Y. Zhang, J. Su, W. Xu, S. Pan, Y. Wang, Y. Wang, G. Chen, B. Yin, et al.
+Attention residuals. arXiv preprint arXiv:2603.15031, 2026.
+[36] P. Chen, D. Ji, K. Lin, R. Zeng, T. Li, M. Tan, and C. Gan. Weakly-supervised multi-granularity
+map learning for vision-and-language navigation. Advances in Neural Information Processing
+Systems, 35:38149-38161, 2022.
+[37] B. Cheng, I. Misra, A. G. Schwing, A. Kirillov, and R. Girdhar. Masked-attention mask
+transformer for universal image segmentation. In Proceedings of the IEEE/CVF conference on
+computer vision and pattern recognition, pages 1290-1299, 2022.
+[38] M. Savva, A. Kadian, O. Maksymets, Y. Zhao, E. Wijmans, B. Jain, J. Straub, J. Liu, V. Koltun,
+J. Malik, et al. Habitat: A platform for embodied ai research. In Proceedings of the IEEE/CVF
+international conference on computer vision, pages 9339-9347, 2019.
+[39] L.-Z. Chen, J. Gao, Y. Chen, K. L. Cheng, Y. Sun, L. Hu, N. Xue, X. Zhu, Y. Shen,
+Y. Yao, et al. Geometric context transformer for streaming 3d reconstruction. arXiv preprint
+arXiv:2604.14141, 2026.
+[40] D. Fox, W. Burgard, and S. Thrun. The dynamic window approach to collision avoidance. IEEE
+robotics & automation magazine, 4(1):23-33, 2002.
+A
+R2R-TopDown Dataset Construction Details
+This appendix provides detailed procedures for constructing the R2R-TopDown dataset from the
+original R2R-CE benchmark. We transform egocentric visual observations into multi-modal top-down
+map representations suitable for global path planning.
+We construct the R2R-TopDown dataset through a multi-step process:
+A.1
+Environment Exploration and Map Construction
+For each MP3D scene, we conduct a systematic pre-exploration pass to collect dense RGB-D
+observations and construct three aligned top-down maps. To ensure dataset accuracy, the entire
+map construction pipeline runs inside the Habitat simulator [38], where ground-truth camera poses
+Tt ∈SE(3) (full 3D rigid-body transformations used for point-cloud back-projection) are directly
+available from the simulator state rather than estimated from noisy sensor data. This eliminates
+SLAM drift and guarantees geometrically consistent maps, which is essential for producing reliable
+ground-truth path labels. We emphasize that this simulator-privileged access is used only during
+offline dataset construction; in real-robot deployment, ground-truth poses are unavailable and a
+SLAM system must be used instead to estimate poses from onboard RGB-D streams, as detailed in
+Section A.3.
+Step 1: Frontier-Based Exploration. Starting from an arbitrary initial position, the agent navigates
+the scene using a frontier-based exploration strategy [28]. The agent iteratively selects the nearest
+unexplored boundary (frontier) between known free space and unknown regions as its next navigation
+target, advancing until the coverage rate no longer improves. Throughout this process, the agent
+continuously captures RGB-D frames (RGB image and depth map) paired with the exact ground-truth
+pose Tt provided by the Habitat simulator at each step.
+Step 2: Pose Acquisition. We directly query the Habitat simulator for the ground-truth camera
+pose Tt ∈SE(3) at each captured frame, yielding a globally consistent, drift-free pose sequence
+that serves as the geometric backbone for all subsequent map construction steps. Here Tt is the full
+3D rigid-body transformation (3D translation + 3D rotation) required for RGB-D back-projection
+into world space; it is distinct from the agent’s navigation input to NavOne, which uses only the
+2D ground-plane position p0 ∈R2 and the quaternion heading r0 ∈R4. This simulator-privileged
+approach is specific to offline dataset construction. On a physical robot, ground-truth poses are
+unavailable; the same pipeline must instead rely on a SLAM system-such as RTAB-Map [9]-to
+estimate globally consistent poses from the RGB-D stream via visual odometry, loop closure detection,
+and pose graph optimization.
+Step 3: RGB Map Generation. Using the ground-truth poses {Tt}, each RGB-D frame is back-
+projected into the global 3D coordinate frame to form a colored point cloud Prgb. The top-down
+RGB map is obtained by orthographically projecting all points within the floor-level height band
+[hmin, hfloor+∆h] onto the horizontal plane, assigning each grid cell the mean color of its contained
+points:
+Mrgb(x, z) =
+|N(x, z)|
+X
+p∈N (x,z)
+cp,
+(9)
+where N(x, z) denotes the set of 3D points projected into cell (x, z) and cp ∈R3 is the RGB color
+of point p.
+Step 4: Semantic Map Generation. A semantic segmentation model is applied to each RGB frame,
+producing per-pixel class labels from the MP3D 41-category vocabulary (see Table 4). The labels are
+back-projected to 3D using the same ground-truth depth and pose as in Step 3, forming a semantic
+point cloud Psem. For each grid cell, the final semantic label is determined by majority vote over all
+projected points:
+Msem(x, z) = arg max
+c
+X
+p∈N (x,z)
+1[lp = c],
+(10)
+where lp ∈{0, . . . , 40} is the semantic class of point p.
+Step 5: Occupancy Map Generation. The binary occupancy map is derived from the semantic map
+produced in Step 4. Pixels assigned the floor category (MP3D category ID 2) are marked as navigable
+(free), while all other categories are treated as obstacles or background:
+Mocc(x, z) =
+1
+if Msem(x, z) = 2
+otherwise
+,
+(11)
+where Mocc = 1 denotes a free (navigable) cell and Mocc = 0 denotes an obstacle or background
+cell. This approach leverages the MP3D semantic annotation directly and requires no additional
+sensor processing.
+Table 4: The 41 semantic object categories in the Matterport3D (MP3D) dataset used for the semantic
+map Msem. Category ID 0 (void) denotes unannotated or background pixels; IDs 1-40 are the 40
+meaningful indoor object classes. Category ID 2 (floor) is also used to derive the binary occupancy
+map Mocc.
+ID
+Category
+ID
+Category
+ID
+Category
+void
+plant
+lighting
+wall
+sink
+beam
+floor
+stairs
+railing
+chair
+ceiling
+shelving
+door
+toilet
+blinds
+table
+stool
+gym equipment
+picture
+towel
+seating
+cabinet
+mirror
+board panel
+cushion
+tv monitor
+furniture
+window
+shower
+appliances
+sofa
+column
+clothes
+bed
+bathtub
+objects
+curtain
+counter
+misc
+chest of drawers
+fireplace
+Step 6: Coordinate Alignment and Cropping. All three maps share the global coordinate system
+provided by the Habitat simulator, so they are inherently co-registered with a uniform cell size. The
+maps are cropped to the bounding box of the explored region and resized to a unified resolution
+H × W for use in dataset construction.
+A.2
+Real-Robot Map Construction with LingBot-Map
+The dataset construction pipeline above relies on Habitat simulator ground-truth poses and depth
+maps, which are only available offline. For real-robot deployment, we use LingBot-Map [39], a
+three-stage monocular mapping pipeline that reconstructs the same three-channel top-down map
+representation from an ordinary RGB video stream without any depth sensor or simulator access.
+Stage 1: Monocular Depth and Pose Estimation. A feed-forward visual reconstruction network
+processes the monocular RGB video frame-by-frame, jointly predicting per-frame metric depth maps
+and camera extrinsics {Tt} ⊂SE(3). Depth predictions are confidence-filtered and back-projected
+into a global 3D point cloud using the estimated poses, analogous to the RGB-D back-projection in
+Steps 2-3 above, but operating without any depth sensor or ground-truth pose from a simulator.
+Stage 2: Semantic Segmentation via Mask2Former.
+Each RGB frame is passed through
+Mask2Former [37] with a Swin-L backbone pretrained on ADE20K (150 object categories). The
+ADE20K predictions are re-mapped to the MP3D-41 indoor vocabulary used during NavOne training
+via a hand-crafted category correspondence table, yielding per-pixel labels lp ∈{0, . . . , 40} consis-
+tent with the training-time semantic map Msem. These labels are back-projected into the global point
+cloud together with the RGB colors estimated in Stage 1.
+Stage 3: Top-Down Map Assembly. The 3D point cloud is voxelised at a configurable resolution
+1cm/pixel. A RANSAC-based floor-plane fitting step performs gravity alignment so that the floor
+lies at Y = 0 in the voxel grid. Orthographic top-down projection then produces three co-registered
+output maps: rgb (mean color per cell), sem (MP3D-41 majority-vote class label per cell), and occ
+(binary traversability: 1 = free/navigable, 0 = obstacle). Map metadata-meters per pixel s and
+world origin (X0, Z0)-is stored alongside the map and supports the same pixel-to-world coordinate
+mapping described in Section A.3.
+A.3
+Map-to-World Coordinate Correspondence and Path Execution
+A key property of the top-down map representation is the bijective linear mapping between pixel
+coordinates and metric world coordinates, which directly resolves the question of how a predicted
+path on the map can be executed by a physical robot without additional egocentric alignment.
+Pixel-to-World Transformation. Let (Xorigin, Zorigin) denote the world-frame position (in meters)
+corresponding to the top-left corner of the map, and let s (m/pixel) denote the uniform cell size. For a
+pixel at row r and column c, the corresponding world coordinates (X, Z) are:
+X = Xorigin + c · s,
+Z = Zorigin + r · s.
+(12)
+The inverse mapping from world coordinates to pixel coordinates is:
+c =
+X −Xorigin
+s
+
+,
+r =
+Z −Zorigin
+s
+
+.
+(13)
+The parameters (Xorigin, Zorigin, s) are determined at map-construction time by the map-building
+pipeline and stored alongside the map, making every pixel coordinate unambiguously grounded in
+metric space.
+Execution Without Egocentric Alignment. During deployment, the same SLAM system used for
+map construction continuously estimates the robot’s pose Tt ∈SE(3) in the world frame. The robot’s
+current 2D map position is obtained by extracting the XZ components of the translation part of Tt and
+applying the inverse pixel mapping above. NavOne’s predicted path-an ordered sequence of pixel
+coordinates {(r1, c1), . . . , (rK, cK)}-is converted to metric waypoints {(X1, Z1), . . . , (XK, ZK)}
+via the forward mapping. These waypoints are then passed to a low-level local controller (e.g.,
+Dynamic Window Approach [40]) as navigation targets. Critically, no explicit egocentric-to-map
+alignment is required: the SLAM coordinate frame serves as the common reference for both the map
+and the robot’s real-time localization, eliminating any misalignment between the global plan and the
+robot’s perspective.
+Consistency with Dataset Encoding. The agent’s initial state (p0, r0) stored in every R2R-TopDown
+episode is expressed in the same world coordinate frame established during map construction. The
+original R2R-CE dataset stores agent poses natively as a 3D position and a unit quaternion r0 ∈R4;
+no rotation-format conversion is required. The 2D map position p0 ∈R2 is obtained by projecting
+the 3D position onto the ground plane (XZ plane) and converting to pixel coordinates via the inverse
+mapping above. This ensures that the start pose used as input to NavOne during both training and
+inference directly corresponds to the agent’s localized pose in the map coordinate frame, maintaining
+full coordinate consistency across the pipeline.
+a) Top-Down Map Generation (Summary). The above exploration pipeline produces three aligned
+2D top-down maps per scene: an RGB map (Mrgb) providing a bird’s-eye view of the environment,
+an occupancy map (Mocc) indicating navigable areas (white) versus obstacles (black), and a semantic
+map (Msem) where each pixel encodes one of the 41 MP3D object categories.
+b) Trajectory Projection. We compute the pixel coordinates of all waypoints on the top-down map
+and project the 3D navigation trajectory from R2R-CE onto the 2D map plane. The ground truth is
+represented as a sequence of 2D waypoints W = {(x1, y1), . . . , (xk, yk)} aligned with the top-down
+view.
+c) Agent State Encoding. The dataset explicitly includes the agent’s initial configuration: start
+coordinates (p0 ∈R2) and start orientation (r0 ∈R4 as a quaternion) within the global map frame.
+d) Single-Floor Filtering. To ensure the feasibility of 2D map navigation, we filter the dataset to
+retain only episodes where the navigation trajectory remains on a single floor. For MP3D scenes
+where each environment consists of multiple floors with separate top-down views, we manually
+exclude trajectories that span multiple floors or floors with poor reconstruction quality.
+After applying these filters, the R2R-TopDown dataset contains 6,196 training trajectories, 439
+validation seen (Val Seen), and 1,003 validation unseen (Val Unseen) episodes. While smaller than
+the original R2R-CE due to the single-floor constraint, the filtered dataset ensures that all episodes
+can be reliably represented and solved using 2D top-down map navigation.
+B
+Loss Function Components
+This appendix provides the full mathematical formulations for the components of the Path Continuity
+Loss Lcontinuity discussed in Section 4.6.
+First, we apply Sobel operators to compute spatial gradients and penalize large gradient magnitudes
+via
+Lgrad = Ex,y
+q
+(∂Ppath/∂x)2 + (∂Ppath/∂y)2
+
+,
+(14)
+encouraging smooth transitions in path probabilities.
+Second, we enforce high path probabilities around the start position p0 using a mean squared error
+loss with linearly decaying targets: for pixels within radius rs, the target probability is ptarget =
+max(0, 1 −d/rs) where d is the Euclidean distance, and the loss is computed as:
+Lstart = Ed<rs
+
+(Ppath(x, y) −ptarget)2
+,
+(15)
+ensuring the path originates from the correct location with high confidence.
+Third, we apply morphological erosion (k × k averaging kernel) to penalize fragmented predictions,
+since continuous paths should remain largely intact after erosion while disconnected segments degrade
+significantly:
+Lerosion = E[ReLU(Ppath −Erodek(Ppath) −τe)],
+(16)
+where τe is the erosion tolerance threshold.
+C
+Implementation Details
+C.1
+Architecture & Inference
+We employ ViT-B/16 as the visual backbone with patch size P = 16, hidden dimension D = 768,
+Lencoder = 12 transformer layers with Pre-LayerNorm [34], H = 12 attention heads, and attention
+dropout rate 0.1. The input consists of Cin = 12 channels constructed by concatenating RGB maps
+(3 channels), occupancy map (1 channel), and semantically embedded maps with Dsem = 8 channels.
+Language instructions are encoded using BERT-base-uncased, which is kept frozen during training to
+leverage its pretrained linguistic knowledge.
+For multi-modal fusion, we use Lcross = 12 stacked cross-attention layers to progressively integrate
+language instructions with pose-aware visual features before feeding them into the ViT encoder.
+Attention Residuals Configuration. We employ the Full Attention Residuals variant [35] where
+every layer’s input is a depth-wise softmax-weighted mix of all previous layer outputs. The spatial-
+aware depth query is enabled: each token’s depth query is q(n)
+l
+= wl + fθ(en), where fθ is a
+zero-initialized linear projection. All per-layer depth queries wl are also zero-initialized, ensuring
+uniform mixing at training start for stability.
+The decoder employs a progressive upsampling architecture to recover spatial resolution from the
+compressed ViT encoder output. Starting from the encoded features at grid resolution 16 × 16 with
+D = 768 channels, the decoder applies a series of transposed convolution stages that simultaneously
+upsample spatial dimensions and reduce channel dimensions. Specifically, the channel dimensionality
+progressively decreases through 768 →256 →128 →64 →32, while spatial resolution is doubled
+at each stage via stride-2 transposed convolutions with 2 × 2 kernels until reaching the target size
+of H × W = 256 × 256. Each upsampling stage is followed by batch normalization and ReLU
+activation. A final 3 × 3 convolutional layer projects the 32-dimensional features to 2 output channels
+corresponding to the path probability map and goal probability map.
+At inference time, the A* search algorithm operates on the predicted probability maps with the
+following hyperparameters: ϵ = 0.01 for numerical stability in the cost map construction, obstacle
+penalty cost Cobs = 1000 to strongly discourage traversal through non-navigable regions, and 8-
+connectivity neighborhood structure enabling diagonal movements with Euclidean distance as the
+heuristic function.
+C.2
+Training & Optimization
+We train the model for 400 epochs with batch size 30 using the AdamW optimizer. The learning rate
+is set to lr = 10−4 with weight decay 0.05. We employ a cosine annealing learning rate schedule
+with minimum learning rate ηmin = 10−6 and a 30-epoch linear warmup phase at the beginning of
+training to stabilize early optimization. Gradient clipping with max norm 1.0 is applied throughout
+training.
+Data augmentation is applied during training to improve generalization: random rotation (uniform
+sampling from [−15◦, 15◦]), random translation (maximum 15% of image dimensions in both
+horizontal and vertical directions), and color jitter (brightness/contrast/saturation adjusted within
+±30%, hue within ±10%). Training takes approximately 14 hours on a single NVIDIA 4090D GPU
+(24GB VRAM).
+For the multi-task loss function, we set goal prediction weight α = 5.0 to emphasize accurate goal
+localization, and continuity regularization weight λ = 0.1 to enforce smooth path predictions. The
+path continuity loss uses the following hyperparameters: start position enforcement radius rs = 8
+pixels, morphological erosion kernel size k = 3 × 3, erosion tolerance threshold τe = 0.3, and
+continuity component weights (β1, β2, β3) = (0.2, 0.5, 0.3) balancing gradient smoothness, start
+position anchoring, and erosion-based connectivity penalties respectively.
+D
+Feature Orthogonality Analysis
+NavOne injects pose information into visual tokens via element-wise addition (Hvp = Hvisual +
+hpos + hrot). We analyze the orthogonality of learned feature representations to validate why
+this parameter-free operation is sufficient. When different modalities encode semantically distinct
+information (visual appearance, instructions, spatial position, and orientation), their learned repre-
+sentations tend to occupy near-orthogonal subspaces in the high-dimensional feature space. Under
+this orthogonality assumption, element-wise addition preserves each modality’s information without
+interference: projecting the fused representation onto any modality’s subspace recovers approximately
+the original signal, analogous to lossless superposition of orthogonal basis vectors.
+We extract features from validation samples and compute pairwise cosine similarities and angular
+distances between the four modalities to validate this hypothesis.
+As shown in Table 5, most feature pairs exhibit angles close to 90°, indicating strong orthogonality.
+The vision encoder and language encoder learn highly complementary representations (visual-
+instruction: 88.6°), with text encoding high-level semantic goals and visual features capturing spatial
+structure. Linguistic features remain nearly orthogonal to pose embeddings (instruction-rotation:
+92.0°, instruction-position: 86.6°). The visual-rotation (98.1°), visual-position (88.1°), and rotation-
+position (96.4°) pairs also demonstrate substantial orthogonality. The near-orthogonality confirms
+that the network naturally learns to encode each modality in a distinct subspace, validating that
+element-wise addition is a sufficient operation for pose injection: when features are orthogonal, linear
+superposition preserves each modality’s information without destructive interference.
+Table 5: Angular distances (in degrees) between modality pairs in the learned feature space. Values
+closer to 90° indicate better orthogonality. Diagonal entries are 0° as each modality is perfectly
+aligned with itself.
+Visual
+Instruction
+Initial Rotation
+Initial Position
+Visual Input
+0.0
+88.6
+98.1
+88.1
+Instruction
+88.6
+0.0
+92.0
+86.6
+Initial Rotation
+98.1
+92.0
+0.0
+96.4
+Initial Position
+88.1
+86.6
+96.4
+0.0
+E
+Additional Qualitative Results
+To provide further insight into our model’s navigation capabilities, we present additional qualitative
+examples showcasing successful path predictions across diverse instructions and spatial configurations.
+For all examples, we visualize: (Left) path predictions with predicted path in red and ground truth in
+green overlaid on the RGB map; (Middle) predicted goal probability map; (Right) predicted path
+probability map.
+Figure 6: Multi-room navigation example.
+Figure 7: Long-corridor navigation example.
+Figure 6 illustrates a complex multi-room scenario where the instruction requires sequential waypoints:
+exiting the initial room, traversing a hallway, turning right into a bedroom, and finally turning left
+into a closet. The model successfully generates accurate predictions with strong goal activation at the
+closet location and high-confidence path probability along the entire trajectory, correctly capturing all
+turns and room transitions.
+Figure 7 demonstrates navigation through extended corridors with accurate goal and path predictions,
+maintaining high confidence along the navigable route while correctly avoiding non-traversable
+regions.
+Figure 8: Kitchen navigation example.
+Figure 9: Outdoor pool area navigation example.
+Figure 8 demonstrates a highly complex task with numerous sequential actions: exiting the living
+room, turning right, veering left, heading down the hallway, going through double doors, turning
+left twice at the kitchen, and stopping in front of the refrigerator. Despite the intricate instruction,
+the model produces sharp goal activation at the refrigerator and maintains strong path confidence
+throughout the lengthy trajectory.
+Figure 9 showcases an outdoor pool area scenario requiring spatial relationship understanding ("stay
+on the right side"). The model correctly follows the right side of the pool and accurately identifies
+the stopping position near the glass wall, demonstrating its ability to handle relative positioning
+constraints.
+These examples collectively validate our model’s capabilities across diverse scenarios: multi-room
+navigation with sequential waypoints, long corridors, complex instruction sequences with numerous
+turns, and outdoor environments with spatial constraints. The consistently accurate goal localization
+and high-confidence path predictions across both indoor and outdoor settings confirm the robustness
+and generalization capability of our global path planning approach.
+Real-Robot Map Generalization. To validate that NavOne generalizes beyond simulator-constructed
+maps, we run inference directly on top-down maps built by the LingBot-Map pipeline (Section A.2)
+from monocular RGB video of a real indoor corridor, without any fine-tuning.
+Figure 10: Real-robot corridor navigation exam-
+ple 1.
+Figure 11: Real-robot corridor navigation exam-
+ple 2.
+Figures 10 and 11 show two representative corridor navigation cases. In both examples, NavOne
+produces accurate goal probability peaks at the correct destinations and path probability maps that
+trace the navigable corridor, closely matching the ground-truth A* paths. These results demonstrate
+that the three-modal input representation (RGB, semantic, occupancy) learned on simulator-generated
+R2R-TopDown data transfers directly to maps produced by a real-world monocular mapping pipeline,
+without any domain adaptation.
+F
+Robustness to Map Degradation
+Table 6: Robustness to combined map degradation on Val Unseen. All three noise types are applied
+simultaneously. No Aug: standard training on clean maps. Noise Aug: trained with 10% combined
+noise augmentation. SR: Success Rate; SPL: Success weighted by Path Length.
+No Aug
+Noise Aug
+Noise Level
+SR ↑
+SPL ↑
+SR ↑
+SPL ↑
+None (clean)
+0.471
+0.439
+0.483
+0.450
+Combined 5%
+0.448
+0.412
+0.474
+0.442
+Combined 10%
+0.436
+0.399
+0.469
+0.434
+Combined 20%
+0.368
+0.319
+0.442
+0.404
+Combined 30%
+0.297
+0.249
+0.420
+0.364
+A key concern for practical deployment is whether NavOne degrades gracefully when maps are
+imperfect-as is inevitable with real-world SLAM and semantic segmentation pipelines. We evaluate
+robustness under a challenging combined noise protocol that simultaneously applies three corruption
+types to the input map tensor: (i) Semantic Random: replace a fraction of semantic pixels with
+random class labels, simulating misclassification errors from the segmentation model; (ii) Occupancy
+Flip: randomly flip occupancy cell values between free and occupied, simulating SLAM mapping
+errors; (iii) RGB Gaussian: add zero-mean Gaussian noise to RGB channels, simulating sensor or
+compression artifacts. The noise level parameter controls the corruption fraction (or σ) uniformly
+across all three types. We compare two training strategies: the standard NavOne model (No Aug) and
+a variant trained with 10% combined noise augmentation (Noise Aug).
+Two observations emerge from Table 6. First, the standard model degrades substantially under
+severe combined noise: SR falls from 0.471 to 0.297 at the 30% level (17.4 pp drop), reflecting
+the compounding effect of simultaneous corruptions across all map modalities. Second, noise
+augmentation training dramatically improves robustness with no clean-map penalty: the noise-
+augmented model not only retains higher SR under all corruption levels (0.420 vs. 0.297 at 30%, a
+12.3 pp gap), but also achieves slightly better clean performance (0.483 vs. 0.471 SR), suggesting
+that exposure to diverse map artifacts acts as a regularizer. At the moderate 20% level, the augmented
+model closes the gap by 7.4 pp (0.442 vs. 0.368), demonstrating that a lightweight augmentation
+strategy applied during training is sufficient to substantially harden NavOne against realistic multi-
+modal map degradation.
+G
+Input Modality Ablation
+Table 7: Ablation on input modalities. Metrics are reported on the R2R-TopDown Val Seen and Val
+Unseen splits. Navigation Error (NE) and Trajectory Length (TL) are in meters, converted from the
+internal evaluation unit by dividing by 20 (same as Table 2).
+Val Seen
+Val Unseen
+Method
+SR ↑
+SPL ↑
+TL ↓
+NE ↓
+SR ↑
+SPL ↑
+TL ↓
+NE ↓
+RGB only
+0.36
+0.31
+9.64
+6.33
+0.20
+0.18
+9.26
+7.02
+Semantic only
+0.53
+0.47
+10.29
+4.54
+0.43
+0.39
+10.03
+5.48
+NavOne (AR-Full+SQ)
+0.57
+0.50
+9.79
+4.35
+0.47
+0.43
+9.20
+5.18
+To quantify the contribution of each map modality, we train NavOne (AR-Full+SQ) with a single
+input channelization while keeping the same architecture, loss, and training recipe as the full model:
+we either feed only the RGB top-down map (RGB only), or only the embedded semantic map
+(semantic only). We do not report an occupancy-only model: the occupancy map is a binary free-
+space layer without room categories, object identities, or appearance cues, so the network cannot
+match natural-language references (e.g., "turn left at the kitchen" or "stop by the table") to specific
+regions of the map; optimization collapses to unconstrained A* in free space, which is ill-suited to
+instruction-following. Therefore occupancy is included as a necessary geometric prior in the full
+three-modal setting rather than as a stand-alone input.
+Results in Table 7 show that a single map layer is far weaker than the full three-modal Top-Down
+Map Fuser. RGB only reaches only 0.36 SR on Val Seen and drops sharply to 0.20 SR on Val Unseen,
+indicating that photometric appearance alone is insufficient to ground long-horizon, object-centric
+instructions in global layout, with the large seen-unseen gap (16 pp) reflecting poor generalization
+across environments. Semantic only attains 0.53/0.43 SR on Val Seen/Unseen, substantially outper-
+forming RGB only, because discrete room/object categories disambiguate most referring expressions
+across scenes; yet the larger NE (4.54/5.48 m vs. 4.35/5.18 m) and lower SPL (0.47/0.39 vs. 0.50/0.43)
+show that texture-free semantics miss fine-grained details needed for precise goal alignment. The
+three-modal NavOne (RGB + occupancy + semantics) attains the best SR/SPL/NE on both splits
+and demonstrates why joint multi-modal fusion in the Top-Down Map Fuser is required for robust
+TD-VLN.

@@ -1,0 +1,2965 @@
+Towards Metric-Faithful Neural Graph Matching
+Jyotirmaya Shivottam1,2
+jyotirmaya.shivottam@niser.ac.in
+1National Institute of Science Education and Research (NISER), Bhubaneswar, India
+2Homi Bhabha National Institute, Mumbai, India
+Subhankar Mishra1,2
+smishra@niser.ac.in
+1National Institute of Science Education and Research (NISER), Bhubaneswar, India
+2Homi Bhabha National Institute, Mumbai, India
+Abstract
+Graph Edit Distance (GED) is a fundamental, albeit NP-hard, metric for structural
+graph similarity. Recent neural graph matching architectures approximate GED by
+first encoding graphs with a Graph Neural Network (GNN) and then applying either
+a graph-level regression head or a matching-based alignment module. Despite
+substantial architectural progress, the role of encoder geometry in neural GED
+estimation remains poorly understood. In this paper, we develop a theoretical
+framework that connects encoder geometry to GED estimation quality for two
+broad classes of neural GED estimators: graph similarity predictors and alignment-
+based methods. On fixed graph collections, where the doubly-stochastic metric
+dDS is comparable to GED, we show that graph-level bi-Lipschitz encoders yield
+controlled GED surrogates and improved ranking stability; for matching-based
+estimators, node-level bi-Lipschitz geometry propagates to encoder-induced align-
+ment costs and the resulting optimized alignment objective. We instantiate this
+perspective using FSW-GNN [1], a bi-Lipschitz WL-equivalent encoder, as a drop-
+in replacement in representative neural GED architectures. Across representative
+baselines and benchmark datasets, the resulting geometry-aware variants signif-
+icantly improve GED prediction and ranking metrics. A faithfulness case study
+of untrained encoders, together with ablations and transfer experiments, supports
+the view that these gains arise from improved representation geometry, positioning
+encoder geometry as a useful design principle for neural graph matching.
+Introduction
+Graph matching and graph similarity are central to applications such as molecular retrieval, program
+analysis, and structured search [2-4]. A standard target in this setting is Graph Edit Distance (GED),
+the minimum-cost sequence of node and edge edits required to transform one graph into another [5].
+GED is mathematically well founded but computationally difficult: exact computation reduces to a
+hard combinatorial matching problem and quickly becomes impractical as graph size grows [6]. This
+difficulty has long motivated continuous relaxations of graph matching. More broadly, the classical
+literature already shows that the quality of a relaxation can strongly affect faithfulness to the target
+correspondence: Lyzinski et al. show that, in a correlated random graph setting, a common convex
+relaxation can "almost always yield[] the wrong matching" [7]. Bernard et al. show that one can
+seek tighter lifting-free convex relaxations that remain scalable, underscoring that the geometry and
+tightness of continuous surrogates matter even before learning enters the pipeline [8].
+Preprint.
+arXiv:2605.06588v1 [cs.LG] 7 May 2026
+
+To avoid the full combinatorial cost of exact GED, a large literature studies neural GED estimators.
+These methods typically fall into two broad families: graph-similarity predictors (e.g., GMN [9],
+SimGNN [10], GraSP [6]), which map each graph to an embedding and regress a scalar distance, and
+matching-based estimators (e.g., GEDGNN [11], GraphEDX [12], FGWAlign [13]), which build and
+score a relaxed cross-graph alignment object. Despite their differences, most such pipelines share the
+same front end: a GNN encoder produces graph-level or node-level representations, followed by a
+downstream prediction or matching module [3, 4].
+Yet the geometry induced by this encoder is rarely analyzed explicitly. Existing methods typically
+motivate encoder choice through expressive power or architectural convenience [14, 11], while the re-
+lationship between representational distortion and GED estimation quality remains largely unexplored.
+If the encoder substantially distorts graph-level distances or cross-graph node discrepancies, the
+downstream module must operate on a poorly conditioned surrogate of the underlying edit geometry.
+This concern is especially relevant for Message Passing Neural Networks (MPNNs): while their
+discriminative power is bounded by the 1-Weisfeiler-Lehman test [14], recent theory shows that stan-
+dard sum-based architectures do not enjoy strong lower-Lipschitz guarantees, and their representation
+separation quality can deteriorate rapidly with depth [15]. Recent surveys and benchmark studies
+further highlight substantial generalization failures in current neural GED systems [3, 16].
+Input Graph Pair
+(G1, G2)
+G1
+G2
+Standard GNN
+(e.g., GIN, GAT, RGGC)
+Allows Unbounded
+Distortion
+⋆Bi-Lipschitz GNN
+(e.g., FSW-GNN)
+Guarantees Metric-
+Faithful Representations
+Metric Fidelity Lost
+Metric Fidelity Preserved
+Figure 1: Motivation for geometrically rigorous GNN encoders in
+graph matching pipelines: Standard GNNs can distort structural
+distances, while bi-Lipschitz GNNs preserve metric fidelity in
+Euclidean space.
+We
+characterize
+this
+issue
+through
+the
+lens
+of
+metric
+distortion (Fig. 1).
+At the
+graph level, structurally distinct
+graphs may be mapped too
+close
+together
+by
+similarity
+predictors [10, 17], weakening
+the fidelity of embedding-based
+GED surrogates.
+At the node
+level, matching-based estimators
+can inherit distorted cross-graph
+comparison costs before align-
+ment is even performed [12, 13].
+Since many neural GED meth-
+ods
+operate
+on
+graph-pair
+distances, node-matching scores,
+or relaxed alignment objectives
+derived from encoder outputs,
+the quality of these representations directly affects the faithfulness of the downstream estimator. We
+bridge ideas from invariant geometric machine learning, specifically bi-Lipschitz invariant theory [18],
+to neural graph matching in the 1-WL regime considered in current benchmarks [4, 10, 19, 14, 3, 16].
+We focus on two broad classes of methods: graph-level similarity predictors and node-level
+matching-based estimators. On fixed graph collections where the doubly-stochastic metric dDS is
+comparable to GED, we show that graph-level bi-Lipschitz encoder geometry yields tighter and
+more stable GED surrogates, while for matching-based methods, node-level bi-Lipschitz geometry
+propagates to encoder-induced alignment costs and the optimized alignment objective. Our goal is to
+demonstrate that geometry-aware encoders provide a strong and analyzable foundation for neural
+GED pipelines.
+To instantiate this perspective, we adapt FSW-GNN [1], a WL-equivalent encoder with bi-Lipschitz
+guarantees with respect to dDS, as a drop-in replacement in representative neural GED pipelines.
+Empirically, we observe that the resulting geometry-aware variants consistently improve GED
+prediction and ranking performance across multiple model families. Additional faithfulness analyses,
+transfer results, and ablations support the interpretation suggested by the theory: better encoder
+geometry improves the conditioning of the surrogate quantities from which neural GED is estimated.
+Our Contributions.
+1. We develop a geometric framework for neural GED estimation that unifies both graph-
+similarity predictors and matching-based estimators. For fixed 1-WL-separable graph
+collections where dDS is comparable to GED, we show that encoder distortion directly
+governs the quality of the resulting GED surrogate. To the best of our knowledge, this is the
+first work to systematically relate encoder geometry to GED estimation performance.
+2. For matching-based neural GED architectures, we prove that node-level bi-Lipschitz geome-
+try propagates from encoder-induced node costs to relaxed alignment objectives, giving a
+precise mechanism by which encoder quality affects downstream edit estimation.
+3. We instantiate the theory with FSW-GNN [1], a bi-Lipschitz WL-equivalent encoder, as
+a drop-in replacement in representative neural GED architectures, without changing their
+downstream prediction or matching mechanisms. The resulting geometry-aware variants
+consistently and significantly improve GED prediction and ranking quality; faithfulness,
+transfer, and ablation results support the view that these gains arise from stronger represen-
+tation geometry.
+Related Work
+Neural GED and graph matching.
+Neural GED methods are commonly divided into graph-
+similarity predictors and matching-based estimators [4]. The first family includes models such as
+GMN, SimGNN, GraphSim, EGSC, ERIC, H2MN, and GraSP, which predict GED or graph similarity
+from learned graph-level representations [9, 10, 20-23, 6]. The second family includes models such
+as GEDGNN, GraphEDX, ISONET, and fused Gromov-Wasserstein approaches, which estimate
+similarity through explicit or relaxed alignments [11, 12, 24, 13]. Across both families, most work
+focuses on architectural design, prediction heads, or alignment objectives, while the geometry of the
+encoder itself is rarely analyzed.
+Metric-aware neural graph matching.
+Several works have introduced stronger output-side or
+objective-side structure. GREED enforces metric properties at the prediction layer [17]; GraphEDX
+and GEDAN learn more flexible edit-cost surrogates [12, 25]; and TaGSim decomposes similarity into
+operation-aware components [26]. More recently, GRAIL explores an alternative program-synthesis
+route using LLMs [27]. This perspective also connects to the broader graph matching literature on
+continuous relaxations, where both the risks of loose convex surrogates [7, 28] and the value of tighter
+lifting-free relaxations [8] have been emphasized. Our perspective is complementary: rather than
+changing the head or matching objective, we study how the geometry of the upstream encoder affects
+the quality of the quantities these downstream modules consume.
+Geometric representation learning.
+Recent work in invariant and geometric learning has moved
+beyond expressive power alone and started to analyze quantitative representation quality. Davidson
+and Dym show that standard sum-based multiset and graph networks satisfy only weaker lower-
+Hölder-type guarantees in expectation [15], while FSW-GNN provides bi-Lipschitz guarantees with
+respect to WL-equivalent graph metrics, including the doubly-stochastic metric used here [1]. Related
+work studies metric control for graph stability, permutation-invariant embeddings, and low-distortion
+orbit-space embeddings [29, 30, 18]. Our contribution brings these geometric ideas into neural
+GED estimation and uses them to analyze both graph-level prediction pipelines and matching-based
+architectures.
+Geometry of Neural GED
+Let Ω⊂Rd be compact, and let GWL
+≤N denote a class of attributed graphs with at most N nodes that
+are pairwise separable by the 1-WL test. Throughout this section, we work with a finite collection
+G ⊆GWL
+≤N consisting of the graphs appearing in the usual datasets, taken modulo graph isomorphism.
+Let dGED denote the uniform-cost graph edit distance on GWL
+≤N, and let dDS denote the generalized
+doubly-stochastic graph metric used in the bi-Lipschitz analysis of FSW-GNN [1]. We state the main
+results in this section and defer the detailed proofs to Appendix E.
+DS Metric
+The metric dDS originates from the doubly-stochastic relaxation of graph isomorphism.
+For equal-size featureless graphs, graph isomorphism can be written as the existence of a permutation
+matrix P satisfying AP = PA′, where A and A′ are the adjacency matrices of the two graphs.
+Replacing the permutation constraint by the convex hull of permutation matrices, namely the set of
+doubly-stochastic matrices, yields a continuous relaxation and leads to the DS metric by minimizing
+the residual of this relaxed commutation relation. Sverdlov et al. [1] extend this construction to
+attributed graphs with varying node counts by jointly penalizing structural mismatch and node-feature
+mismatch over rectangular doubly-stochastic couplings. A key result of [1] is that this generalized
+dDS is a 1-WL-equivalent graph metric on GWL
+≤N : it vanishes exactly on 1-WL-equivalent graph pairs.
+Moreover, on compact feature domains, FSW-GNN admits graph-level bi-Lipschitz embeddings with
+respect to dDS [1]. This makes dDS a natural bridge between the discrete edit geometry of GED and
+the continuous Euclidean representation spaces used by neural GED models.
+We treat the two broad classes of neural GED estimators separately. The first class consists of
+graph similarity predictors that map each graph to a graph-level embedding and estimate GED from
+the resulting pair of vectors. The second class consists of matching-based estimators that form a
+cross-graph alignment object from node embeddings and then score that object. This distinction is
+important because graph-level and node-level geometry enter these architectures in different ways.
+We note that the ambient regime for the theory is therefore the 1-WL-separable one. We chose this as
+the natural setting for the present analysis for two reasons. First, the encoder families compared here
+are built from WL-type message-passing architectures and are designed to operate in that expressive
+regime [14, 1]. Second, current neural GED methods are overwhelmingly evaluated on datasets that
+effectively lie within this regime, while recent work moving beyond it does so by explicitly increasing
+expressive power, e.g. via 3-WL-type architectures [3, 4, 6, 31]. Thus, the point of our analysis is
+not to claim that 1-WL geometry is universally sufficient for GED, but rather to understand how the
+quality of encoder geometry within the regime used in practice affects neural GED estimation. We
+leave extending the analysis beyond the 1-WL setting for future work.
+On a fixed finite collection of graphs, GED is often accessed in practice through a continuous
+surrogate geometry rather than directly. In this work, we choose dDS as that surrogate, because it is
+1-WL-equivalent and because FSW-GNN provides explicit bi-Lipschitz control with respect to it [1].
+This makes dDS a natural bridge between the discrete edit metric and the continuous representation
+spaces used by neural GED models.
+Proposition 1 (GED-DS comparability). Define
+aG := min
+G,H∈G
+G̸=H
+dGED(G, H)
+dDS(G, H) ,
+bG := max
+G,H∈G
+G̸=H
+dGED(G, H)
+dDS(G, H) .
+(1)
+Then
+0 < aG ≤bG < ∞,
+(2)
+and, ∀G, H ∈G,
+aG dDS(G, H) ≤dGED(G, H) ≤bG dDS(G, H).
+(3)
+Proposition 1 says that on the fixed finite graph collection under study, dDS and dGED are comparable
+up to dataset-dependent constants aG and bG. These constants are not controlled by the encoder or the
+downstream method; they only provide the bridge from the surrogate geometry dDS to dGED. The
+encoder-side contribution enters separately through cG and CG, so on a fixed dataset any improvement
+in surrogate conditioning must come from improved encoder geometry. This is precisely why FSW-
+GNN is relevant here, as it provides explicit bi-Lipschitz control with respect to dDS, whereas
+standard sum-based MPNNs are only known to satisfy much weaker lower-Hölder-type guarantees
+in expectation [15]. We now state the encoder-side assumption that will be propagated through
+graph-level neural GED architectures.
+Assumption 1 (Graph-level bi-Lipschitz encoder). The graph encoder Φ : G →Rm satisfies
+cG dDS(G, H) ≤∥Φ(G) −Φ(H)∥2 ≤CG dDS(G, H)
+∀G, H ∈G,
+(4)
+for some constants 0 < cG ≤CG < ∞.
+Assumption 1 requires graph embeddings to preserve the dDS geometry up to controlled multiplicative
+distortion. We argue that this bi-Lipschitz property is precisely the geometric condition that makes
+encoder representations useful for GED estimation: the lower bound prevents distant graphs from
+collapsing in the embedding space, while the upper bound ensures that small perturbations are not
+artificially amplified. For FSW-GNN-style encoders, this assumption is directly motivated by the
+graph-level bi-Lipschitz theorem of Sverdlov et al. [1]. More broadly, it serves as the encoder-side
+condition under which graph-pair prediction quality can be analyzed quantitatively. This is also the
+natural point of contrast with standard sum-based MPNNs, for which available results are substantially
+weaker, e.g. lower-Hölder-type guarantees in expectation whose quality degrades with depth [15].
+Taken together, Proposition 1 and Assumption 1 formalize a common intuition underlying most neural
+GED solvers through the DS-GED connection: Euclidean distances between graph embeddings
+encode quantitative information about GED. Crucially, this conclusion is not a consequence of
+expressive power alone; it depends on the metric conditioning of the encoder.
+3.1
+Graph Similarity Predictors
+Graph similarity predictors estimate GED from graph-level representations, typically by a norm-based
+distance head or by an interaction head applied to a pair of embeddings. For this class of methods, the
+central question is how much of the target edit geometry survives the passage from graphs to graph
+embeddings. Under Assumption 1 and with Proposition 1, we obtain explicit answers.
+Proposition 2 (Graph-level bounds). For every G, H ∈G,
+aG
+CG
+∥Φ(G) −Φ(H)∥2 ≤dGED(G, H) ≤bG
+cG
+∥Φ(G) −Φ(H)∥2.
+(5)
+Proposition 2 shows that graph-embedding distances provide a multiplicatively controlled surrogate
+for GED on the considered graph datasets. The quality of this surrogate is governed by two distinct
+sources of distortion: the comparability of dDS to GED through aG and bG, and the graph-level
+distortion of the encoder through cG and CG. In particular, improved graph geometry tightens the
+surrogate independently of the specific prediction head used downstream.
+Theorem 1 (Best scalar calibration for norm-based predictors). Let
+α := aG
+CG
+,
+β := bG
+cG
+,
+γ⋆:= α + β
+.
+(6)
+Then, for every G, H ∈G,
+|γ⋆∥Φ(G) −Φ(H)∥2 −dGED(G, H)| ≤β −α
+∥Φ(G) −Φ(H)∥2.
+(7)
+Through Theorem 1, we formalize the simplest graph-level prediction mechanism: a scalar multiple
+of embedding distance, and show that even such a minimal head admits a uniform error band, whose
+width is controlled by the same geometric constants as in Proposition 2. Thus, improved encoder
+geometry directly narrows the uncertainty band for norm-based GED prediction, rather than being
+merely a qualitative desideratum.
+Ranking interpretation for graph-level predictors.
+Theorem 1 controls absolute approximation
+error for norm-based GED surrogates. For rank-based evaluation, however, the relevant question is
+whether the ordering of graph pairs induced by the predictor agrees with the ordering induced by the
+true GED. In the next corollary, we identify a regime in which this agreement is guaranteed.
+Corollary 1 (Ranking preservation for monotone norm-head predictors). Let bdψ(G, H) :=
+ψ(∥Φ(G) −Φ(H)∥2), where ψ : R≥0 →R is strictly increasing. Define
+κG := β
+α = bGCG
+aGcG
+.
+(8)
+Then for any two graph pairs (G1, H1) and (G2, H2) (and similarly with < and κ−1
+G ),
+dGED(G1, H1) > κG dGED(G2, H2)
+=⇒
+bdψ(G1, H1) > bdψ(G2, H2).
+(9)
+Corollary 1 provides a pairwise order-preservation guarantee for graph-level GED predictors. It
+shows that any pairwise comparison, whose true GED values differ by a factor larger than κG, must be
+ordered correctly by any strictly increasing norm-head predictor. The smaller the distortion ratio κG,
+the larger the set of pairwise comparisons for which correct ranking is certified. This directly supports
+rank-based evaluation metrics: it increases the set of pairwise comparisons that are necessarily
+concordant, thereby improving the conditioning of Kendall’s τ and, more broadly, Spearman’s ρ and
+retrieval metrics such as P@10 and P@20. By contrast, absolute calibration metrics such as MAE
+are governed by Theorem 1, which controls the numerical error of the predicted score rather than its
+induced ordering. Accordingly, improved graph-level geometry should be expected to benefit ranking
+metrics even when residual calibration error remains. This gives a concrete graph-level mechanism
+for improvements in retrieval and rank-correlation measures.
+Many graph similarity predictors use an interaction module, MLP, or neural tensor style head rather
+than a single Euclidean norm [10, 9, 17, 6]. The next proposition shows that once the encoder
+is bi-Lipschitz with respect to the surrogate geometry, any downstream head that is Lipschitz on
+embedding pairs inherits a corresponding stability guarantee.
+Proposition 3 (Stability of Lipschitz interaction heads). Let h : Rm × Rm →R be Lh-Lipschitz
+with respect to ∥(u, v)∥⊕:= ∥u∥2 + ∥v∥2. Define sh(G, H) := h(Φ(G), Φ(H)). Then, for every
+G, H, G′, H′ ∈G,
+|sh(G, H) −sh(G′, H′)| ≤LhCG
+ dDS(G, G′) + dDS(H, H′)
+
+.
+(10)
+Proposition 3 extends the graph-level analysis beyond pure distance heads. It provides a class-level
+stability statement for graph similarity predictors such as SimGNN [10], GMN [9], GREED [17], and
+GraSP-style [6] models: once the encoder preserves the surrogate geometry with controlled distortion,
+any Lipschitz interaction head inherits a corresponding control with respect to perturbations measured
+in dDS.
+3.2
+Matching-based Estimators
+We now turn to neural GED estimators that build a cross-graph alignment object from node embed-
+dings and then score that object. This includes OT-based, assignment-based, and edit-cost-based
+architectures in which the encoder influences GED estimation through the node-level costs supplied
+to the matching module, e.g., GEDGNN [11], GraphEDX [12], FGWAlign [13]. In this setting, the
+relevant geometric question is not only whether whole-graph embeddings are well conditioned, but
+also whether cross-graph node discrepancies are faithfully represented.
+Following standard assignment- and OT-based GED formulations, we fix once and for all an equaliza-
+tion rule that maps each pair (G, H) ∈G × G to an equalized pair ( ¯G, ¯H), obtained for instance by
+dummy-node or virtual-node augmentation, such that |V ( ¯G)| = |V ( ¯H)|. This is also the setting in
+which FGW-based GED formulations can be stated most cleanly. For a fixed pair (G, H), let us write
+n ¯
+G, ¯
+H := |V ( ¯G)| = |V ( ¯H)|, and define the set of doubly-stochastic alignment plans
+D ¯
+G, ¯
+H :=
+n
+P ∈R
+n ¯
+G, ¯
+H×n ¯
+G, ¯
+H
+≥0
+: P1 = 1, P ⊤1 = 1
+o
+.
+(11)
+We work with unnormalized doubly-stochastic plans. Relative to the OT convention with uniform
+marginals 1/n ¯
+G, ¯
+H, this amounts only to a constant rescaling and does not affect the distortion
+arguments below.
+Let δ ¯
+G, ¯
+H : V ( ¯G) × V ( ¯H) →R≥0 be a reference node-discrepancy function, and let ϕ be a node
+encoder producing embeddings, ϕ ¯
+G(i), ϕ ¯
+H(j) ∈Rp.
+Assumption 2 (Node-level bi-Lipschitz encoder). There exist constants 0 < cV ≤CV < ∞such
+that for every pair (G, H) ∈G × G, every equalized pair ( ¯G, ¯H) induced by the fixed equalization
+rule, and all i ∈V ( ¯G), j ∈V ( ¯H),
+cV δ ¯
+G, ¯
+H(i, j) ≤∥ϕ ¯
+G(i) −ϕ ¯
+H(j)∥2 ≤CV δ ¯
+G, ¯
+H(i, j).
+(12)
+Assumption 2 is the node-level analogue of Assumption 1. It requires the encoder to preserve a
+reference cross-graph node geometry up to controlled multiplicative distortion. This is the relevant
+hypothesis for matching-based estimators because these architectures do not predict GED from
+a single graph-level distance alone; instead, they construct an alignment score from node-level
+comparison costs. The reference discrepancy δ ¯
+G, ¯
+H should be understood as a task-dependent
+surrogate cross-graph node cost induced by the graph family, the equalization scheme, and the
+matching architecture. As with Assumption 1, this assumption is also consistent with recent geometric
+GNN theory, where FSW-GNN is shown to admit bi-Lipschitz guarantees with respect to WL-
+equivalent graph metrics and, under additional conditions, tree-based node metrics that quantify local
+message-passing geometry [1, 29].
+Now, let us define the node-cost matrices, Cδ
+¯
+G, ¯
+H(i, j) := δ ¯
+G, ¯
+H(i, j), and Cϕ
+¯
+G, ¯
+H(i, j) := ∥ϕ ¯
+G(i) −
+ϕ ¯
+H(j)∥2. For P ∈D ¯
+G, ¯
+H, let
+L
+¯
+G, ¯
+H
+δ
+(P) := ⟨P, Cδ
+¯
+G, ¯
+H⟩=
+X
+i∈V ( ¯
+G)
+X
+j∈V ( ¯
+H)
+Pij δ ¯
+G, ¯
+H(i, j),
+(13)
+L
+¯
+G, ¯
+H
+ϕ
+(P) := ⟨P, Cϕ
+¯
+G, ¯
+H⟩=
+X
+i∈V ( ¯
+G)
+X
+j∈V ( ¯
+H)
+Pij ∥ϕ ¯
+G(i) −ϕ ¯
+H(j)∥2.
+(14)
+Lemma 1 (Plan-wise distortion of alignment costs). Under Assumption 2, for every pair (G, H) ∈
+G × G with equalized versions ( ¯G, ¯H), and every P ∈D ¯
+G, ¯
+H,
+cV L
+¯
+G, ¯
+H
+δ
+(P) ≤L
+¯
+G, ¯
+H
+ϕ
+(P) ≤CV L
+¯
+G, ¯
+H
+δ
+(P).
+(15)
+Lemma 1 tells us that the distortion incurred by the encoder at the level of individual node pairs lifts
+directly to every admissible alignment plan. Thus, before any optimization is performed, the encoder
+already constrains the full family of relaxed matching costs seen by the downstream solver.
+Theorem 2 (Distortion bound for alignment objectives). For each pair (G, H) ∈G × G, let
+R ¯
+G, ¯
+H : D ¯
+G, ¯
+H →R be any structural term independent of the encoder, and let λ ≥0. Define
+J
+¯
+G, ¯
+H
+δ
+(P) := R ¯
+G, ¯
+H(P) + λL
+¯
+G, ¯
+H
+δ
+(P),
+J
+¯
+G, ¯
+H
+ϕ
+(P) := R ¯
+G, ¯
+H(P) + λL
+¯
+G, ¯
+H
+ϕ
+(P).
+(16)
+Then, for every pair (G, H) ∈G × G,
+min
+P ∈D ¯
+G, ¯
+H
+
+R ¯
+G, ¯
+H(P)+λcV L
+¯
+G, ¯
+H
+δ
+(P)
+
+≤
+min
+P ∈D ¯
+G, ¯
+H
+J
+¯
+G, ¯
+H
+ϕ
+(P) ≤
+min
+P ∈D ¯
+G, ¯
+H
+
+R ¯
+G, ¯
+H(P)+λCV L
+¯
+G, ¯
+H
+δ
+(P)
+
+.
+For alignment-based neural GED estimators, Theorem 2 shows that encoder distortion propagates all
+the way to the optimized alignment score, not merely to individual pairwise costs. We have kept the
+theorem general in the structural term R ¯
+G, ¯
+H, so as to cover architectures in which node costs are
+combined with adjacency consistency, transport regularization, or other structural penalties. In brief,
+it implies that improved node geometry improves the faithfulness of the optimization problem solved
+by the matching module.
+Corollary 2 (Comparability transfer for alignment surrogates). Assume, in addition, that, for the
+fixed equalization rule and reference discrepancy above, there exist constants 0 < η1,G ≤η2,G < ∞,
+such that, for every pair (G, H) ∈G × G,
+η1,G dGED(G, H) ≤
+min
+P ∈D ¯
+G, ¯
+H
+J
+¯
+G, ¯
+H
+δ
+(P) ≤η2,G dGED(G, H).
+(17)
+Moreover, assume that R ¯
+G, ¯
+H(P) ≥0 for all (G, H) ∈G × G and all P ∈D ¯
+G, ¯
+H. Let c :=
+min{1, cV },
+C := max{1, CV }. Then, for every pair (G, H) ∈G × G,
+c η1,G dGED(G, H) ≤
+min
+P ∈D ¯
+G, ¯
+H
+J
+¯
+G, ¯
+H
+ϕ
+(P) ≤C η2,G dGED(G, H).
+(18)
+Corollary 2 makes explicit how node-level geometry connects back to GED once the reference
+alignment objective is itself a valid surrogate for edit distance on the graph family under study. The
+statement isolates two ingredients: the quality of the alignment surrogate J
+¯
+G, ¯
+H
+δ
+, through η1,G and
+η2,G, and the quality of the encoder geometry, through cV and CV , enabling us to cleanly analyze
+neural GED models that infer edit distance through relaxed matching objectives.
+The graph-level and alignment-level results are complementary. For graph similarity predictors,
+encoder geometry determines how graph-pair embeddings reflect a continuous surrogate for GED.
+For matching-based estimators, it determines node costs and the alignment objective used to estimate
+GED. In both cases, we have shown that metric conditioning can improve performance, though the
+intervention differs across architectures. In Appendix F, we show how the graph-level results apply to
+predictors such as GREED [17] and GraSP [6], while the alignment-level results apply to estimators
+such as GEDGNN [11] and GraphEDX [12]. Together, these results provide a unified geometric
+framework explaining why better-conditioned encoder geometry can improve neural GED estimation
+across architectures without changing downstream prediction or matching mechanisms, as shown
+empirically in the next section.
+4
+Experiments
+We evaluate whether improving encoder geometry can systematically improve neural GED estimation
+across both graph-level similarity predictors and matching/alignment-based estimators. To do so,
+we replace the original message-passing encoder and aggregation layers in each baseline with FSW-
+GNN [1] layers while preserving the downstream prediction or matching module as closely as
+possible. This design isolates encoder geometry from the rest of the pipeline and aligns the empirical
+study with the distinction in Section 3 between graph-level surrogates and alignment-based estimators.
+Datasets.
+All experiments follow the leak-free evaluation protocol introduced in Gelato [19] and the
+benchmark guidance of Roy et al. [16] to prevent train-test leakage through isomorphic or structurally
+duplicated graphs. In the main text, we report primary results on four representative datasets: AIDS,
+IMDB-16, MOLHIV-16, and CODE2-22, covering molecular, social-network, and code graphs. Results
+on LINUX and ZINC-16, together with fuller metric breakdowns and additional implementation
+details, are deferred to Appendix G. Unless otherwise stated, we use node features when available
+and omit edge features, since several of the compared baselines do not support them consistently.
+Metrics.
+In the results here, we emphasize mean absolute error (MAE) and Kendall’s rank correla-
+tion τ. MAE measures numerical fidelity to the target GED, while τ captures the quality of pairwise
+ordering, which is especially relevant for retrieval and nearest-neighbor use cases. Appendix G
+additionally reports Spearman’s ρ, P@10, and P@20, which confirm the same trends more broadly.
+Baselines and BL variants.
+Our baselines span the two architectural families analyzed in Section 3.
+For graph-similarity predictors, we consider SimGNN [10], GMN [9], EGSC [21], ERIC [22],
+GREED [17], and GraSP [6]. For matching/alignment-based estimators, we consider GEDGNN [11]
+and GraphEdX [12]. For each method, the suffix "BL" denotes the geometry-aware variant obtained
+by replacing the original encoder and aggregation layers with FSW-GNN layers while leaving the
+downstream head and training objective unchanged whenever possible.
+Training details.
+We use author-recommended hyperparameters whenever possible and intention-
+ally avoid aggressive retuning after encoder replacement, so that the observed gains can be attributed
+primarily to the change in encoder geometry rather than to a larger model-specific search budget.
+Original and BL variants are matched as closely as possible in hidden dimension, optimizer, training
+budget, early stopping, and data splits; unless a method requires a documented exception, BL models
+use hidden dimension 64. All results are reported as mean ± standard deviation over 10 runs. More
+implementation details are given in Appendix G.
+4.1
+Main results
+Table 1 reports the primary comparison between each baseline and its BL counterpart on AIDS,
+IMDB-16, MOLHIV-16, and CODE2-22. The central empirical question is whether improving
+encoder geometry yields consistent gains across model families and evaluation criteria. The answer
+is affirmative: across all eight baselines and all four datasets, replacing the encoder with its BL
+counterpart improves both MAE and τ. This trend holds for both architectural families studied in
+our theory. Among graph-level predictors, GraSP-BL attains the best MAE on all four main-text
+datasets, improving over GraSP. At the same time, EGSC-BL and ERIC-BL remain especially strong
+on ranking metrics, indicating that once the encoder geometry is improved, different downstream
+heads can still induce different trade-offs between regression fidelity and ranking fidelity. For the
+matching-based methods, the picture is similar but more moderate: GraphEdX-BL and GEDGNN-BL
+improve over their non-BL counterparts on every reported dataset and metric, showing that the
+encoder replacement helps not only pooled graph predictors but also models that estimate GED
+through learned alignment. Our results and ablations in Appendix G further affirm this conclusion.
+4.2
+Faithfulness Case Study: Assessing impact without model training
+Figure 2 helps explain the downstream gains at the representation level. Even without any task-specific
+training, replacing the original GraSP encoder with its BL counterpart reduces the latent-distance
+MAE on every dataset: by 53.7% on AIDS, 25.6% on LINUX, 90.5% on IMDB-16, 50.1% on
+MOLHIV-16, 69.6% on CODE2-22, and 33.4% on ZINC-16. At the same time, the Spearman
+Table 1:
+GED prediction performance across datasets. Due to space limits, results on LINUX,
+ZINC-16, and additional metrics (ρ, P@10, P@20) are deferred to Appendix G. Lower is better for
+MAE and higher is better for τ.
+Method
+AIDS
+IMDB-16
+MOLHIV-16
+CODE2-22
+MAE↓
+τ ↑
+MAE↓
+τ ↑
+MAE↓
+τ ↑
+MAE↓
+τ ↑
+SimGNN
+0.691±0.018
+0.721±0.011
+0.912±0.051
+0.748±0.014
+0.792±0.031
+0.662±0.011
+0.781±0.022
+0.694±0.013
+SimGNN-BL
+0.298±0.011
+0.748±0.010
+0.296±0.013
+0.781±0.012
+0.362±0.018
+0.689±0.010
+0.221±0.011
+0.731±0.011
+GMN
+0.676±0.019
+0.729±0.011
+0.894±0.054
+0.756±0.013
+0.775±0.029
+0.671±0.010
+0.763±0.021
+0.702±0.012
+GMN-BL
+0.317±0.012
+0.754±0.009
+0.388±0.012
+0.786±0.011
+0.391±0.017
+0.697±0.009
+0.238±0.010
+0.738±0.011
+EGSC
+0.284±0.010
+0.792±0.008
+0.451±0.029
+0.829±0.009
+0.271±0.016
+0.756±0.008
+0.189±0.009
+0.801±0.009
+EGSC-BL
+0.132±0.006
+0.809±0.007
+0.058±0.007
+0.848±0.008
+0.139±0.008
+0.772±0.007
+0.071±0.004
+0.818±0.008
+ERIC
+0.312±0.010
+0.781±0.008
+0.492±0.031
+0.818±0.010
+0.294±0.017
+0.742±0.009
+0.201±0.010
+0.789±0.010
+ERIC-BL
+0.148±0.006
+0.801±0.007
+0.063±0.008
+0.839±0.008
+0.151±0.008
+0.763±0.008
+0.079±0.005
+0.811±0.009
+GREED
+0.794±0.021
+0.677±0.014
+1.054±0.066
+0.721±0.017
+0.861±0.036
+0.618±0.014
+0.998±0.028
+0.651±0.016
+GREED-BL
+0.612±0.018
+0.702±0.012
+0.684±0.047
+0.749±0.015
+0.694±0.029
+0.646±0.012
+0.721±0.022
+0.689±0.014
+GraSP
+0.061±0.004
+0.654±0.012
+1.205±0.071
+0.538±0.018
+0.139±0.008
+0.724±0.016
+0.104±0.006
+0.571±0.017
+GraSP-BL
+0.028±0.002
+0.718±0.010
+0.114±0.009
+0.792±0.010
+0.069±0.004
+0.754±0.014
+0.032±0.002
+0.681±0.012
+GraphEDX
+0.572±0.013
+0.744±0.010
+3.180±0.185
+0.771±0.012
+0.638±0.023
+0.698±0.010
+0.429±0.015
+0.732±0.011
+GraphEDX-BL
+0.537±0.012
+0.768±0.009
+2.842±0.162
+0.803±0.010
+0.600±0.021
+0.726±0.009
+0.394±0.013
+0.761±0.010
+GEDGNN
+1.782±0.044
+0.432±0.021
+0.348±0.069
+0.281±0.029
+4.914±0.030
+0.298±0.022
+2.273±0.080
+0.317±0.025
+GEDGNN-BL
+1.421±0.037
+0.471±0.018
+0.221±0.042
+0.352±0.025
+3.982±0.028
+0.334±0.020
+1.624±0.061
+0.372±0.022
+correlation between latent distances and graph similarity increases on all six datasets, by 5.3%,
+5.0%, 23.9%, 4.8%, 9.4%, and 2.2%, respectively. Thus, before any end-to-end optimization, the
+BL encoder already produces a latent geometry that is both more quantitatively faithful to GED
+and more reliable for ranking graph pairs. This outcome matches the benchmark results in Table 1.
+GraSP-BL improves over GraSP on every dataset and on every metric reported in the main paper and
+appendix, with especially large gains on IMDB-16 and CODE2-22, precisely where the faithfulness
+gap is largest. The empirical picture is therefore coherent: when the embedding geometry better
+preserves structural dissimilarity, the induced GED surrogate becomes easier to calibrate and more
+reliable for retrieval and ranking.
+4.3
+Connecting to theory
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+1.2
+MAE
+-53.7%
+-69.6%
+-90.5%
+-25.6%
+-50.1%
+-33.4%
+GraSP
+GraSP-BL
+AIDS
+CODE2-22
+IMDB-16
+LINUX
+MOLHIV-16
+ZINC-16
+0.0
+0.2
+0.4
+0.6
+0.8
+Spearman, ρ
++5.3%
++9.4%
++23.9%
++5.0%
++4.8%
++2.2%
+Figure 2: Faithfulness analysis of untrained GraSP
+variants. Across all datasets, the Bi-Lipschitz GNN
+better aligns embedding geometry with graph dis-
+similarity than the standard GNN (RGGC [32]).
+Our empirical findings align closely with the the-
+ory in Section 3. For graph-level predictors, the
+theory states that a bi-Lipschitz encoder yields
+a tighter and more stable surrogate for GED;
+Figure 2 measures this effect directly by show-
+ing that latent distances track graph dissimilar-
+ity more faithfully even before training. For
+matching-based estimators, the theory predicts
+that improved node-level geometry should prop-
+agate to encoder-induced alignment costs and
+hence to the optimized matching objective. Em-
+pirically, both effects are visible: graph-level
+methods show especially strong improvements,
+while alignment-based methods also improve
+consistently once the encoder is replaced. Ad-
+ditional results and discussion in Appendix G
+further validate this.
+Conclusion
+We developed a geometric framework for neural GED estimation showing that, on the finite 1-WL
+regime considered in this work, improved encoder geometry yields better-conditioned surrogates
+for both graph-similarity predictors and matching/alignment-based estimators. Instantiating this
+perspective with FSW-GNN [1] as a drop-in bi-Lipschitz encoder replacement, we observed consistent
+gains across existing neural GED architectures in prediction, ranking, retrieval, and transfer, while
+the faithfulness analysis and ablations support the interpretation that these gains arise from stronger
+representation geometry rather than only downstream optimization. Overall, these results position
+geometry-aware encoders as a principled design choice for neural graph matching pipelines, while
+also making clear that they are not a complete solution: the present theory is restricted to the 1-WL
+setting and dataset-dependent surrogate comparability, and the current experiments do not cover
+edge labels, richer edit-cost settings, or the full efficiency-expressivity design space. We discuss
+these limitations and related future directions in Appendix B, and broader-impact considerations in
+Appendix A.
+References
+[1] Yonatan Sverdlov, Yair Davidson, Nadav Dym, and Tal Amir. FSW-GNN: A Bi-Lipschitz
+WL-Equivalent Graph Neural Network. In The Fourth Learning on Graphs Conference, October
+2025.
+[2] Runzhong Wang, Rui-Xi Wang, Mrunali Manjrekar, and Connor W. Coley. Neural Graph
+Matching Improves Retrieval Augmented Generation in Molecular Machine Learning. In
+Forty-Second International Conference on Machine Learning, June 2025.
+[3] Mouyi Xu and Lijun Chang. Graph Edit Distance Estimation: A New Heuristic and A Holistic
+Evaluation of Learning-based Methods. Proc. ACM Manag. Data, 3(3):167:1-167:24, June
+2025. doi: 10.1145/3725304.
+[4] Zhouyang Liu, Ning Liu, Yixin Chen, Ziqing Wen, Jiezhong He, and Dongsheng Li. Graph
+Theory-Based Deep Graph Similarity Learning: A Unified Survey of Pipeline, Techniques, and
+Challenges. Transactions on Machine Learning Research, December 2024. ISSN 2835-8856.
+[5] Kaspar Riesen and Horst Bunke. Approximate graph edit distance computation by means of
+bipartite graph matching. Image and Vision Computing, 27(7):950-959, 2009. ISSN 0262-8856.
+doi: 10.1016/j.imavis.2008.04.004.
+[6] Haoran Zheng, Jieming Shi, and Renchi Yang. Grasp: simple yet effective graph similarity
+predictions. In Proceedings of the Thirty-Ninth AAAI Conference on Artificial Intelligence and
+Thirty-Seventh Conference on Innovative Applications of Artificial Intelligence and Fifteenth
+Symposium on Educational Advances in Artificial Intelligence, AAAI’25/IAAI’25/EAAI’25.
+AAAI Press, 2025. ISBN 978-1-57735-897-8. doi: 10.1609/aaai.v39i21.34450. URL https:
+//doi.org/10.1609/aaai.v39i21.34450.
+[7] Vince Lyzinski, Donniell E. Fishkind, Marcelo Fiori, Joshua T. Vogelstein, Carey E. Priebe, and
+Guillermo Sapiro. Graph matching: Relax at your own risk. IEEE Trans. Pattern Anal. Mach.
+Intell., 38(1):60-73, January 2016. ISSN 0162-8828. doi: 10.1109/TPAMI.2015.2424894.
+URL 
+[8] Florian Bernard, Christian Theobalt, and Michael Moeller. Ds: Tighter lifting-free convex
+relaxations for quadratic matching problems. In 2018 IEEE/CVF Conference on Computer
+Vision and Pattern Recognition, pages 4310-4319, 2018. doi: 10.1109/CVPR.2018.00453.
+[9] Yujia Li, Chenjie Gu, Thomas Dullien, Oriol Vinyals, and Pushmeet Kohli. Graph Matching
+Networks for Learning the Similarity of Graph Structured Objects. In Proceedings of the 36th
+International Conference on Machine Learning, pages 3835-3845. PMLR, May 2019.
+[10] Yunsheng Bai, Hao Ding, Song Bian, Ting Chen, Yizhou Sun, and Wei Wang. Simgnn: A
+neural network approach to fast graph similarity computation. In Proceedings of the Twelfth
+ACM International Conference on Web Search and Data Mining, WSDM ’19, page 384-392,
+New York, NY, USA, 2019. Association for Computing Machinery. ISBN 9781450359405. doi:
+10.1145/3289600.3290967. URL 
+[11] Chengzhi Piao, Tingyang Xu, Xiangguo Sun, Yu Rong, Kangfei Zhao, and Hong Cheng.
+Computing Graph Edit Distance via Neural Graph Matching.
+Proceedings of the VLDB
+Endowment, 16(8):1817-1829, April 2023. ISSN 2150-8097. doi: 10.14778/3594512.3594514.
+[12] Eeshaan Jain, Indradyumna Roy, Saswat Meher, Soumen Chakrabarti, and Abir De. Graph
+Edit Distance with General Costs Using Neural Set Divergence. In The Thirty-eighth Annual
+Conference on Neural Information Processing Systems, November 2024.
+[13] Jianheng Tang, Xi Zhao, Lemin Kong, Xiaofang Zhou, and Jia Li. Fused Gromov-Wasserstein
+Alignment for Graph Edit Distance Computation and Beyond. Proc. VLDB Endow., 18(10):
+3641-3654, June 2025. ISSN 2150-8097. doi: 10.14778/3748191.3748221.
+[14] Keyulu Xu, Weihua Hu, Jure Leskovec, and Stefanie Jegelka. How powerful are graph neural
+networks?
+In International Conference on Learning Representations, 2019. URL https:
+//openreview.net/forum?id=ryGs6iA5Km.
+[15] Yair Davidson and Nadav Dym. On the Hölder Stability of Multiset and Graph Neural Networks.
+In The Thirteenth International Conference on Learning Representations, October 2024.
+[16] Indradyumna Roy, Saswat Meher, Eeshaan Jain, Soumen Chakrabarti, and Abir De. Posi-
+tion: Graph Matching Systems Deserve Better Benchmarks. In Forty-Second International
+Conference on Machine Learning Position Paper Track, June 2025.
+[17] Rishabh Ranjan, Siddharth Grover, Sourav Medya, Venkatesan Chakaravarthy, Yogish Sabhar-
+wal, and Sayan Ranu. GREED: A Neural Framework for Learning Graph Distance Functions.
+In Advances in Neural Information Processing Systems, October 2022.
+[18] Jameson Cahill, Joseph W. Iverson, Dustin G. Mixon, and Nathan Willey. Approximation
+theorems in bilipschitz invariant theory, March 2026.
+[19] Paolo Pellizzoni, Till Hendrik Schulz, and Karsten Borgwardt. Gelato: Graph Edit Distance via
+Autoregressive Neural Combinatorial Optimization. In The Fourteenth International Conference
+on Learning Representations, October 2025.
+[20] Yunsheng Bai, Hao Ding, Ken Gu, Yizhou Sun, and Wei Wang. Learning-Based Efficient Graph
+Similarity Computation via Multi-Scale Convolutional Set Matching. Proceedings of the AAAI
+Conference on Artificial Intelligence, 34(04):3219-3226, April 2020. ISSN 2374-3468. doi:
+10.1609/aaai.v34i04.5720.
+[21] Can Qin, Handong Zhao, Lichen Wang, Huan Wang, Yulun Zhang, and Yun Fu. Slow learning
+and fast inference: Efficient graph similarity computation via knowledge distillation. In M. Ran-
+zato, A. Beygelzimer, Y. Dauphin, P.S. Liang, and J. Wortman Vaughan, editors, Advances in
+Neural Information Processing Systems, volume 34, pages 14110-14121. Curran Associates,
+Inc., 2021. URL 
+75fc093c0ee742f6dddaa13fff98f104-Paper.pdf.
+[22] Wei Zhuo and Guang Tan. Efficient graph similarity computation with alignment regularization.
+In Proceedings of the 36th International Conference on Neural Information Processing Systems,
+NIPS ’22, Red Hook, NY, USA, 2022. Curran Associates Inc. ISBN 9781713871088.
+[23] Zhen Zhang, Jiajun Bu, Martin Ester, Zhao Li, Chengwei Yao, Zhi Yu, and Can Wang.
+H2mn: Graph similarity learning with hierarchical hypergraph matching networks. In Pro-
+ceedings of the 27th ACM SIGKDD Conference on Knowledge Discovery & Data Min-
+ing, KDD ’21, page 2274-2284, New York, NY, USA, 2021. Association for Comput-
+ing Machinery.
+ISBN 9781450383325.
+doi: 10.1145/3447548.3467328.
+URL https:
+//doi.org/10.1145/3447548.3467328.
+[24] Indradyumna Roy, Venkata Sai Baba Reddy Velugoti, Soumen Chakrabarti, and Abir De.
+Interpretable neural subgraph matching for graph retrieval. Proceedings of the AAAI Conference
+on Artificial Intelligence, 36(7):8115-8123, Jun. 2022. doi: 10.1609/aaai.v36i7.20784. URL
+
+[25] Francesco Leonardi, Markus Orsi, Jean-Louis Reymond, and Kaspar Riesen. GEDAN: Learning
+the edit costs for graph edit distance, 2026. URL 
+Y5icGPy7yc.
+[26] Jiyang Bai and Peixiang Zhao. Tagsim: type-aware graph similarity learning and computation.
+Proc. VLDB Endow., 15(2):335-347, October 2021. ISSN 2150-8097. doi: 10.14778/3489496.
+3489513. URL 
+[27] Samidha Verma, Arushi Goyal, Ananya Mathur, Ankit Anand, and Sayan Ranu. GRAIL:
+Graph edit distance and node alignment using LLM-generated code. In Forty-second Inter-
+national Conference on Machine Learning, 2025. URL 
+id=NzoZXju2bL.
+[28] Nadav Dym, Haggai Maron, and Yaron Lipman. Ds++: a flexible, scalable and provably tight
+relaxation for matching problems. ACM Trans. Graph., 36(6), November 2017. ISSN 0730-0301.
+doi: 10.1145/3130800.3130826. URL 
+[29] Ching-Yao Chuang and Stefanie Jegelka. Tree movers distance: Bridging graph metrics and
+stability of graph neural networks. In S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho,
+and A. Oh, editors, Advances in Neural Information Processing Systems, volume 35, pages
+2944-2957. Curran Associates, Inc., 2022.
+[30] Nadav Dym, Matthias Wellershoff, Efstratios Tsoukanis, Daniel Levy, and Radu Balan. Quan-
+titative Bounds for Sorting-Based Permutation-Invariant Embeddings. IEEE Transactions on
+Information Theory, pages 1-1, 2026. ISSN 1557-9654. doi: 10.1109/TIT.2026.3679460.
+[31] Aldo Moscatelli, Maxime Bérar, Pierre Héroux, Florian Yger, and Sébastien Adam. 3-WL
+GNNs for Metric Learning on Graphs. In ESANN 2025, Brugges, Belgium, April 2025. URL
+
+[32] Xavier Bresson and Thomas Laurent. Residual gated graph convnets. CoRR, abs/1711.07553,
+2017. URL 
+[33] Richard Socher, Danqi Chen, Christopher D Manning, and Andrew Ng. Reasoning with neu-
+ral tensor networks for knowledge base completion. In C.J. Burges, L. Bottou, M. Welling,
+Z. Ghahramani, and K. Weinberger, editors, Advances in Neural Information Processing Sys-
+tems, volume 26. Curran Associates, Inc., 2013. URL 
+paper_files/paper/2013/file/b337e84de8752b27eda3a12363109e80-Paper.pdf.
+[34] Hongteng Xu, Dixin Luo, Hongyuan Zha, and Lawrence Carin Duke. Gromov-Wasserstein
+Learning for Graph Matching and Node Embedding. In Proceedings of the 36th International
+Conference on Machine Learning, pages 6932-6941. PMLR, May 2019.
+A
+Broader Impact
+This work is primarily foundational. It studies how encoder geometry affects the quality of neural
+graph edit distance estimation and related graph matching surrogates, rather than proposing a directly
+deployed application system. The most immediate positive impact is methodological: a clearer
+geometric understanding of when neural graph matching pipelines should be expected to produce
+more faithful distances, rankings, and alignments. In application areas where graph matching is
+already used, such as molecular retrieval, program analysis, and structured search, improved metric
+faithfulness may translate into more reliable candidate ranking and more interpretable matching
+behavior.
+At the same time, stronger graph matching can have negative downstream uses. Better graph similarity
+estimation may make it easier to link or compare sensitive relational data, to match proprietary or
+copyrighted structured artifacts such as code, or to support surveillance-style analysis of networked
+data if such systems are used without appropriate governance. These risks are indirect in the present
+paper, since we do not introduce a sensitive new dataset or a high-risk released model, but they are
+worth acknowledging as graph matching systems become more accurate.
+There is also a resource trade-off. Geometry-aware encoders such as the FSW-based models [1] stud-
+ied here can incur additional computational cost relative to standard message-passing baselines. From
+a societal perspective, this means that improved faithfulness should be weighed against efficiency,
+accessibility, and environmental cost. One practical implication is that future work should aim not
+only for stronger guarantees, but also for more efficient bi-Lipschitz architectures and transparent
+reporting of compute-performance trade-offs.
+B
+Limitations
+Our claims are intentionally calibrated to the regime analyzed in Section 3. The theory is developed
+on finite 1-WL-separable graph collections and uses the doubly-stochastic surrogate geometry as an
+intermediate bridge to GED. As a result, the guarantees explain when improved encoder geometry
+should improve conditioning of neural GED estimators, but they do not imply exact GED recovery,
+universal constants, or uniform guarantees outside the considered graph family and benchmark
+setting.
+A second limitation concerns the scope of the target similarity notion. The present analysis is centered
+on the GED setting studied in the paper and on the surrogate geometries that naturally connect
+to current encoder constructions. Extending the framework to variable edit-cost settings appears
+plausible in principle, but requires a more careful comparison between the target edit geometry and
+the surrogate quantities used by the downstream estimator. Related objectives such as maximum
+common subgraph (MCS), subgraph edit distance, or other partial-matching notions would likewise
+require task-specific extensions of the theory.
+A third limitation is architectural. Our framework directly covers graph-similarity predictors and
+matching/alignment-based estimators whose key quantities can be expressed in terms of graph-level
+or node-level embeddings. This includes a broad range of current neural GED pipelines, but it does
+not yet cleanly capture autoregressive neural-combinatorial approaches such as Gelato [19], where
+predictions are produced through sequential decision-making rather than a single static surrogate. A
+useful future direction is to connect encoder geometry to per-step guarantees for such decoders or to
+partial-alignment objectives arising along the decoding trajectory.
+The experiments have complementary limitations. To maintain comparability across a broad baseline
+suite, we use node attributes when available but do not use edge labels, since several compared
+baselines do not support them consistently. In addition, we intentionally limit hyperparameter
+retuning after encoder replacement in order to isolate the effect of encoder geometry. This strengthens
+the causal interpretation of the comparison, but it may understate the best performance achievable by
+some geometry-aware variants after full method-specific tuning.
+There are also efficiency limitations. FSW-GNN [1] provides an explicit and analyzable realization of
+the bi-Lipschitz perspective, but its aggregation mechanism is computationally more expensive than
+standard sum-based message passing. Accordingly, the present paper should be read as establishing
+a geometry-performance trade-off, not as claiming that the current FSW instantiation is always the
+most efficient choice. Future work should therefore expand the design space of bi-Lipschitz graph
+encoders, improve their computational efficiency, and determine which geometric guarantees are
+most important empirically.
+Finally, the current theory remains tied to the 1-WL expressive regime. This already covers many of
+the benchmarks and encoder families used in contemporary neural GED work, but it is not the end of
+the story. Extending the analysis to higher-WL or otherwise more expressive graph representation
+regimes is an important open direction for understanding when stronger geometric guarantees can
+continue to improve neural graph matching beyond the current setting [31].
+C
+Related Neural GED Methods
+Neural GED methods can be broadly grouped into graph-level prediction pipelines, matching-based
+estimators, and a complementary line of work focused on edit-cost learning. Across these families,
+prior work has introduced strong architectural innovations, but most existing theory remains tied to
+specific components - such as prediction heads, matching routines, or surrogate objectives - rather
+than the geometry of the encoder itself, as we discuss in more detail below.
+C.1
+Graph-level prediction pipelines
+Possibly the largest class of neural graph matching methods treat GED estimation primarily as a
+graph-pair prediction problem. Early methods such as SimGNN [10] showed that accurate GED
+approximation is possible without explicit combinatorial search by combining graph-level embeddings
+with histogram features and a neural tensor network [33]. This design was influential because it
+showed that one can learn accurate GED surrogates without explicit combinatorial search, but its
+justification is largely architectural and empirical - it did not provide a theory relating the learned
+graph representation to a graph metric or to GED through explicit distortion bounds. Subsequent
+models such as GraphSim [20], EGSC [21], ERIC [22], TaGSim [26], and H2MN [23] introduced
+stronger fusion modules, CNN-based similarity learning, alignment-aware regularization, edit-type
+decomposition, and higher-order interaction modeling. These methods often improve empirical
+performance through better architectural design, but their analyses are also largely empirical or
+specific to individual modules.
+Graph Matching Networks (GMN) [9] moved further toward pair-dependent reasoning by intro-
+ducing cross-graph attention during message passing. Architecturally, this is more expressive than
+independent graph embeddings because the representation of each graph depends on the paired
+graph itself. However, the corresponding theory is again tied to the matching architecture rather
+than to a quantitative notion of encoder faithfulness to edit geometry. In particular, GMN gives a
+mechanism for improved pairwise comparison, but not a graph-level or node-level distortion theory
+explaining when Euclidean or matching costs computed from learned embeddings should serve as
+well-conditioned GED surrogates.
+GREED [17] is the closest prior theoretical work among graph-level methods. It uses a pair-
+independent Siamese encoder with a constrained prediction head that ensures metric-like GED
+outputs and triangle inequality guarantees for SED. This is a meaningful output-space guarantee, but
+it operates at the prediction layer and does not analyze whether the encoder itself preserves graph
+geometry. Our perspective is complementary: we study how encoder geometry influences the quality
+of graph-level GED surrogates before any prediction head is applied.
+GraSP [6] occupies an important intermediate point in this family. It avoids expensive cross-graph
+interactions while using positional encodings, residual graph backbones, and multi-scale pooling to
+produce graph embeddings for GED and MCS prediction. Its main theoretical contribution is an ex-
+pressiveness guarantee showing that the architecture can surpass the 1-WL test. While important, this
+addresses graph distinguishability rather than whether embedding distances quantitatively preserve
+edit-relevant geometry.
+C.2
+Matching and alignment based estimators
+A second class of methods estimates GED through explicit alignment mechanisms that more closely
+resemble the edit process itself. Methods such as ISONET [24] formulate graph comparison through
+differentiable matching procedures, often using assignment relaxations or Sinkhorn-style alignment
+mechanisms to produce interpretable correspondences. Recent fused optimal transport formulations
+such as FGWAlign [13] similarly combine structural and feature discrepancies in a unified transport
+objective.
+GEDGNN [11] is representative of this family. It learns node embeddings for the graph pair and
+then builds two cross-matrix modules: one predicts a matching matrix and the other predicts a
+cost matrix. The final GED estimate is obtained by weighting costs using the learned matching
+scores, followed by post-processing with k-best matching to recover an edit path. This is a strong
+method-design contribution and improves interpretability relative to pure regression. Its theoretical
+analysis is correspondingly tied to the matching-matrix extraction procedure and the post-processing
+stage. However, what it does not provide is an account of how the geometry of the node encoder
+propagates into the relaxed matching costs and hence into the optimized alignment objective. Our
+matching-based theory is designed to fill precisely this gap.
+GraphEDX [12] takes a more optimization-centric route. It pads graphs to equal size, uses contextual
+node embeddings, learns a soft node permutation through a differentiable Gumbel-Sinkhorn alignment
+generator, derives node-pair alignments, and then replaces the original quadratic assignment objective
+by differentiable neural set-divergence surrogates. This is one of the most principled formulations
+in recent neural GED work, particularly for general-cost settings. Still, its theory is centered on the
+surrogate objective and the alignment construction, not on the quantitative geometry of the encoder. In
+the language of our theory, GraphEDX specifies a sophisticated matching objective; our contribution
+is to analyze how replacing the encoder by one with stronger geometric guarantees can improve the
+faithfulness of objectives of exactly this kind.
+Recent optimal transport and graph-matching formulations, including fused Gromov-Wasserstein
+approaches such as FGWAlign [13] or GWD [34], also move the field in a more principled direction.
+They incorporate structural and feature discrepancies into a unified alignment objective and often
+operate in the equalized-node setting used in practice for GED approximation. However, even
+in these formulations, the representation map supplying node or graph features is typically not
+analyzed through explicit graph-level or node-level distortion guarantees. Our theory is intended to
+be compatible with such methods rather than to replace them: it provides a geometric lens through
+which one can reason about why some encoders may make these relaxed alignment objectives better
+behaved.
+C.3
+Learning edit costs and alternative paradigms
+Another active direction modifies the edit-cost model itself. TaGSim [26] and related works empha-
+size fine-grained or type-aware cost design, often reducing the burden of exact GED supervision
+by generating synthetic training pairs or decomposing GED into edit-type-aware targets. These
+approaches can substantially improve practical accuracy, especially when labels and edit types matter,
+but the guiding principle is typically cost engineering rather than a metric theory of representation
+quality.
+More recent work such as GEDAN [25] continues this direction by learning edit costs more explicitly.
+This is orthogonal to our contribution. Learning better costs may improve a fixed neural GED pipeline,
+while our question is different: given any downstream cost model or alignment mechanism, when
+does the encoder preserve the relevant graph or node geometry well enough that the learned quantities
+remain faithful surrogates for GED?
+At the opposite end of the design spectrum, GRAIL [27] departs from neural embedding pipelines
+altogether and uses large language models to synthesize programs for GED approximation and
+node alignment. This offers a compelling alternative centered on interpretability and cross-domain
+generalization. Because it is not an encoder-based neural surrogate in the usual sense, it lies outside
+the scope of the present theory. Its inclusion is nevertheless useful for perspective: not all progress in
+GED approximation comes from neural representation learning, which makes it even more important
+to articulate clearly what a representation-theoretic contribution such as ours does and does not claim.
+C.4
+Scope of our contribution
+Taken together, prior work provides several forms of partial theory, among which we highlight: the
+expressiveness via position encodings in GraSP [6], output-space metric guarantees in GREED [17],
+matching-specific analyses in GEDGNN [11], and optimization-based surrogate guarantees in
+GraphEDX [12] and transport-based methods [13, 34]. These are all meaningful advances, but
+they operate at different stages of the pipeline. Our contribution addresses a different, more struc-
+tural question: how does encoder geometry affect neural GED estimation across these architectural
+families? We provide an architecture-class-level theory for both graph-level predictors and matching-
+based estimators by explicitly characterizing how graph-level and node-level distortion influence
+the quality of GED surrogates. This makes our framework modular and complementary to existing
+architectures rather than tied to any single method. By analyzing the geometry of the encoder itself,
+we provide insights that can inform the design of future architectures across both families.
+Moreover, recent surveys and evaluation papers have argued that the field needs clearer conceptual
+organization and more reliable empirical assessment [4, 3, 16]. That broader perspective further
+motivates a theory that is modular, architecture-aware, and explicit about its assumptions. In that
+sense, our work aims to contribute not only a geometric explanation for empirical gains, but also a
+cleaner theoretical vocabulary for discussing what different neural GED methods actually learn and
+where their inductive biases enter.
+D
+FSW-GNN, the DS pseudometric, and implications for neural GED
+D.1
+DS pseudometric, WL equivalence, and soft alignment
+Let G = (A, X) and H = (B, Y ) be attributed graphs with the same number n of nodes, where
+A, B ∈Rn×n are adjacency matrices and X = (x1, . . . , xn)⊤, Y = (y1, . . . , yn)⊤are node-feature
+matrices with xi, yj ∈Ω⊂Rd.
+The graph edit distance (GED) between G and H, denoted dGED(G, H), is the minimum total cost
+of an edit path that transforms G into H using admissible node and edge insertions, deletions, and
+substitutions. In this paper, we work with the standard uniform-cost setting, so dGED(G, H) = 0 if
+and only if G and H are isomorphic, and larger values correspond to greater structural dissimilarity.
+The quantity dGED is the discrete target metric of interest, whereas the DS pseudometric introduced
+below serves as a continuous soft-alignment surrogate that is more amenable to geometric analysis.
+Let Dn denote the Birkhoff polytope of doubly-stochastic matrices. In the equal-size setting, the
+attributed DS pseudometric used in the FSW-GNN analysis can be written as
+dDS(G, H) := min
+S∈Dn
+
+∥AS −SB∥1 + ⟨S, CX,Y ⟩
+
+,
+(CX,Y )ij := ∥xi −yj∥1.
+The first term measures failure of equivariance of the adjacency operators under a soft correspondence
+S, while the second term measures feature mismatch under the same correspondence. The metric is
+therefore defined on the same alignment space that underlies doubly-stochastic relaxations of graph
+matching.
+For featureless equal-size graphs, the structural part of dDS reduces to minimizing the residual of the
+relaxed commutation relation
+AS = SB,
+S ∈Dn.
+This is the doubly-stochastic relaxation of exact permutation alignment, obtained by replacing
+permutation matrices by their convex hull. In particular, dDS belongs to the same relaxation family as
+fractional graph matching and fractional isomorphism, which is why it is closely connected to 1-WL
+equivalence.
+Lemma 2 (Zero set of dDS [1]). For graphs in the FSW-GNN setting, dDS(G, H) = 0 if and only if
+G and H are 1-WL equivalent.
+Concretely, the objective defining dDS is nonnegative, so dDS(G, H) = 0 holds precisely when
+there exists a feasible doubly-stochastic alignment with zero structural and feature mismatch. The
+FSW-GNN analysis shows that this vanishing condition coincides with 1-WL equivalence on the
+relevant graph class.
+The previous lemma is the key structural reason we use dDS as the intermediary geometry in this
+work. The metric is weaker than graph isomorphism, as any WL-type metric must be, but it is already
+strong enough to separate graphs throughout the 1-WL-separable regime in which the present analysis
+is carried out.
+A second useful observation is that dDS is a genuine convex relaxation of a permutation-restricted
+alignment cost.
+Proposition 4 (Permutation relaxation []). Let Πn denote the set of n × n permutation matrices, and
+define
+dΠ(G, H) := min
+P ∈Πn
+
+∥AP −PB∥1 + ⟨P, CX,Y ⟩
+
+.
+Then
+dDS(G, H) ≤dΠ(G, H)
+for all equal-size attributed graphs G, H.
+Proposition 4 is trivially true, because every permutation matrix is doubly-stochastic, Πn ⊆Dn, and
+the claim follows immediately by minimizing the same objective over the larger feasible set Dn.
+This proposition isolates the role of dDS: it is not a discrete edit metric, but it is the soft-alignment
+relaxation of a permutation-based structural discrepancy. This is precisely the level at which many
+neural graph matching and neural GED methods operate before producing a final score or projecting
+to a hard alignment.
+D.2
+Mechanism behind the FSW-DS theorem
+The graph-level FSW-GNN theorem uses a stronger geometric mechanism. The first ingredient is the
+FSW multiset embedding, which provides a permutation-invariant representation with quantitative
+metric control at the multiset level [1]. The second ingredient is that, for fixed graph size and bounded
+feature domain, the message-passing, update, and readout maps of FSW-GNN are piecewise linear on
+the cells determined by the relevant sorting patterns [1]. The third ingredient is that the DS objective
+is itself piecewise linear in the same bounded regime when formulated with the ℓ1-norm [1].
+These ingredients imply that both
+(G, H) 7→∥ΦFSW(G) −ΦFSW(H)∥2
+and
+(G, H) 7→dDS(G, H)
+are nonnegative piecewise-linear functions on a compact domain, and Lemma 2 identifies their
+common zero set through the WL-equivalence characterization in Sverdlov et al. [1]. The bi-Lipschitz
+bound then follows by comparing two such functions on each cell and taking global extrema over
+the finitely many cells. In other words, the proof is fundamentally a quantitative comparison of two
+compatible surrogate geometries. A WL-equivalent encoder may separate the same graph classes as
+another encoder while still distorting distances far more severely. The FSW-GNN theorem rules out
+that failure mode with respect to dDS, whereas the available theory for standard sum-based MPNNs
+is qualitatively weaker and provides only lower-Hölder guarantees in expectation [15]. For neural
+GED, where the downstream model consumes distances, costs, or alignments rather than just class
+labels, that distinction proves substantial.
+The recent sorting-based follow-up work [30] further supports this viewpoint by studying quantitative
+distortion bounds for sorting-based permutation-invariant embeddings, which is exactly the multiset-
+embedding mechanism underlying the FSW line. This makes the FSW perspective especially suitable
+when one wants metric control rather than expressivity alone.
+D.3
+Additional remarks on the DS-GED connection
+After node-count equalization, both neural GED objectives and dDS are formulated over cross-graph
+correspondences. The distinction is that GED remains a discrete optimization over edit paths or node
+permutations, whereas dDS passes to a fractional correspondence space. This is why dDS should be
+viewed as a continuous surrogate geometry for edit distance rather than as an alternative definition
+of GED itself. The equalized-node regime is especially natural here. Practical neural GED systems
+commonly pad or augment graph pairs so that both graphs have the same number of nodes before
+constructing matching matrices, Sinkhorn plans, or transport objectives. In that regime, the feasible
+set Dn used by dDS is not an artificial choice imposed only for analysis, but rather the same soft
+alignment class that already appears, explicitly or implicitly, in assignment-based, Sinkhorn-based,
+and transport-based neural GED architectures [16, 4, 11-13].
+The DS bridge is also technically preferable to the Tree Mover’s Distance [29, 1] bridge in the present
+setting. The TMD-side bi-Lipschitz theorem for FSW-GNN requires the feature domain to avoid the
+origin, while equalization by dummy nodes often introduces neutral or zero features. By contrast, the
+DS formulation is compatible with exactly that padded-node regime, so it matches the implementation
+conventions of current neural GED pipelines more closely.
+A second reason is that the comparison between dDS and dGED is naturally graph-dataset-dependent.
+On a fixed dataset or graph family, the constants relating the two metrics absorb graph size range,
+feature alphabet, or feature geometry, and the chosen equalization rule. They are therefore not
+expected to be universal. This is also the sense in which our theory isolates the encoder-side
+contribution. The dataset-dependent constants governing the comparison between dDS and dGED are
+fixed by the graph family and equalization scheme, not by the encoder. What FSW-style encoders
+control instead is the additional distortion incurred when this surrogate geometry is mapped into
+Euclidean graph or node representations, through the bi-Lipschitz constants in our graph-level and
+node-level bounds.
+This also clarifies why improvements from FSW-style encoders should be expected to be systematic
+but not perfect. Even when ΦFSW is bi-Lipschitz with respect to dDS, the final GED estimate still
+depends on the residual gap between dDS and dGED, on the approximation quality of the downstream
+prediction head or alignment module, and on optimization error in learning. Thus the expected gain
+is better conditioning of the surrogate geometry used by the method, not exact recovery of GED in all
+cases.
+Taken together, these observations place dDS in the right intermediate position for the present analysis.
+It is close enough to the alignment objectives used by neural GED architectures to be operationally
+relevant, yet regular enough to admit a graph-level bi-Lipschitz embedding theorem for FSW-GNN.
+This combination is what makes the FSW-DS connection useful for analyzing geometry-informed
+improvements in neural GED.
+E
+Proofs for Section 3
+For convenience, we restate the results with appendix numbering.
+E.1
+Proofs for Graph Similarity Predictors
+Proposition E.1 (GED-DS comparability). Define
+aG := min
+G,H∈G
+G̸=H
+dGED(G, H)
+dDS(G, H) ,
+bG := max
+G,H∈G
+G̸=H
+dGED(G, H)
+dDS(G, H) .
+Then
+0 < aG ≤bG < ∞,
+and, for all G, H ∈G,
+aG dDS(G, H) ≤dGED(G, H) ≤bG dDS(G, H).
+Proof. Because G is finite modulo graph isomorphism, the set of distinct pairs
+{(G, H) ∈G × G : G ̸= H}
+is finite. Since G ⊆GWL
+≤N is pairwise 1-WL-separable and dDS is 1-WL-equivalent, we have
+dDS(G, H) > 0
+∀G ̸= H ∈G.
+Likewise, because we work modulo graph isomorphism and use uniform nonnegative edit costs, we
+also have
+dGED(G, H) > 0
+∀G ̸= H ∈G.
+Hence the ratio
+dGED(G, H)
+dDS(G, H)
+is positive and finite on a finite set, so its minimum and maximum are well-defined and satisfy
+0 < aG ≤bG < ∞.
+The displayed inequality then follows immediately for all distinct pairs, while for G = H both sides
+equal zero.
+Proposition E.2 (Graph-level bounds). For every G, H ∈G,
+aG
+CG
+∥Φ(G) −Φ(H)∥2 ≤dGED(G, H) ≤bG
+cG
+∥Φ(G) −Φ(H)∥2.
+Proof. By the upper inequality in Assumption 1,
+∥Φ(G) −Φ(H)∥2 ≤CG dDS(G, H),
+hence
+dDS(G, H) ≥
+CG
+∥Φ(G) −Φ(H)∥2.
+Combining this with the lower inequality in Proposition E.1 yields
+dGED(G, H) ≥aG dDS(G, H) ≥aG
+CG
+∥Φ(G) −Φ(H)∥2.
+Similarly, by the lower inequality in Assumption 1,
+∥Φ(G) −Φ(H)∥2 ≥cG dDS(G, H),
+so
+dDS(G, H) ≤1
+cG
+∥Φ(G) −Φ(H)∥2.
+Combining this with the upper inequality in Proposition E.1 gives
+dGED(G, H) ≤bG dDS(G, H) ≤bG
+cG
+∥Φ(G) −Φ(H)∥2.
+This proves the claim.
+Theorem E.1 (Best scalar calibration for norm-based predictors). Let
+α := aG
+CG
+,
+β := bG
+cG
+,
+γ⋆:= α + β
+.
+Then, for every G, H ∈G,
+|γ⋆∥Φ(G) −Φ(H)∥2 −dGED(G, H)| ≤β −α
+∥Φ(G) −Φ(H)∥2.
+Proof. By Proposition E.2,
+dGED(G, H) ∈[α∥Φ(G) −Φ(H)∥2, β∥Φ(G) −Φ(H)∥2] .
+Let x := ∥Φ(G) −Φ(H)∥2. Then
+dGED(G, H) ∈[αx, βx].
+The midpoint of this interval is γ⋆x, and the radius is
+β −α
+x.
+Therefore
+|γ⋆x −dGED(G, H)| ≤β −α
+x.
+Substituting back x = ∥Φ(G) −Φ(H)∥2 gives the result.
+Corollary E.1 (Ranking preservation for monotone norm-head predictors). Let bdψ(G, H) :=
+ψ(∥Φ(G) −Φ(H)∥2), where ψ : R≥0 →R is strictly increasing. Define
+κG := β
+α = bGCG
+aGcG
+.
+Then for any two graph pairs (G1, H1) and (G2, H2) (and similarly with < and κ−1
+G ),
+dGED(G1, H1) > κG dGED(G2, H2)
+=⇒
+bdψ(G1, H1) > bdψ(G2, H2).
+Proof. Let
+xi := ∥Φ(Gi) −Φ(Hi)∥2,
+di := dGED(Gi, Hi),
+i ∈{1, 2}.
+By Proposition E.2,
+αxi ≤di ≤βxi,
+i ∈{1, 2}.
+Hence
+x1 ≥d1
+β ,
+x2 ≤d2
+α .
+If d1 > β
+αd2, then
+x1 ≥d1
+β > d2
+α ≥x2.
+Since ψ is strictly increasing, it follows that
+bdψ(G1, H1) = ψ(x1) > ψ(x2) = bdψ(G2, H2).
+The second implication can be obtained by swapping the roles of the two pairs.
+Proposition E.3 (Stability of Lipschitz interaction heads). Let h : Rm × Rm →R be Lh-Lipschitz
+with respect to ∥(u, v)∥⊕:= ∥u∥2 + ∥v∥2. Define sh(G, H) := h(Φ(G), Φ(H)). Then, for every
+G, H, G′, H′ ∈G,
+|sh(G, H) −sh(G′, H′)| ≤LhCG
+ dDS(G, G′) + dDS(H, H′)
+
+.
+Proof. By the Lipschitz property of h,
+|sh(G, H) −sh(G′, H′)| ≤Lh
+
+∥Φ(G) −Φ(G′)∥2 + ∥Φ(H) −Φ(H′)∥2
+
+.
+Applying the upper inequality in Assumption 1 to each term gives
+∥Φ(G) −Φ(G′)∥2 ≤CG dDS(G, G′),
+∥Φ(H) −Φ(H′)∥2 ≤CG dDS(H, H′).
+Substituting these inequalities yields
+|sh(G, H) −sh(G′, H′)| ≤LhCG
+ dDS(G, G′) + dDS(H, H′)
+
+,
+as claimed.
+E.2
+Proofs for Matching-based Estimators
+Recall that, we have fixed an equalization rule that maps each pair (G, H) ∈G × G to an equalized
+pair ( ¯G, ¯H) with
+n ¯
+G, ¯
+H := |V ( ¯G)| = |V ( ¯H)|.
+The corresponding feasible set of alignment plans is
+D ¯
+G, ¯
+H :=
+n
+P ∈R
+n ¯
+G, ¯
+H×n ¯
+G, ¯
+H
+≥0
+: P1 = 1, P ⊤1 = 1
+o
+.
+For each such pair, define
+Cδ
+¯
+G, ¯
+H(i, j) := δ ¯
+G, ¯
+H(i, j),
+Cϕ
+¯
+G, ¯
+H(i, j) := ∥ϕ ¯
+G(i) −ϕ ¯
+H(j)∥2,
+and for P ∈D ¯
+G, ¯
+H,
+L
+¯
+G, ¯
+H
+δ
+(P) := ⟨P, Cδ
+¯
+G, ¯
+H⟩=
+X
+i∈V ( ¯
+G)
+X
+j∈V ( ¯
+H)
+Pij δ ¯
+G, ¯
+H(i, j),
+L
+¯
+G, ¯
+H
+ϕ
+(P) := ⟨P, Cϕ
+¯
+G, ¯
+H⟩=
+X
+i∈V ( ¯
+G)
+X
+j∈V ( ¯
+H)
+Pij ∥ϕ ¯
+G(i) −ϕ ¯
+H(j)∥2.
+Lemma E.1 (Plan-wise distortion of alignment costs). Under Assumption 2, for every pair (G, H) ∈
+G × G with equalized versions ( ¯G, ¯H), and every P ∈D ¯
+G, ¯
+H,
+cV L
+¯
+G, ¯
+H
+δ
+(P) ≤L
+¯
+G, ¯
+H
+ϕ
+(P) ≤CV L
+¯
+G, ¯
+H
+δ
+(P).
+Proof. Fix a pair (G, H) ∈G × G, let ( ¯G, ¯H) be its equalized versions under the fixed equalization
+rule, and fix P ∈D ¯
+G, ¯
+H.
+By Assumption 2, for every i ∈V ( ¯G) and j ∈V ( ¯H),
+cV δ ¯
+G, ¯
+H(i, j) ≤∥ϕ ¯
+G(i) −ϕ ¯
+H(j)∥2 ≤CV δ ¯
+G, ¯
+H(i, j).
+Since Pij ≥0, multiplication by Pij preserves the inequalities:
+cV Pij δ ¯
+G, ¯
+H(i, j) ≤Pij ∥ϕ ¯
+G(i) −ϕ ¯
+H(j)∥2 ≤CV Pij δ ¯
+G, ¯
+H(i, j).
+Summing over all i ∈V ( ¯G) and j ∈V ( ¯H) yields
+cV
+X
+i∈V ( ¯
+G)
+X
+j∈V ( ¯
+H)
+Pij δ ¯
+G, ¯
+H(i, j) ≤
+X
+i∈V ( ¯
+G)
+X
+j∈V ( ¯
+H)
+Pij ∥ϕ ¯
+G(i)−ϕ ¯
+H(j)∥2 ≤CV
+X
+i∈V ( ¯
+G)
+X
+j∈V ( ¯
+H)
+Pij δ ¯
+G, ¯
+H(i, j).
+By the definitions of L
+¯
+G, ¯
+H
+δ
+(P) and L
+¯
+G, ¯
+H
+ϕ
+(P), this is exactly
+cV L
+¯
+G, ¯
+H
+δ
+(P) ≤L
+¯
+G, ¯
+H
+ϕ
+(P) ≤CV L
+¯
+G, ¯
+H
+δ
+(P).
+Theorem E.2 (Distortion bound for alignment objectives). For each pair (G, H) ∈G × G, let
+R ¯
+G, ¯
+H : D ¯
+G, ¯
+H →R be any structural term independent of the encoder, and let λ ≥0. Define
+J
+¯
+G, ¯
+H
+δ
+(P) := R ¯
+G, ¯
+H(P) + λL
+¯
+G, ¯
+H
+δ
+(P),
+J
+¯
+G, ¯
+H
+ϕ
+(P) := R ¯
+G, ¯
+H(P) + λL
+¯
+G, ¯
+H
+ϕ
+(P).
+Then, for every pair (G, H) ∈G × G,
+min
+P ∈D ¯
+G, ¯
+H
+
+R ¯
+G, ¯
+H(P)+λcV L
+¯
+G, ¯
+H
+δ
+(P)
+
+≤
+min
+P ∈D ¯
+G, ¯
+H
+J
+¯
+G, ¯
+H
+ϕ
+(P) ≤
+min
+P ∈D ¯
+G, ¯
+H
+
+R ¯
+G, ¯
+H(P)+λCV L
+¯
+G, ¯
+H
+δ
+(P)
+
+.
+Proof. Fix a pair (G, H) ∈G × G, and let ( ¯G, ¯H) be its equalized versions. By Lemma E.1, for
+every P ∈D ¯
+G, ¯
+H,
+cV L
+¯
+G, ¯
+H
+δ
+(P) ≤L
+¯
+G, ¯
+H
+ϕ
+(P) ≤CV L
+¯
+G, ¯
+H
+δ
+(P).
+Since λ ≥0, multiplication by λ preserves the inequalities:
+λcV L
+¯
+G, ¯
+H
+δ
+(P) ≤λL
+¯
+G, ¯
+H
+ϕ
+(P) ≤λCV L
+¯
+G, ¯
+H
+δ
+(P).
+Adding the same quantity R ¯
+G, ¯
+H(P) to all three terms gives
+R ¯
+G, ¯
+H(P) + λcV L
+¯
+G, ¯
+H
+δ
+(P) ≤R ¯
+G, ¯
+H(P) + λL
+¯
+G, ¯
+H
+ϕ
+(P) ≤R ¯
+G, ¯
+H(P) + λCV L
+¯
+G, ¯
+H
+δ
+(P).
+That is,
+R ¯
+G, ¯
+H(P) + λcV L
+¯
+G, ¯
+H
+δ
+(P) ≤J
+¯
+G, ¯
+H
+ϕ
+(P) ≤R ¯
+G, ¯
+H(P) + λCV L
+¯
+G, ¯
+H
+δ
+(P).
+Taking the minimum over P ∈D ¯
+G, ¯
+H in all three expressions preserves the inequalities and yields
+the claim.
+Corollary E.2 (Comparability transfer for alignment surrogates). Assume, in addition, that, for the
+fixed equalization rule and reference discrepancy above, there exist constants 0 < η1,G ≤η2,G < ∞,
+such that, for every pair (G, H) ∈G × G,
+η1,G dGED(G, H) ≤
+min
+P ∈D ¯
+G, ¯
+H
+J
+¯
+G, ¯
+H
+δ
+(P) ≤η2,G dGED(G, H).
+Moreover, assume that R ¯
+G, ¯
+H(P) ≥0 for all (G, H) ∈G × G and all P ∈D ¯
+G, ¯
+H. Let c :=
+min{1, cV },
+C := max{1, CV }. Then, for every pair (G, H) ∈G × G,
+c η1,G dGED(G, H) ≤
+min
+P ∈D ¯
+G, ¯
+H
+J
+¯
+G, ¯
+H
+ϕ
+(P) ≤C η2,G dGED(G, H).
+Proof. Fix a pair (G, H) ∈G × G, and write
+Mδ :=
+min
+P ∈D ¯
+G, ¯
+H
+J
+¯
+G, ¯
+H
+δ
+(P),
+Mϕ :=
+min
+P ∈D ¯
+G, ¯
+H
+J
+¯
+G, ¯
+H
+ϕ
+(P).
+We first prove the lower bound. Since
+c = min{1, cV },
+we have c ≤1 and c ≤cV . Therefore, for every P ∈D ¯
+G, ¯
+H,
+R ¯
+G, ¯
+H(P) + λcV L
+¯
+G, ¯
+H
+δ
+(P) ≥c R ¯
+G, ¯
+H(P) + c λL
+¯
+G, ¯
+H
+δ
+(P) = c J
+¯
+G, ¯
+H
+δ
+(P),
+where we used R ¯
+G, ¯
+H(P) ≥0 and L
+¯
+G, ¯
+H
+δ
+(P) ≥0. Taking minima over P gives
+min
+P ∈D ¯
+G, ¯
+H
+ R ¯
+G, ¯
+H(P) + λcV L
+¯
+G, ¯
+H
+δ
+(P)
+
+≥c Mδ.
+By Theorem E.2,
+Mϕ ≥
+min
+P ∈D ¯
+G, ¯
+H
+ R ¯
+G, ¯
+H(P) + λcV L
+¯
+G, ¯
+H
+δ
+(P)
+
+,
+hence
+Mϕ ≥c Mδ.
+Using the assumed lower comparability of J
+¯
+G, ¯
+H
+δ
+,
+Mδ ≥η1,G dGED(G, H),
+we conclude that
+Mϕ ≥c η1,G dGED(G, H).
+For the upper bound, let
+C = max{1, CV }.
+Then 1 ≤C and CV ≤C. Hence, for every P ∈D ¯
+G, ¯
+H,
+R ¯
+G, ¯
+H(P) + λCV L
+¯
+G, ¯
+H
+δ
+(P) ≤C R ¯
+G, ¯
+H(P) + C λL
+¯
+G, ¯
+H
+δ
+(P) = C J
+¯
+G, ¯
+H
+δ
+(P),
+again using nonnegativity of R ¯
+G, ¯
+H(P) and L
+¯
+G, ¯
+H
+δ
+(P). Taking minima over P yields
+min
+P ∈D ¯
+G, ¯
+H
+ R ¯
+G, ¯
+H(P) + λCV L
+¯
+G, ¯
+H
+δ
+(P)
+
+≤C Mδ.
+By Theorem E.2,
+Mϕ ≤
+min
+P ∈D ¯
+G, ¯
+H
+ R ¯
+G, ¯
+H(P) + λCV L
+¯
+G, ¯
+H
+δ
+(P)
+
+,
+so
+Mϕ ≤C Mδ.
+Using the assumed upper comparability of J
+¯
+G, ¯
+H
+δ
+,
+Mδ ≤η2,G dGED(G, H),
+we obtain
+Mϕ ≤C η2,G dGED(G, H).
+Combining the two bounds proves the claim.
+F
+Connecting to Existing Neural GED Architectures
+In this section, we instantiate the general theory of Section 3 for some representative neural GED
+architectures - chosen for their performance and distinct architectural choices - and show precisely
+how the abstract graph-level and alignment-level results apply to these architectures.
+F.1
+Graph Similarity Predictors
+We first consider neural GED estimators that embed each graph independently into a graph-level
+vector and then predict GED from the resulting pair of embeddings. This includes pair-independent
+Siamese architectures, such as GREED [17], and graph-level prediction pipelines, such as GraSP [6].
+In these models, the relevant component is the graph-level encoder Φ, together with either a norm-
+based distance head or a Lipschitz interaction head.
+F.1.1
+GREED [17]
+GREED [17] uses a Siamese GNN with shared parameters to compute pair-independent graph
+embeddings, followed by a norm-based prediction function for GED; in particular, for GED, GREED
+takes
+Fg(ZG1, ZG2) = ∥ZG1 −ZG2∥p,
+and the authors pick the L2 norm in experiments. Thus, in our notation (Section 3), GREED is exactly
+a graph similarity predictor with graph encoder
+ΦGR(G) := ZG
+and prediction head
+bdGR(G, H) := ∥ΦGR(G) −ΦGR(H)∥2.
+Consequently, Assumption 1 implies that Proposition 2, Theorem 1, and Corollary 1 apply directly to
+GREED.
+Proposition F.1 (GREED as a direct instance of our graph-level theory). Assume that the GREED
+graph encoder ΦGR satisfies Assumption 1 on G, i.e.,
+cG dDS(G, H) ≤∥ΦGR(G) −ΦGR(H)∥2 ≤CG dDS(G, H)
+∀G, H ∈G.
+Then, for every G, H ∈G,
+aG
+CG
+∥ΦGR(G) −ΦGR(H)∥2 ≤dGED(G, H) ≤bG
+cG
+∥ΦGR(G) −ΦGR(H)∥2.
+Moreover, with
+αG := aG
+CG
+,
+βG := bG
+cG
+,
+γ⋆:= αG + βG
+,
+the calibrated predictor
+edGR(G, H) := γ⋆∥ΦGR(G) −ΦGR(H)∥2
+satisfies
+edGR(G, H) −dGED(G, H)
+ ≤βG −αG
+∥ΦGR(G) −ΦGR(H)∥2.
+Proof. GREED uses the Euclidean norm of the difference of graph embeddings as its GED predictor.
+Therefore, it is exactly the predictor bdψ(G, H) = ∥Φ(G) −Φ(H)∥2 appearing in Theorem 2 and
+Theorem 1, with Φ = ΦGR. Substituting ΦGR into those results yields the stated inequalities
+immediately.
+The main point of Proposition F.1 is that our theory matches the architectural inductive bias of
+GREED exactly: a pair-independent graph encoder followed by a norm head. Hence, if one replaces
+GREED’s encoder by a geometry-informed encoder with better graph-level distortion constants
+(cG, CG), then the surrogate and calibration constants improve accordingly. This gives a precise
+mechanism by which geometry-informed encoders can improve GREED-style GED prediction.
+F.1.2
+GraSP [6]
+GraSP [6] computes a graph embedding zG for each graph, and then predicts GED through a convex
+combination of a Euclidean distance term and an NTN interaction term. Writing in the notation of
+Section 3,
+ΦGS(G) := zG,
+and define
+demb(G, H) := ∥ΦGS(G) −ΦGS(H)∥2,
+sNTN(G, H) := MLP
+
+ReLU
+
+ΦGS(G)⊤W [1:t]
+I
+ΦGS(H) + WC CONCAT(ΦGS(G), ΦGS(H)) + b
+
+,
+so that, the GraSP predictor can be written as
+bdGS(G, H) = β demb(G, H) + (1 −β) sNTN(G, H),
+with a learned scalar β.
+Unlike GREED, GraSP is not a pure norm-head predictor because of the interaction term. However,
+it still falls within the scope of the graph-level theory through Proposition 3, provided the interaction
+map is Lipschitz on the relevant compact region of embedding space. We also ignore the effect of the
+positional encoding to ensure that the expressivity of GraSP remains within the 1-WL family.
+Proposition F.2 (GraSP as a Lipschitz-head graph predictor). Assume that the GraSP graph encoder
+ΦGS satisfies Assumption 1 on G, and that the NTN interaction head sNTN(·, ·) is LNTN-Lipschitz
+with respect to
+∥(u, v)∥⊕:= ∥u∥2 + ∥v∥2
+on the compact set
+ΦGS(G) × ΦGS(G).
+Then the full GraSP predictor
+bdGS(G, H) = β ∥ΦGS(G) −ΦGS(H)∥2 + (1 −β) sNTN(G, H)
+is LGS-stable with respect to dDS, where
+LGS := βCG + (1 −β)LNTNCG.
+More precisely, for all G, H, G′, H′ ∈G,
+bdGS(G, H) −bdGS(G′, H′)
+ ≤LGS
+ dDS(G, G′) + dDS(H, H′)
+
+.
+Proof. First, by the reverse triangle inequality,
+|∥ΦGS(G) −ΦGS(H)∥2 −∥ΦGS(G′) −ΦGS(H′)∥2| ≤∥ΦGS(G)−ΦGS(G′)∥2+∥ΦGS(H)−ΦGS(H′)∥2.
+By Assumption 1,
+∥ΦGS(G) −ΦGS(G′)∥2 ≤CGdDS(G, G′),
+∥ΦGS(H) −ΦGS(H′)∥2 ≤CGdDS(H, H′).
+Hence
+|demb(G, H) −demb(G′, H′)| ≤CG
+ dDS(G, G′) + dDS(H, H′)
+
+.
+Next, by Proposition 3,
+|sNTN(G, H) −sNTN(G′, H′)| ≤LNTNCG
+ dDS(G, G′) + dDS(H, H′)
+
+.
+Combining the two bounds and using the triangle inequality,
+bdGS(G, H) −bdGS(G′, H′)
+ ≤β |demb(G, H) −demb(G′, H′)|+(1−β)|sNTN(G, H)−sNTN(G′, H′)|,
+which yields the claimed estimate.
+Proposition F.2 shows how the graph-level theory applies to GraSP despite the presence of an
+interaction head. The Euclidean part inherits the same graph-level distortion control as in GREED,
+while the interaction part inherits DS-stability once the head is Lipschitz on the embedding range.
+Thus, geometry-informed encoders can improve GraSP-style models by improving the conditioning
+of both the distance term and the inputs presented to the interaction head.
+F.2
+Matching-based Estimators
+We now specialize the alignment-level theory to methods that construct a cross-graph matching or
+transport object from node embeddings and then score that object. As representative methods with
+certain architectural innovations, we pick GEDGNN [11] and GraphEDX [12]. In these models, the
+relevant interface is Assumption 2 together with the plan-wise distortion lemma (Lemma 1) and the
+alignment-objective theorem (Theorem 2) from the main text.
+F.2.1
+GEDGNN [11]
+GEDGNN [11] computes node embeddings for a graph pair, then uses two cross matrix modules
+to produce: (i) a matching matrix Amatch, and (ii) a cost matrix Acost. The predicted GED is
+then formed from a weighted aggregation of Acost using a row-softmax of Amatch, together with a
+graph-level bias term.
+To connect GEDGNN to our notation in Section 3, let (G, H) ∈G × G be a graph pair, let ( ¯G, ¯H)
+denote its equalized versions under the fixed equalization rule, and let
+PGD ∈D ¯
+G, ¯
+H
+denote the row/column-compatible soft alignment induced by the matching module after normaliza-
+tion. Let the learned node-pair cost matrix be denoted by
+CGD
+¯
+G, ¯
+H(i, j) := Acost[i, j].
+Then, the core pairwise aggregation term in GEDGNN takes the form
+L
+¯
+G, ¯
+H
+GD (PGD) = ⟨PGD, CGD
+¯
+G, ¯
+H⟩,
+up to the bias and the scalar post-processing function.
+This places GEDGNN within the scope of the alignment-level theory as a model that evaluates a soft
+alignment plan using encoder-induced node-pair costs.
+Proposition F.3 (GEDGNN as an instance of alignment-level distortion). Assume that the node
+embeddings used by GEDGNN satisfy Assumption 2 with respect to a reference discrepancy δ ¯
+G, ¯
+H,
+and suppose that the learned cost matrix CGD
+¯
+G, ¯
+H is uniformly comparable to the embedding distance
+matrix Cϕ
+¯
+G, ¯
+H, i.e., there exist constants 0 < µ1 ≤µ2 < ∞such that
+µ1 Cϕ
+¯
+G, ¯
+H(i, j) ≤CGD
+¯
+G, ¯
+H(i, j) ≤µ2 Cϕ
+¯
+G, ¯
+H(i, j)
+for every pair (G, H) ∈G × G and all i ∈V ( ¯G), j ∈V ( ¯H). Then, for every admissible plan
+P ∈D ¯
+G, ¯
+H,
+µ1cV L
+¯
+G, ¯
+H
+δ
+(P) ≤⟨P, CGD
+¯
+G, ¯
+H⟩≤µ2CV L
+¯
+G, ¯
+H
+δ
+(P).
+Proof. By the assumed comparability of CGD
+¯
+G, ¯
+H and Cϕ
+¯
+G, ¯
+H, we have, entrywise,
+µ1 ∥ϕ ¯
+G(i) −ϕ ¯
+H(j)∥2 ≤CGD
+¯
+G, ¯
+H(i, j) ≤µ2 ∥ϕ ¯
+G(i) −ϕ ¯
+H(j)∥2.
+Since Pij ≥0, multiplying by Pij and summing gives
+µ1 L
+¯
+G, ¯
+H
+ϕ
+(P) ≤⟨P, CGD
+¯
+G, ¯
+H⟩≤µ2 L
+¯
+G, ¯
+H
+ϕ
+(P).
+Applying Lemma 1 yields
+µ1cV L
+¯
+G, ¯
+H
+δ
+(P) ≤⟨P, CGD
+¯
+G, ¯
+H⟩≤µ2CV L
+¯
+G, ¯
+H
+δ
+(P),
+as claimed.
+Via Proposition F.3, we isolate the exact place where geometry enters GEDGNN: through the quality
+of the node embeddings that feed the cross-matrix modules. The extra constants (µ1, µ2) reflect
+the fact that GEDGNN does not use raw embedding distances directly, but passes pairwise node
+information through learned bilinear/MLP scoring modules. Note that we do not claim that node-level
+bi-Lipschitz geometry alone determines GEDGNN’s performance; rather, through the Proposition
+and our theorem, we show that good geometry improves the metric conditioning of the costs from
+which GEDGNN builds its soft matching objective.
+F.2.2
+GraphEDX [12]
+GraphEDX [12] is even closer to our alignment-level theory. It pads the two graphs with isolated
+nodes to equalize their sizes, learns a soft node alignment matrix P, derives a node-pair alignment
+matrix S, and then computes a sum of node-edit and edge-edit set-divergence surrogates. The authors
+explicitly formulate the padded equal-size setting, the soft alignment matrix, and a final predicted
+GED as a sum of four edit-cost surrogates. This fits naturally into the notation of Section 3. For
+each graph pair (G, H), the equalized pair ( ¯G, ¯H) is already part of the model definition. The soft
+permutation matrix learned by GraphEDX is an alignment plan in D ¯
+G, ¯
+H, and the predicted GED is
+obtained by combining a structural consistency term with transport-like costs built from node and
+node-pair embeddings.
+Proposition F.4 (GraphEDX as a direct instance of the alignment-objective theory). Assume that the
+GraphEDX node encoder satisfies Assumption 2 with respect to a reference discrepancy δ ¯
+G, ¯
+H, and
+that the GraphEDX objective can be written in the form
+J
+¯
+G, ¯
+H
+GX (P) = RGX
+¯
+G, ¯
+H(P) + λGXL
+¯
+G, ¯
+H
+ϕ
+(P),
+where RGX
+¯
+G, ¯
+H is a nonnegative structural term incorporating the remaining node-pair and consistency
+surrogates, independent of the specific Euclidean realization of L
+¯
+G, ¯
+H
+ϕ
+. Then, for every pair (G, H) ∈
+G × G,
+min
+P ∈D ¯
+G, ¯
+H
+
+RGX
+¯
+G, ¯
+H(P) + λGXcV L
+¯
+G, ¯
+H
+δ
+(P)
+
+≤
+min
+P ∈D ¯
+G, ¯
+H
+J
+¯
+G, ¯
+H
+GX (P)
+≤
+min
+P ∈D ¯
+G, ¯
+H
+
+RGX
+¯
+G, ¯
+H(P) + λGXCV L
+¯
+G, ¯
+H
+δ
+(P)
+
+.
+Proof. The proof is a direct application of Theorem 2 with
+J
+¯
+G, ¯
+H
+ϕ
+(P) = J
+¯
+G, ¯
+H
+GX (P),
+R ¯
+G, ¯
+H = RGX
+¯
+G, ¯
+H,
+λ = λGX.
+Indeed, under Assumption 2, Lemma 1 yields
+cV L
+¯
+G, ¯
+H
+δ
+(P) ≤L
+¯
+G, ¯
+H
+ϕ
+(P) ≤CV L
+¯
+G, ¯
+H
+δ
+(P)
+∀P ∈D ¯
+G, ¯
+H.
+Multiplying by λGX ≥0, adding the common structural term RGX
+¯
+G, ¯
+H(P), and taking minima over
+P ∈D ¯
+G, ¯
+H proves the claim.
+GraphEDX is the cleanest instance of our matching-based theory. Its architecture already operates in
+the equalized-node OT-style setting assumed in the main text, and its prediction rule is built from soft
+alignment together with node and node-pair discrepancy terms. Therefore, replacing the GraphEDX
+encoder by a geometry-informed encoder with improved node-level distortion constants gives a direct,
+theoretically transparent route to improving the faithfulness of the surrogate optimization problem
+solved by the model.
+Discussion.
+Connecting our theory to these disparate methods clarifies why the same geometric
+idea manifests differently across neural graph matching architectures. In GREED, geometry enters
+directly through the norm of graph embeddings. In GraSP, it enters both through the Euclidean term
+and through the conditioning of the inputs to the interaction head. In GEDGNN, it enters through
+the node embeddings used to construct matching and cost matrices. In GraphEDX, it enters most
+directly through the soft alignment objective itself. Therefore, we explicitly situate our theory within
+the broad neural graph matching landscape and show how it interfaces with concrete architectures
+used in neural GED estimation.
+G
+Additional Experimental Details and Results
+G.1
+Experimental protocol
+All experiments follow the leak-free evaluation protocol introduced in Gelato [19]. Graphs are split
+into training, validation, and test sets using a 60:20:20 ratio, and isomorphic copies are not allowed
+to cross splits. At the same time, the graphs themselves are retained rather than removed from the
+benchmark, so the evaluation remains comparable to the standard datasets while eliminating train-test
+leakage through isomorphic duplication.
+The experiments use six benchmark datasets spanning several application domains [10, 19]. AIDS
+and LINUX are the standard small-graph GED benchmarks and contain graphs with at most 10
+nodes. IMDB originally contains graphs with up to 50 nodes, but exact ground-truth GED values
+are only available reliably for smaller instances; following the benchmark construction used in
+the supplied Gelato materials, we therefore use the subset with at most 16 nodes and denote it by
+IMDB-16. We further consider three additional benchmarks obtained from larger graph collections
+by restricting graph size so that optimal matching computation remains feasible: ZINC-16 and
+MOLHIV-16 contain graphs with at most 16 nodes, and CODE2-22 contains graphs with at most
+22 nodes. The resulting datasets cover molecular graphs (AIDS, ZINC-16, MOLHIV-16), software
+dependency graphs (LINUX), movie collaboration graphs (IMDB-16), and Python program syntax
+trees (CODE2-22).
+The dataset sizes used in the benchmark are 700 graphs for AIDS, 1000 for LINUX, 1185 for IMDB-
+16, 836 for ZINC-16, 6734 for MOLHIV-16, and 2087 for CODE2-22. AIDS has node labels and no
+edge labels. LINUX and IMDB have unlabeled nodes and edges. CODE2-22 has node labels but
+no edge labels. ZINC-16 and MOLHIV-16 contain both node and edge labels in their original form.
+To maintain comparability across the full baseline suite, the experiments in the main text use node
+attributes whenever available and do not use edge labels, since several of the compared baselines do
+not support them consistently.
+All results are reported as mean ± standard deviation over 10 random seeds. MAE is the mean
+absolute error between the predicted GED and the reference GED. Spearman’s ρ and Kendall’s τ
+measure global ranking agreement, while P@10 and P@20 evaluate top-k retrieval quality under the
+benchmark relevance rule. This combination of metrics is useful in the present setting because we
+expect a geometry-aware encoder to improve both numerical fidelity and pairwise ordering.
+For each baseline, we replaced the original message-passing encoder and aggregation layers with
+FSW-GNN layers to create the Bi-Lipschitz or BL variants, while preserving the downstream head,
+objective, and training protocol as closely as possible. Unless a method requires a documented excep-
+tion, the BL models use hidden dimension 64. Hyperparameter retuning after encoder replacement is
+intentionally limited, so that performance differences can be attributed primarily to the change in
+encoder geometry rather than to a larger model-specific search budget. For GraphEdX, the AlignDiff
+variant is used in the node-label setting.
+All experiments were conducted using Intel Xeon Gold 6448H CPUs and NVIDIA RTX 6000 GPUs,
+with implementations created in PyTorch and PyTorch Geometric.
+G.2
+Additional results and discussion
+Table 2 complements the main-text comparison by reporting Spearman’s ρ, P@10, and P@20 on
+AIDS, IMDB-16, MOLHIV-16, and CODE2-22. The trend is fully consistent with the main text: every
+BL variant improves over its non-BL counterpart on all three metrics and on all four datasets. The
+largest gains again appear on the harder settings. For GraSP, ρ rises from 0.611 to 0.849 on IMDB-16
+and from 0.620 to 0.714 on CODE2-22; the corresponding P@10 values rise from 0.742 to 0.861 and
+from 0.832 to 0.881. More broadly, EGSC-BL and ERIC-BL remain the strongest correlation-based
+models across several datasets, while GraSP-BL is particularly strong on retrieval. The important
+point remains that the BL encoder improves all of these families simultaneously despite their different
+downstream heads.
+Table 2: Additional ranking and retrieval metrics for the primary datasets. Higher is better for all
+metrics here.
+Method
+AIDS
+IMDB-16
+MOLHIV-16
+CODE2-22
+ρ ↑
+P@10↑
+P@20↑
+ρ ↑
+P@10↑
+P@20↑
+ρ ↑
+P@10↑
+P@20↑
+ρ ↑
+P@10↑
+P@20↑
+SimGNN
+0.821±0.009
+0.651±0.017
+0.734±0.016
+0.803±0.014
+0.748±0.020
+0.829±0.019
+0.742±0.011
+0.664±0.017
+0.732±0.016
+0.771±0.013
+0.682±0.019
+0.748±0.018
+SimGNN-BL
+0.846±0.008
+0.693±0.015
+0.781±0.014
+0.841±0.012
+0.793±0.017
+0.847±0.016
+0.768±0.010
+0.691±0.015
+0.758±0.014
+0.806±0.012
+0.719±0.017
+0.782±0.016
+GMN
+0.828±0.009
+0.662±0.016
+0.746±0.015
+0.811±0.013
+0.756±0.019
+0.838±0.018
+0.751±0.010
+0.673±0.016
+0.741±0.015
+0.779±0.012
+0.694±0.018
+0.761±0.017
+GMN-BL
+0.851±0.008
+0.704±0.014
+0.792±0.013
+0.848±0.011
+0.801±0.016
+0.852±0.015
+0.777±0.009
+0.701±0.014
+0.768±0.013
+0.813±0.011
+0.728±0.016
+0.794±0.015
+EGSC
+0.895±0.006
+0.744±0.012
+0.823±0.011
+0.908±0.008
+0.836±0.014
+0.904±0.013
+0.836±0.007
+0.766±0.012
+0.814±0.011
+0.874±0.008
+0.804±0.013
+0.851±0.012
+EGSC-BL
+0.912±0.005
+0.762±0.011
+0.839±0.010
+0.926±0.007
+0.852±0.012
+0.919±0.011
+0.851±0.006
+0.781±0.011
+0.829±0.010
+0.891±0.007
+0.819±0.012
+0.866±0.011
+ERIC
+0.887±0.006
+0.732±0.013
+0.811±0.012
+0.892±0.009
+0.824±0.015
+0.891±0.014
+0.821±0.008
+0.752±0.013
+0.801±0.012
+0.861±0.009
+0.791±0.014
+0.838±0.013
+ERIC-BL
+0.904±0.005
+0.751±0.011
+0.828±0.010
+0.914±0.007
+0.843±0.013
+0.908±0.012
+0.842±0.007
+0.772±0.012
+0.819±0.011
+0.882±0.008
+0.811±0.013
+0.856±0.012
+GREED
+0.786±0.011
+0.618±0.019
+0.709±0.018
+0.772±0.018
+0.721±0.022
+0.812±0.020
+0.689±0.015
+0.627±0.019
+0.708±0.017
+0.712±0.017
+0.644±0.021
+0.724±0.019
+GREED-BL
+0.812±0.010
+0.647±0.017
+0.736±0.016
+0.801±0.016
+0.754±0.019
+0.838±0.018
+0.721±0.013
+0.654±0.017
+0.734±0.015
+0.748±0.015
+0.681±0.019
+0.758±0.017
+GraSP
+0.707±0.012
+0.741±0.009
+0.800±0.008
+0.611±0.018
+0.742±0.015
+0.801±0.013
+0.546±0.016
+0.784±0.010
+0.821±0.009
+0.620±0.017
+0.832±0.011
+0.861±0.010
+GraSP-BL
+0.760±0.010
+0.801±0.007
+0.846±0.006
+0.849±0.009
+0.861±0.009
+0.902±0.008
+0.593±0.014
+0.826±0.008
+0.857±0.007
+0.714±0.012
+0.881±0.009
+0.904±0.008
+GraphEDX
+0.842±0.008
+0.691±0.015
+0.771±0.014
+0.824±0.012
+0.781±0.017
+0.856±0.016
+0.782±0.010
+0.698±0.015
+0.764±0.014
+0.806±0.011
+0.732±0.016
+0.791±0.015
+GraphEDX-BL
+0.856±0.007
+0.712±0.013
+0.788±0.012
+0.846±0.010
+0.799±0.015
+0.872±0.014
+0.798±0.009
+0.719±0.013
+0.781±0.013
+0.821±0.010
+0.749±0.015
+0.806±0.014
+GEDGNN
+0.621±0.018
+0.512±0.028
+0.588±0.026
+0.412±0.032
+0.468±0.036
+0.531±0.034
+0.441±0.024
+0.421±0.029
+0.482±0.028
+0.462±0.028
+0.438±0.034
+0.498±0.031
+GEDGNN-BL
+0.658±0.016
+0.548±0.024
+0.621±0.023
+0.498±0.027
+0.521±0.031
+0.582±0.029
+0.483±0.020
+0.456±0.026
+0.519±0.024
+0.521±0.024
+0.481±0.029
+0.542±0.027
+Table 3 extends the comparison to LINUX and ZINC-16 and leads to the same conclusion. On
+LINUX, every BL variant improves all five reported metrics. GraSP-BL achieves the best MAE,
+with 0.030 versus 0.040 for GraSP, while EGSC-BL attains the strongest rank correlations, with
+ρ = 0.957 and τ = 0.916. On ZINC-16, BL again improves all ranking metrics for every baseline
+and reduces MAE for every method except GREED, for which GREED and GREED-BL tie at 0.948.
+GraSP-BL achieves the best MAE on ZINC-16, namely 0.049, while EGSC-BL yields the strongest
+correlation scores, with ρ = 0.871 and τ = 0.801. These LINUX and ZINC-16 results show that the
+trends persist on the remaining benchmark datasets as well.
+Table 3: Full results on LINUX and ZINC-16. Lower is better for MAE; higher is better for ρ, τ,
+P@10, and P@20.
+Method
+LINUX
+ZINC-16
+MAE↓
+ρ ↑
+τ ↑
+P@10↑
+P@20↑
+MAE↓
+ρ ↑
+τ ↑
+P@10↑
+P@20↑
+SimGNN
+0.452±0.012
+0.812±0.010
+0.792±0.010
+0.731±0.015
+0.812±0.014
+0.954±0.038
+0.756±0.012
+0.689±0.012
+0.689±0.018
+0.761±0.017
+SimGNN-BL
+0.332±0.010
+0.836±0.009
+0.818±0.009
+0.758±0.013
+0.838±0.012
+0.581±0.021
+0.782±0.011
+0.718±0.011
+0.718±0.016
+0.789±0.015
+GMN
+0.441±0.011
+0.821±0.010
+0.801±0.009
+0.742±0.014
+0.824±0.013
+0.938±0.035
+0.761±0.011
+0.698±0.011
+0.698±0.017
+0.772±0.016
+GMN-BL
+0.341±0.009
+0.844±0.009
+0.824±0.008
+0.769±0.012
+0.848±0.011
+0.604±0.020
+0.786±0.010
+0.724±0.010
+0.724±0.015
+0.798±0.014
+EGSC
+0.198±0.006
+0.944±0.005
+0.903±0.006
+0.894±0.009
+0.934±0.007
+0.331±0.012
+0.853±0.007
+0.784±0.008
+0.792±0.012
+0.846±0.011
+EGSC-BL
+0.154±0.005
+0.957±0.004
+0.916±0.005
+0.911±0.008
+0.949±0.006
+0.214±0.008
+0.871±0.006
+0.801±0.007
+0.808±0.011
+0.861±0.010
+ERIC
+0.214±0.006
+0.931±0.005
+0.891±0.006
+0.882±0.010
+0.921±0.008
+0.352±0.013
+0.842±0.008
+0.772±0.009
+0.781±0.013
+0.834±0.012
+ERIC-BL
+0.169±0.005
+0.946±0.004
+0.907±0.005
+0.901±0.009
+0.938±0.007
+0.228±0.009
+0.861±0.007
+0.791±0.008
+0.798±0.012
+0.851±0.011
+GREED
+0.497±0.014
+0.741±0.014
+0.755±0.011
+0.684±0.017
+0.771±0.015
+0.948±0.037
+0.701±0.016
+0.646±0.015
+0.651±0.020
+0.732±0.018
+GREED-BL
+0.451±0.012
+0.768±0.012
+0.779±0.010
+0.712±0.015
+0.796±0.013
+0.948±0.037
+0.734±0.014
+0.673±0.013
+0.681±0.018
+0.761±0.016
+GraSP
+0.040±0.003
+0.855±0.009
+0.792±0.009
+0.914±0.010
+0.941±0.008
+0.074±0.005
+0.639±0.015
+0.591±0.015
+0.821±0.010
+0.852±0.009
+GraSP-BL
+0.030±0.002
+0.904±0.007
+0.861±0.007
+0.947±0.007
+0.964±0.006
+0.049±0.003
+0.660±0.013
+0.624±0.013
+0.847±0.008
+0.881±0.007
+GraphEDX
+0.391±0.008
+0.884±0.007
+0.844±0.007
+0.803±0.012
+0.844±0.011
+0.703±0.016
+0.791±0.010
+0.721±0.010
+0.724±0.015
+0.798±0.014
+GraphEDX-BL
+0.380±0.008
+0.899±0.006
+0.882±0.006
+0.821±0.011
+0.861±0.010
+0.676±0.015
+0.808±0.009
+0.748±0.009
+0.741±0.013
+0.814±0.013
+GEDGNN
+0.402±0.032
+0.084±0.021
+0.066±0.018
+0.301±0.031
+0.412±0.029
+6.633±0.164
+0.508±0.026
+0.351±0.024
+0.442±0.032
+0.503±0.030
+GEDGNN-BL
+0.361±0.026
+0.112±0.019
+0.095±0.016
+0.337±0.027
+0.448±0.025
+5.781±0.141
+0.547±0.022
+0.388±0.021
+0.479±0.028
+0.541±0.026
+G.3
+Additional ablations and transfer experiments
+To test whether the benefits of the encoder geometry transfer across datasets, we also evaluate cross-
+dataset generalization with GraSP-BL. We observe that the transfer performance remains strong:
+training on LINUX and testing on IMDB-16 yields τ = 0.781±0.018, while training on IMDB-16
+and testing on LINUX yields τ = 0.867±0.011. This suggests that the gains from the BL encoder are
+not confined to a single benchmark distribution, but carry over across structurally different graph
+domains, although with some performance hit.
+Table 4: Cross-dataset transfer performance (τ ↑).
+Training
+Testing
+LINUX
+IMDB-16
+LINUX
+-
+0.781±0.018
+IMDB-16
+0.867±0.011
+-
+We also study whether the gains of GraSP-BL
+arise from the geometry-aware encoder itself
+or merely from additional optimization free-
+dom. Table 5 shows that freezing the BL en-
+coder changes performance only marginally,
+from MAE 0.030 and τ = 0.904 to MAE 0.031
+and τ = 0.901, whereas removing positional
+encodings causes a larger degradation, and re-
+moving both positional encodings and encoder
+tuning gives the weakest variant. This indicates
+that the main gain is already present in the geometry-aware representation itself, with positional
+encodings providing an additional but smaller benefit.
+H
+Computational Considerations of Geometry-Informed Encoders
+Table 5: GraSP-BL ablations on LINUX.
+Variant
+MAE↓
+τ ↑
+BL (full)
+0.030±0.002
+0.904±0.006
+Frozen encoder
+0.031±0.003
+0.901±0.007
+No PE
+0.036±0.004
+0.883±0.009
+Frozen + no PE
+0.041±0.005
+0.861±0.012
+The geometric guarantees studied in this pa-
+per introduce nontrivial computational over-
+head.
+In FSW-GNN, message aggregation
+is built on Fourier Sliced-Wasserstein multi-
+set embeddings, which require repeated one-
+dimensional projections together with sorting
+operations. At the multiset level, this admits
+a closed-form implementation with complexity
+O(mnd + mn log n), where n denotes the mul-
+tiset size, d the feature dimension, and m the
+number of projection frequencies [1]. While practical in many settings - and shown to achieve com-
+petitive runtimes in prior work [1] - this remains more expensive than standard sum-based MPNNs
+and introduces measurable overhead on larger graphs. This tradeoff is acceptable in the present
+setting because the objective is to isolate the role of encoder geometry in neural graph matching and
+GED estimation and the benchmark graph datasets usually contain small graphs. FSW-GNN provides
+a concrete construction that achieves explicit metric guarantees and enables analysis of how represen-
+tation geometry propagates into graph-level distances and alignment costs. The broader question is
+how much of this geometric benefit can be retained in architectures with lower computational cost.
+The central reason for adapting FSW-GNN to other architectures in our context is to demonstrate
+that explicit metric control is achievable and can be analyzed rigorously in neural GED pipelines.
+Improving scalability while preserving these guarantees remains an important direction for future
+work.

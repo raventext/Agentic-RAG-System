@@ -1,0 +1,1826 @@
+Inference-Time Refinement Closes the
+Synthetic-Real Gap in Tabular Diffusion
+Eugenio Lomurno*†1, Filippo Balzarini†1, Francesco Benelle†1, Francesca Pia Panaccione†1,
+and Matteo Matteucci1
+1Politecnico di Milano, AIRLab, Italy
+Abstract
+Diffusion-based generators set the current state of the art for synthetic tabular data, deployed downstream wherever direct
+access to real records is restricted. These methods approach but rarely exceed real-data utility on downstream tasks,
+and closing this synthetic-real performance gap has so far been pursued exclusively at training time, via architectural
+advances, scaling, and retraining of monolithic generators. The inference-time alternative, i.e., refining the outputs of
+a pre-trained backbone with parameters left untouched, has remained largely unexplored for tabular synthesis. We
+introduce TARDIS (Tabular generation through Refinement, Distillation, and Inference-time Sampling), an inference-time
+refinement framework that operates on a frozen pre-trained backbone, configured per dataset by a Tree-structured
+Parzen Estimator search over score-level guidance during reverse diffusion, with each trial’s objective set by an inner grid
+search over post-hoc sample selectors and an optional soft-label distillation step. The search space encodes a single
+mathematical pattern we name Bidirectional Chamfer Refinement (BCR): the symmetric Chamfer functional between
+synthetic and real samples is minimized both continuously, via a score-level gradient during reverse diffusion, and
+discretely, via batch-ranking post-generation. On the majority of datasets the search selects BCR-aligned configurations
+over alternatives encoded in the search space, evidence both for BCR as the dominant refinement pattern and for
+TARDIS’s per-dataset search as a procedure that recovers this pattern. Across 15 binary, multiclass, and regression
+benchmarks TARDIS achieves a median +8.6% downstream-task improvement over models trained on real data (95%
+CI [+3.3, +16.4], Wilcoxon p = 0.016, 11/15 strict wins) and improves over the underlying TabDiff backbone on all 15
+datasets (mean +12.9%, p < 10−4), matching the backbone on manifold fidelity, diversity, and sample-level privacy. The
+synthetic-real gap is therefore not primarily a training-time problem: on the studied corpus, inference-time refinement of a
+pre-trained tabular diffusion backbone reaches and exceeds real-data utility in 1 to 80 minutes on a single consumer-grade
+GPU.
+Keywords: Tabular Diffusion · Inference-Time Refinement · Chamfer Guidance · Synthetic Data
+Introduction
+Mixed-type tabular records remain the dominant input for-
+mat of applied machine learning. When direct access to
+such records is restricted, synthetic generation enables
+downstream training [7, 9], and diffusion-based genera-
+tors currently set the state of the art [22]. Despite steady
+architectural progress, downstream learners trained on
+the output of these generators approach but rarely match
+the utility of equivalent learners trained on real data, leav-
+ing a persistent synthetic-real gap.
+Existing approaches to closing this gap follow a single
+paradigm: improve the generator. Each new architecture,
+e.g., TabDiff [20] with its per-feature noise schedules,
+adds complexity but yields only marginal gains on the
+headline downstream metric, leaving real-data utility un-
+matched on most standard benchmarks. The implicit
+assumption underlying this trajectory is that the gap must
+be closed at training time, with the generator as the only
+target of intervention.
+An alternative paradigm has emerged in image synthesis,
+where inference-time guidance methods modify the sam-
+pling process of a pre-trained diffusion model at no addi-
+* Corresponding author: eugenio.lomurno@polimi.it
+† These authors contributed equally to this work.
+tional training cost. Classifier-free guidance [11] steers
+sampling toward class-conditional or prompt-conditional
+outputs by interpolating score predictions; Chamfer Guid-
+ance [6] steers it toward arbitrary user-specified refer-
+ence batches by perturbing the score with the gradient
+of a bidirectional Chamfer functional. Direct transfer of
+this paradigm to tabular synthesis is non-trivial, however,
+due to (i) mixed-type feature spaces that lack a canonical
+differentiable distance, (ii) the absence of a standardized
+representation space analogous to CLIP for images, and
+(iii) the dual fidelity-utility objective specific to the train-on-
+synthetic-test-on-real (TSTR) setting.
+At its core, our approach generates many candidate sam-
+ples from the pre-trained backbone and retains those
+that best match the real-data manifold, both by steer-
+ing generation toward it and by filtering the output pool
+afterward. We call this framework TARDIS (Tabular gener-
+ation through Refinement, Distillation, and Inference-time
+Sampling), an inference-time refinement framework that
+operates on a frozen pre-trained tabular diffusion back-
+bone. TARDIS is grounded in the Bidirectional Chamfer
+Refinement (BCR) principle: a continuous score-level
+perturbation during reverse diffusion and a discrete post-
+generation subsampling step both minimize the same
+symmetric Chamfer functional between candidates and
+arXiv:2605.06261v1 [cs.LG] 7 May 2026
+
+Inference-Time Refinement Closes the Synthetic-Real Gap in Tabular Diffusion
+Figure 1: TARDIS pipeline. Stage I draws an oversampled noise pool Dnoise of cardinality M · Nr from the latent space Z. Stage II
+denoises Dnoise via reverse diffusion, perturbing the score εθ(xt, t) with the gradient of the bidirectional Chamfer functional C
+between the current candidate batch xt and a real reference batch xr, projected through a representation map φ; this produces
+the candidate pool Dcand. Stage III selects Dsyn of cardinality K · Nr from Dcand via a Chamfer Sampler, optionally preceded
+by Generative Knowledge Distillation fGKD that relabels candidates with soft targets; the final variant is chosen by argmax over
+the validation utility U. The figure illustrates the BCR-headline configuration with β-VAE mapping and Chamfer Sampler. The full
+TARDIS framework generalizes Stage II to also support disabled-guidance and identity-mapping variants, and Stage III to a grid
+over five samplers (Section 3.3, Appendix D).
+a real reference batch, with the continuous step con-
+centrating probability mass near the real-data manifold
+and the discrete step pruning residual off-manifold can-
+didates. BCR addresses the three obstacles above in
+unified form: it handles (i) and (ii) through a representa-
+tion map φ instantiated per dataset either as the identity
+on z-score-normalized features or as the encoder of a
+tabular β-VAE, providing a differentiable representation
+that absorbs mixed-type heterogeneity without requiring a
+canonical metric; and (iii) by balancing fidelity (synthetic-
+to-real) and coverage (real-to-synthetic) terms in a single
+bidirectional functional, coupling the TSTR utility objective
+directly to manifold-distance minimization.
+The framework operationalizes BCR through three stages
+(Figure 1): Stage I oversamples a noise pool, Stage II ap-
+plies the score-level Chamfer perturbation during reverse
+diffusion, and Stage III ranks the resulting candidate pool
+under the same functional, optionally after a soft-label
+distillation step [10, 19]. Stage II hyperparameters are
+tuned per dataset by a Tree-structured Parzen Estimator
+search [1]; at each trial Stage III runs a grid over selec-
+tors and the distillation toggle, returning its best validation
+utility as the trial’s objective.
+Empirically, across 15 heterogeneous tabular bench-
+marks (binary classification, multiclass classification, re-
+gression), TARDIS surpasses real-data utility on 11 of 15
+datasets at a median +8.6% improvement on the head-
+line downstream metric, improves over the underlying
+TabDiff backbone on all 15, and matches the backbone
+on manifold fidelity, diversity, and sample-level privacy.
+The synthetic-real gap is therefore, on this corpus, an
+inference-time rather than a training-time problem.
+TARDIS is, to the best of our knowledge, the first
+inference-time refinement framework for tabular diffusion;
+BCR is the unifying principle coupling its continuous and
+discrete steps under a single Chamfer functional; and
+our empirical results show that inference-time refinement
+suffices to close the synthetic-real gap without retraining.
+Related Work
+We review prior work along three axes that intersect in
+TARDIS, i.e., tabular generative modelling, inference-time
+guidance for diffusion, and post-hoc curation of generated
+samples.
+Tabular generative models. Existing approaches treat
+the synthetic-real utility gap as a problem of the generator
+architecture. GAN-based methods, e.g., CTGAN [24] and
+CTAB-GAN+ [26], address mixed-type generation through
+conditional sampling and mode-specific normalization;
+VAE and autoregressive families, with TVAE [24] and Tab-
+ularARGN [21], factorize the joint via variational decoders
+or per-feature autoregressive heads; diffusion-based for-
+mulations, with TabDDPM [15], STaSy [13], CoDi [17],
+TabSyn [25], and TabDiff [20], set the current state of the
+art through increasingly elaborate score-based and latent-
+Inference-Time Refinement Closes the Synthetic-Real Gap in Tabular Diffusion
+space designs. Each step advances the architecture, but
+none operates on the output distribution of an already-
+trained backbone. TARDIS departs from this trajectory by
+refining that output distribution at inference time, with the
+backbone left frozen.
+Inference-time guidance for diffusion. Inference-time
+guidance steers a pre-trained diffusion model toward
+task-specific or user-specified outputs without retraining.
+Building on standard score-based diffusion [12], classifier-
+free guidance [11] interpolates between conditional and
+unconditional score predictions for class- and prompt-
+conditional image synthesis; Chamfer Guidance [6] ex-
+tends this to reference-based steering by perturbing the
+score with the gradient of a bidirectional Chamfer func-
+tional between candidates and a reference set in image
+space. Tabular counterparts are absent in the literature.
+TARDIS adapts the Chamfer construction to the tabular
+setting through a representation map φ instantiated per
+dataset (identity on z-score-normalized features or the
+encoder of a β-VAE), and adds a discrete post-hoc se-
+lection stage that Chamfer Guidance does not include,
+unifying both levels under the same functional.
+Synthetic-data filtering and post-hoc refinement. Post-
+hoc curation of generated samples emerged in image
+synthesis with the Chamfer Sampler of [6], which ranks
+an oversampled candidate pool by bidirectional manifold
+proximity to a real reference set. In tabular synthesis the
+closest precedent is ISSOSYNTH [8], which oversamples
+a pre-trained generator and selects a subset minimizing
+a binned L1 distance over low-order marginals via dis-
+crete iterative-proportional-fitting. Soft-label distillation
+has been used in tabular and image synthesis to inject
+teacher knowledge into synthetic training sets [10, 18];
+feature-space oversampling for class imbalance, e.g.,
+SMOTE [4], operates without a learned metric or gener-
+ative pool. TARDIS reframes the oversample-and-select
+pattern of ISSOSYNTH as one of two coupled operational
+levels, pairing the discrete selection step with continuous
+score-level guidance during reverse diffusion, replacing
+binned-marginal distances with a continuous metric in
+φ-space, and unifying both levels under a single Chamfer
+functional.
+Across these three clusters, no prior work occupies the in-
+tersection TARDIS targets: post-pretraining refinement of
+a tabular diffusion backbone, with continuous and discrete
+steps unified under a single Chamfer functional. The clos-
+est precedents are Chamfer Guidance [6] in the image
+domain (continuous guidance only) and ISSOSYNTH [8]
+in tabular synthesis (discrete selection only); TARDIS
+combines and extends both.
+Methodology
+We introduce TARDIS (Tabular generation through Re-
+finement, Distillation, and Inference-time Sampling), a
+three-stage inference-time refinement framework oper-
+ating on a frozen pre-trained tabular diffusion backbone
+Gθ : Z →X × Y, where Z is the latent noise space,
+X = Xnum × Xcat the mixed-type feature space, and Y
+the target space (R for regression, finite for classification).
+Given a real dataset Dreal ⊂X × Y of cardinality Nr and
+a held-out test set Dtest, TARDIS produces a synthetic
+dataset Dsyn of cardinality K · Nr targeting the train-on-
+synthetic-test-on-real (TSTR) utility
+Usyn = ψ
+ A(Dsyn), Dtest
+
+,
+(1)
+Ureal = ψ
+ A(Dreal), Dtest
+
+,
+(2)
+where A is a downstream learner and ψ a task-
+appropriate metric (AUROC, RMSE). The synthetic-real
+gap is the empirical regularity Usyn < Ureal across main-
+stream tabular generators; TARDIS aims to close, and
+where possible reverse, this gap at inference time.
+The framework comprises three stages (Figure 1). Stage I
+draws an oversampled noise pool Dnoise ⊂Z of car-
+dinality M · Nr. Stage II denoises Dnoise through the
+reverse-diffusion process of Gθ, optionally perturbing the
+predicted score at each step with the gradient of a bidi-
+rectional Chamfer functional against Dreal, yielding the
+candidate pool Dcand of cardinality M · Nr. Stage III se-
+lects Dsyn from Dcand via post-hoc batch ranking under
+the same functional, optionally preceded by a soft-label
+distillation step. Stages II and III thus minimize the same
+Chamfer functional C at two complementary operational
+levels: continuously, via score-level gradient descent dur-
+ing sampling, and discretely, via batch ranking after sam-
+pling. We refer to this joint minimization as Bidirectional
+Chamfer Refinement (BCR). Stage II hyperparameters
+are tuned per dataset by a Tree-structured Parzen Esti-
+mator (TPE) search [1]; at each trial, Stage III performs
+an inner grid search over its selector and distillation tog-
+gle, and the maximum validation utility across that grid is
+returned as the trial’s objective.
+3.1
+Stage I: Oversampling
+Stage I draws M · Nr samples from the latent prior of Z,
+forming the noise pool Dnoise. The oversampling factor
+M controls the redundancy available to Stage III: each
+retained sample is selected from M/K candidates. We
+fix M = 50 across all benchmarks. BCR requires M >
+K so that the Stage III refinement operates on a non-
+trivial selection set; the saturation of utility as K →M is
+characterized in Appendix A.
+3.2
+Stage II: Bidirectional Chamfer Guid-
+ance
+Stage II denoises Dnoise through the reverse-diffusion pro-
+cess of Gθ. During reverse diffusion the predicted score
+is optionally perturbed by the gradient of a bidirectional
+Chamfer functional against Dreal, steering candidates to-
+ward the real-data manifold. The resulting candidate pool
+Dcand has cardinality M · Nr. The TPE search introduced
+above selects all Stage II hyperparameters jointly per
+dataset; the full search space is reported in Appendix F,
+Table 5.
+Bidirectional Chamfer functional. Let φ : X →Rd,
+with d ∈N+, be a representation map and A, B ⊂X
+two finite sample sets. We adopt the symmetric Chamfer
+Inference-Time Refinement Closes the Synthetic-Real Gap in Tabular Diffusion
+functional [6],
+C(A, B) = 1
+|A|
+X
+a∈A
+min
+b∈B
+φ(a) −φ(b)
++
+|B|
+X
+b∈B
+min
+a∈A
+φ(a) −φ(b)
+
+2 ,
+(3)
+which decomposes into a fidelity term penalizing devia-
+tions from A to its nearest match in B (first sum) and a
+coverage term penalizing the symmetric direction (sec-
+ond sum). C is symmetric, non-negative, and zero if and
+only if φ(A) = φ(B) as multisets (Appendix A).
+Guidance variants. The TPE search exposes guidance
+as a binary toggle. When disabled, the score perturbation
+of Equation 5 is dropped and Stage II reduces to standard
+reverse diffusion. When enabled, the representation map
+φ admits two mutually exclusive forms, also exposed to
+the TPE search: (i) identity mapping, with φ the identity
+on z-score-normalized features and the Chamfer gradient
+computed in the data space; (ii) β-VAE mapping, with φ
+the encoder of a tabular β-VAE [2, 14] learned per dataset
+on Dreal and the Chamfer gradient computed in its latent
+space. Figure 1 illustrates the β-VAE-mapping variant.
+β-VAE encoder. The encoder is trained on Dreal under
+the standard β-VAE evidence lower bound,
+LVAE(x) = Lrec(x, ˆx) + β(t)·DKL
+ qφ(z | x) ∥p(z)
+
+, (4)
+with prior p(z) = N(0, I), KL annealing β(t) from one of
+five schedule families, and a composite reconstruction
+loss combining mean squared error on numerical features
+with cross-entropy on categorical groups, averaged within
+group to balance the gradient contribution across feature
+types. The latent dimension d ∈{4, 8, 16, 32} is selected
+by the TPE search; full schedule families and training
+hyperparameters are deferred to Appendix C.
+Score perturbation. At each guidance step t, the per-
+turbed score is
+˜εθ(xt, t) = εθ(xt, t) −Γ(t) · ∇xtC
+ xt, xr
+
+,
+(5)
+where εθ is the score predicted by the backbone, Γ(t) ≥0
+a time-dependent scaling factor, and xr ⊂Dreal a refer-
+ence batch sampled at the start of each generation and
+held fixed across diffusion steps. Guidance is applied at
+tg steps of the reverse trajectory rather than at every step,
+with tg tuned per dataset (Table 5); the remaining steps
+use the unperturbed score εθ. Equation 5 is an approx-
+imation: unlike classifier-free guidance [11], it does not
+correspond to exact posterior sampling under a likelihood
+defined by C, and Γ(t) keeps the perturbation small rela-
+tive to εθ, acting as a soft steering signal. The schedule
+Γ(t) is selected from four families (constant, linear, cosine,
+sine) bounded by γmin, γmax; the reference batch xr is
+either class-conditional or global.
+3.3
+Stage III: Refinement Selection
+Stage III selects Dsyn of cardinality K · Nr from the can-
+didate pool Dcand produced by Stage II. The selection is
+performed by an inner grid search over a binary Genera-
+tive Knowledge Distillation (GKD) toggle and five sampler
+variants (10 combinations); for each TPE trial of Stage II,
+the configuration maximizing validation utility is retained,
+and the resulting maximum is returned to the outer search
+as that trial’s objective.
+Chamfer Sampler. The Chamfer Sampler is the discrete
+counterpart of the Stage II score perturbation: it mini-
+mizes the same functional C of Equation 3, evaluated
+at the pair (Bk, Dreal), by post-hoc batch ranking rather
+than gradient descent. Partitioning Dcand into batches
+{Bk}M·Nr/b
+k=1
+of size b,
+C(Bk, Dreal) =
+|Bk|
+X
+x∈Bk
+min
+r∈Dreal ∥φ(x) −φ(r)∥2
+|
+{z
+}
+msr(Bk): fidelity
++
+|Dreal|
+X
+r∈Dreal
+min
+x∈Bk ∥φ(x) −φ(r)∥2
+|
+{z
+}
+mrs(Bk): coverage
+,
+(6)
+batches are ranked ascending by C(Bk, Dreal) and the
+top-ranked union of K ·Nr samples constitutes Dsyn. The
+representation map φ is inherited from Stage II when
+guidance is enabled, and defaults to the identity mapping
+when guidance is disabled.
+Equation 6 and Equation 5 jointly minimize the same
+Chamfer functional C on the same representation space
+φ at two complementary operational levels: continuous
+gradient descent during reverse diffusion (Stage II) con-
+centrates probability mass near the real-data manifold;
+discrete batch ranking after diffusion (Stage III) prunes
+off-manifold residuals. This joint minimization is the BCR
+principle; a saturation argument for the M/K ratio is given
+in Appendix A.
+Alternative samplers. The grid search additionally ex-
+poses four alternative samplers (Stratified, IBOSS [23],
+HDBSCAN [3], MDSampler), which differ from the Cham-
+fer Sampler in their selection criterion: feature-space
+stratification, information-theoretic boundary coverage,
+density-based clustering, and one-directional manifold-
+distance ranking. Their inclusion enables the grid to re-
+cover single-stage variants when Stage II disables guid-
+ance, in which case the Chamfer functional’s bidirectional
+structure is no longer matched by Stage II and a one-
+directional alternative may suffice. Full definitions and
+pseudocode are deferred to Appendix D.
+Generative Knowledge Distillation. GKD [10, 19] re-
+places the hard targets in Dcand with soft-label distribu-
+tions produced by a teacher classifier fGKD trained on
+Dreal, yielding the relabeled candidate set DGKD
+cand ; fea-
+tures are left unchanged (Appendix E). GKD is struc-
+turally undefined for continuous regression targets and is
+restricted to classification benchmarks. The grid search
+treats GKD as an orthogonal toggle: each sampler is
+evaluated on both Dcand and DGKD
+cand , and the higher-utility
+variant is retained.
+Inference-Time Refinement Closes the Synthetic-Real Gap in Tabular Diffusion
+Experiments and Results
+Datasets and configurations. We evaluate TARDIS
+on 15 publicly available tabular benchmarks (UCI and
+Kaggle) spanning binary classification (5 datasets), mul-
+ticlass classification (4), and regression (6), with struc-
+tural diversity across feature counts (8 to 46), feature
+types, instance counts (666 to 53,940), class balance,
+and domain coverage (healthcare, finance, environment,
+education, social science). All datasets use a 90/5/5
+train/validation/test split seeded identically across mod-
+els. The TPE search and inner grid of Section 3 are
+run independently per dataset; per-dataset structural at-
+tributes and the configurations selected by the search are
+reported in Appendix F (Tables 4 and 6, respectively).
+Backbone selection. TabDiff [20] is selected as the back-
+bone via a controlled 1:1 cardinality comparison against
+TabSyn [25] and TabularARGN [21] on the 10 bench-
+marks of our corpus shared with prior tabular diffusion
+work. Aggregating the per-dataset relative deviation from
+real-data utility on the headline metric, TabDiff is closest
+to Real with ∆% = −6.7%, followed by TabSyn (−8.9%)
+and TabularARGN (−25.7%). Per-dataset breakdowns
+and full metric coverage are deferred to Appendix B.
+Evaluation protocol. The downstream learner is XG-
+Boost [5] with early stopping on the validation split. We
+adopt the train-on-synthetic-test-on-real (TSTR) proto-
+col, reporting AUROC for binary classification, weighted-
+AUROC for multiclass classification, and RMSE for regres-
+sion as the primary downstream metric ψ. We report the
+per-dataset relative improvement ∆% in ψ both over the
+real-data baseline (sign-corrected for RMSE) and over
+the TabDiff backbone, and aggregate it across the 15
+datasets via the median with bootstrap 95% confidence
+intervals; statistical significance is assessed by Wilcoxon
+signed-rank paired tests, with per-dataset means as
+the unit of comparison. Fidelity (Precision) and diver-
+sity (Recall) are reported via manifold metrics [16]; pri-
+vacy via Distance to Closest Record (DCR) and Nearest-
+Neighbor Distance Ratio (NNDR). Per-dataset and per-
+metric breakdowns are deferred to Appendix G. All exper-
+iments run on a single Nvidia GTX 1080 Ti (12 GB, 2017
+consumer GPU) with 5 random seeds per configuration.
+4.1
+Main results
+Aggregate downstream utility. Across the 15 bench-
+marks (Table 1), TARDIS achieves a median ∆% improve-
+ment of +8.6 over Ureal (95% CI [+3.3, +16.4], Wilcoxon
+p = 0.016), with strict positive improvement on 11 of 15
+datasets and parity on Diamonds. Against the TabDiff
+backbone, the improvement is uniform: ∆% > 0 on ev-
+ery dataset, with median +6.3 and mean +12.9 (95%
+CI [+7.2, +19.2], p < 10−4). The proximity of mean and
+median over Ureal (mean +9.7 vs. median +8.6) indicates
+a tight distribution of dataset-level gains rather than an
+aggregate driven by outliers.
+Cardinality ablation.
+Setting K = 1 disables the
+oversample-and-select component of TARDIS, reducing
+the framework to Stage II guidance applied at the same
+cardinality as Dreal. This restricted variant (TARDIS×1,
+Table 1) reaches mean ∆% = +1.4 over TabDiff but does
+not significantly improve over Ureal (Wilcoxon p > 0.05).
+The full TARDIS gain therefore depends jointly on the
+candidate redundancy of Stage I and on the BCR-driven
+discrete refinement of Stage III; Stage II guidance alone
+is insufficient to close the synthetic-real gap.
+Utility inverse scaling. Per-dataset variance in TARDIS’s
+∆% over Ureal correlates inversely with the real-data
+baseline (Figure 2a): the four datasets where the real
+baseline approaches the metric ceiling (Adult AUROC
+0.927, Bank 0.929, Magic 0.956, Diamonds 0.943) yield
+∆% ∈[−3.0, +0.9], with Bank’s −3.0 the only negative
+point. Beijing represents the analogous case for regres-
+sion: the target admits a near-linear structure that XG-
+Boost on real data already exploits, leaving a residual
+deviation of −12.1. Improvement concentrates instead
+on datasets where Ureal reflects data scarcity, label noise,
+or class imbalance: Solar Flare (+39.5, 1,066 instances),
+Diabetic Retinopathy (+29.5, 1,151 instances), Student
+Performance (+20.9, 666 instances), News (+16.7, imbal-
+anced regression target), Music (+15.2, multiclass with
+rare classes).
+4.2
+Empirical signatures of BCR
+Cardinality
+saturation.
+We
+sweep
+K
+∈
+{0.1, 0.5, 1, 3, 5, 10, 20} with M
+=
+50 fixed on three
+benchmarks spanning the Ureal regime: Adult (AUROC
+0.927), Diamonds (AUROC 0.943), and Beijing (RMSE
+0.033). All three datasets exhibit monotone improvement
+in ψ (Figure 2b), with knees at K ≈3 on Adult and K ≈5
+on Diamonds; on Beijing the curve continues to descend
+through K = 20 without plateauing within the swept
+range. TARDIS overtakes TabDiff near K ≈1.0 on all
+three datasets, indicating that BCR refinement begins to
+add value already at real cardinality. The plateau location
+is ordered consistently with the strength of Ureal: Adult
+saturates early below Real, Diamonds reaches parity
+with Real near K = 20, and Beijing remains below Real
+within the swept range.
+Sampler-guidance coupling. The TPE search and in-
+ner grid expose a structural alignment between Stage II
+guidance and Stage III sampler choice, recovered with-
+out explicit constraint (Table 6). Of the 9 datasets where
+guidance is enabled, all 9 select the Chamfer Sampler in
+Stage III; of the 6 datasets where guidance is disabled,
+4 (Bank, Magic, Music, Abalone) select the MDSampler,
+and the remaining 2 (Adult, Solar Flare) select the Cham-
+fer Sampler with GKD enabled (the only configurations
+with K ≤1, where the candidate pool is too sparse
+for the MDSampler’s purely fidelity-driven selection to
+retain coverage). The configurations therefore cluster
+into two coherent regimes: guided pool with bidirectional
+Chamfer-based selection (9/15), and unguided pool with
+one-directional manifold-distance selection (4/15). When
+Stage II shapes the candidate pool toward the real mani-
+fold via ∇C, the discrete sampler that minimizes the same
+C dominates; when Stage II is disabled and K ≫1, the
+simpler one-directional MDSampler suffices.
+Low-cardinality regime.
+The configuration-level evi-
+Inference-Time Refinement Closes the Synthetic-Real Gap in Tabular Diffusion
+Table 1: Per-dataset downstream utility under TSTR with XGBoost. Primary metric ψ: AUROC for BC, weighted-AUROC for MC (↑),
+RMSE for R (↓). ∆%R and ∆%T are sign-corrected relative changes vs. Real and TabDiff. Best per row in bold; aggregates over
+the 15 datasets at the bottom.
+Dataset
+Task
+Real
+TabDiff
+TARDIS×1
+TARDIS
+∆%R
+∆%T
+Regression - RMSE ↓
+Solar Flare
+R
+0.1025
+0.0923
+0.0869
+0.0620
++39.5
++32.8
+Infrared Therm.
+R
+0.0541
+0.0585
+0.0562
+0.0482
++10.9
++17.6
+Abalone
+R
+0.081
+0.079
+0.075
+0.074
++8.6
++6.3
+Insurance
+R
+0.118
+0.132
+0.143
+0.110
++6.8
++16.7
+Beijing
+R
+0.033
+0.051
+0.051
+0.037
+-12.1
++27.5
+News
+R
+0.01154
+0.01194
+0.01000
+0.00961
++16.7
++19.5
+Binary classification - AUROC ↑
+Diabetic Retin.
+BC
+0.6976
+0.6671
+0.6697
+0.9037
++29.5
++35.5
+Adult
+BC
+0.927
+0.913
+0.922
+0.924
+-0.3
++1.2
+Default
+BC
+0.764
+0.765
+0.768
+0.775
++1.4
++1.3
+Magic
+BC
+0.956
+0.940
+0.949
+0.965
++0.9
++2.7
+Bank
+BC
+0.929
+0.856
+0.863
+0.901
+-3.0
++5.3
+Multiclass classification - weighted-AUROC ↑
+Student Perf.
+MC
+0.7392
+0.7453
+0.6796
+0.8939
++20.9
++19.9
+Contraceptive
+MC
+0.6491
+0.6838
+0.677
+0.7077
++9.0
++3.5
+Music
+MC
+0.729
+0.823
+0.833
+0.840
++15.2
++2.1
+Diamonds
+MC
+0.943
+0.930
+0.934
+0.943
+0.0
++1.4
+Mean
++9.7
++12.9
+Median
++8.6
++6.3
+95% CI
+[+3.3, +16.4]
+[+7.2, +19.2]
+p (Wilcoxon)
+0.016
+< 10−4
+Wins
+11/15
+15/15
+dence in Table 6 surfaces a regime separation along K
+that we term the low-cardinality regime (K ≤1). Across
+the 15 benchmarks, GKD is enabled on 2 datasets only,
+both with K ≤1 (Adult K=0.5, Solar Flare K=0.1); on the
+remaining 13, all with K ≥8.5, the search disables GKD.
+The pattern is consistent with the qualitative mechanism:
+at low K the candidate pool is too sparse for the Chamfer
+Sampler to recover utility through selection alone, and the
+soft-label channel becomes the dominant signal; at high
+K the pool is large enough for selection to suffice, and
+GKD’s smoothing becomes a net negative. The analysis
+is restricted to classification, since GKD is structurally
+undefined for continuous regression targets and is con-
+sistently disabled on the 6 regression datasets in the
+corpus. We position GKD as a regime-specific compo-
+nent for hardware-constrained downstream applications,
+complementing the main result rather than competing
+with it.
+4.3
+Fidelity, diversity, privacy, and runtime
+Fidelity and diversity. Manifold Precision (fidelity) and
+Recall (diversity) [16] are preserved at the TabDiff back-
+bone level on all 15 datasets (Table 2): mean Precision
+0.949 (TARDIS) vs. 0.947 (TabDiff), mean Recall 0.995 vs.
+0.994, with per-dataset absolute deviations bounded by
+0.043 and 0.003 respectively. The BCR-driven refinement
+does not collapse the synthetic distribution onto a sub-
+set of the real manifold, the canonical failure mode of
+Table 2: Fidelity, diversity, and privacy proxies across 15
+datasets.
+Metric
+TabDiff
+TARDIS
+Precision ↑
+0.947±0.073
+0.949±0.069
+Recall ↑
+0.994±0.005
+0.995±0.005
+DCR-1 share 0.501±0.010 0.499±0.013
+NNDR ↑
+0.823±0.115
+0.824±0.107
+utility-aware curation.
+Privacy. DCR-1 share and NNDR are likewise preserved
+at the backbone level (Table 2; per-dataset breakdown in
+Table 8): TARDIS DCR-1 share 0.499 ± 0.013 vs. TabD-
+iff 0.501 ± 0.010, NNDR 0.824 ± 0.107 vs. 0.823 ± 0.115,
+with no per-dataset deviation exceeding 0.04. TARDIS
+does not improve privacy (which is not a claim of this
+paper) and the post-hoc selection mechanism does not
+degrade it either: although the Chamfer Sampler ranks
+candidates by proximity to a real reference batch, the bidi-
+rectional structure of C balances fidelity against coverage,
+preventing convergence onto training records.
+Runtime. On the Nvidia GTX 1080 Ti, TARDIS adds 0.9
+to 79.4 minutes of wall-clock time on top of the trained
+backbone, with a median of 16.1 minutes across the 15
+datasets; the largest case (Bank, ∼45,000 instances)
+runs in 79.4 minutes and the smallest (Solar Flare) in 0.9
+minutes (per-stage breakdown in Appendix H). Stage II
+Inference-Time Refinement Closes the Synthetic-Real Gap in Tabular Diffusion
+(a) Per-dataset ∆% over Ureal as a function of the real-data
+baseline, classification (top, AUROC) and regression (bottom,
+RMSE). Gains concentrate on datasets with low Ureal.
+(b) Cardinality saturation: sweep of K with M = 50 on Adult,
+Diamonds, and Beijing, the three benchmarks where TARDIS
+yields the smallest gain over Real (Table 1). TARDIS still over-
+takes TabDiff near K ≈1.0 on all three.
+Figure 2: Empirical signatures of TARDIS performance: utility headroom (left) and cardinality saturation (right).
+generation accounts for 47% to 90% of the wall-clock bud-
+get; Stage III selection contributes 5% to 38%, with the
+highest fractions on Music and News (both 38%) where
+the candidate pool is large; GKD distillation contributes
+7% to 11% on the two datasets where it is active. The
+dominant cost factor is the M = 50 oversampling, which
+is GPU-throughput-bound and shrinks proportionally on
+modern hardware.
+Discussion and Limitations
+BCR as a domain-transferable principle. The Chamfer
+functional of Equation 3 is modality-agnostic: it requires
+only a differentiable representation map φ and a real-
+data reference batch. Its two operationalizations (continu-
+ous via ∇xtC during reverse diffusion, discrete via batch
+ranking after sampling) extend to image, text, and joint
+multimodal diffusion under domain-appropriate encoders,
+since neither a differentiable score nor a candidate pool
+is tabular-specific. The configuration-level signature of
+Section 4.2, with the unconstrained search electing the
+joint guided-and-Chamfer regime in 9 of 15 cases, is the
+empirical claim BCR makes about its generality. Two fur-
+ther findings sharpen this picture. First, the TARDIS×1
+ablation (Section 4.1) isolates Stage II from Stage III: con-
+tinuous guidance alone yields mean +1.4% over TabDiff
+but does not surpass real-data utility, while the full pipeline
+with bidirectional discrete selection does. The discrete
+level thus carries the dominant share of the gap-closing ef-
+fect, inverting the image-domain emphasis on score-level
+guidance. Second, sample-level privacy is preserved as
+a structural property of the bidirectional functional: the
+coverage term penalizes distributional collapse onto Dreal,
+so ranking by proximity at Stage III cannot drive synthetic
+samples onto training records (Section 4.3). Refinement
+is therefore complementary to backbone improvement,
+not a substitute: any competent tabular diffusion back-
+bone admits this inference-time refinement at fixed com-
+pute overhead, with gains concentrated on the regimes
+where synthetic data is most operationally needed (small
+corpora, label noise, class imbalance).
+Limitations and Future Work. TARDIS is empirically val-
+idated on a single backbone (TabDiff); BCR is backbone-
+agnostic by construction, but transfer to TabSyn (latent-
+space diffusion) and TabDDPM (multinomial diffusion)
+is not empirically tested, and Stage II’s score perturba-
+Inference-Time Refinement Closes the Synthetic-Real Gap in Tabular Diffusion
+tion does not apply to autoregressive (TabularARGN) or
+variational (TVAE) decoders. The oversampling factor
+M is fixed at 50, leaving the M-dependence of the sat-
+uration knee uncharacterized. The headline configura-
+tions use deterministic samplers, so per-seed variance
+reflects pool generation only, and downstream-learner
+transfer beyond XGBoost is not tested. Privacy is re-
+ported through DCR-1 and NNDR proxies, without for-
+mal differential-privacy claims or membership-inference
+evaluation. Future work targets three directions: cross-
+backbone and cross-modality transfer (TabSyn, TabD-
+DPM, image-domain diffusion); an M-sweep enabling an
+adaptive recipe driven by Nr, manifold-coverage gap, and
+deployment cardinality budget; and a differentially-private
+variant consuming calibrated budget at both refinement
+levels.
+Conclusions
+We introduced TARDIS, an inference-time refinement
+framework for pre-trained tabular diffusion backbones,
+grounded in the Bidirectional Chamfer Refinement (BCR)
+principle: a single Chamfer functional minimized contin-
+uously during reverse diffusion via score-level guidance
+and discretely after sampling via batch ranking, with the
+per-dataset search recovering this joint structure on 9 of
+15 benchmarks and selecting single-stage variants on
+the remaining 6. Across 15 heterogeneous tabular bench-
+marks (binary, multiclass, regression), TARDIS achieves
+a median +8.6% improvement in ψ over models trained
+on real data (Wilcoxon p = 0.016, 11/15 strict wins) and
+improves over the TabDiff backbone on every dataset
+(mean +12.9%, p < 10−4), with fidelity, diversity, and pri-
+vacy preserved at the backbone level and a wall-clock
+overhead under 80 minutes on a 2017 consumer GPU.
+The synthetic-real gap is therefore not primarily a training-
+time problem on the studied corpus, and BCR provides
+a domain-transferable principle for inference-time refine-
+ment of pre-trained generative models.
+References
+[1] James Bergstra, Daniel Yamins, and David Cox.
+Making a science of model search: Hyperparameter
+optimization in hundreds of dimensions for vision ar-
+chitectures. In International conference on machine
+learning, pages 115-123. PMLR, 2013.
+[2] Christopher P Burgess, Irina Higgins, Arka Pal, Loic
+Matthey, Nick Watters, Guillaume Desjardins, and
+Alexander Lerchner. Understanding disentangling in
+beta-vae. arXiv preprint arXiv:1804.03599, 2018.
+[3] Ricardo JGB Campello, Davoud Moulavi, and Jörg
+Sander. Density-based clustering based on hierar-
+chical density estimates. In Pacific-Asia Conference
+on Knowledge Discovery and Data Mining, 2013.
+[4] Nitesh V Chawla, Kevin W Bowyer, Lawrence O
+Hall, and W Philip Kegelmeyer. Smote: synthetic
+minority over-sampling technique. Journal of artificial
+intelligence research, 16:321-357, 2002.
+[5] Tianqi Chen and Carlos Guestrin. Xgboost: A scal-
+able tree boosting system. In Proceedings of the
+22nd acm sigkdd international conference on knowl-
+edge discovery and data mining, pages 785-794,
+2016.
+[6] Nicola Dall’Asen, Xiaofeng Zhang, Reyhane Askari
+Hemmat, Melissa Hall, Jakob Verbeek, Adriana
+Romero-Soriano, and Michal Drozdzal. Increasing
+the utility of synthetic images through chamfer guid-
+ance. arXiv preprint arXiv:2508.10631, 2025.
+[7] Maria F Davila R, Sven Groen, Fabian Panse, and
+Wolfram Wingerath. Navigating tabular data syn-
+thesis research understanding user needs and tool
+capabilities. ACM SIGMOD Record, 53(4):18-35,
+2025.
+[8] Daniel G"arber and Lea Demelius. Iterative subset
+selection for high-fidelity synthetic tabular data. In
+EurIPS 2025 Workshop: AI for Tabular Data, 2025.
+[9] EU GDPR. General data protection regulation (gdpr).
+Cit. on, page 4, 2018.
+[10] Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distill-
+ing the knowledge in a neural network. arXiv preprint
+arXiv:1503.02531, 2015.
+[11] Jonathan Ho and Tim Salimans. Classifier-free dif-
+fusion guidance. arXiv preprint arXiv:2207.12598,
+2022.
+[12] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denois-
+ing diffusion probabilistic models. Advances in neu-
+ral information processing systems, 33:6840-6851,
+2020.
+[13] Jayoung Kim, Chaejeong Lee, and Noseong Park.
+Stasy: Score-based tabular data synthesis. arXiv
+preprint arXiv:2210.04018, 2022.
+[14] Diederik P Kingma and Max Welling. Auto-encoding
+variational bayes. arXiv preprint arXiv:1312.6114,
+2013.
+[15] Akim Kotelnikov, Dmitry Baranchuk, Ivan Rubachev,
+and Artem Babenko. Tabddpm: Modelling tabular
+data with diffusion models.
+In International con-
+ference on machine learning, pages 17564-17579.
+PMLR, 2023.
+[16] Tuomas Kynkäänniemi, Tero Karras, Samuli Laine,
+Jaakko Lehtinen, and Timo Aila. Improved precision
+and recall metric for assessing generative models.
+Advances in neural information processing systems,
+32, 2019.
+[17] Chaejeong Lee, Jayoung Kim, and Noseong Park.
+Codi: Co-evolving contrastive diffusion models for
+mixed-type tabular synthesis. In International Con-
+ference on Machine Learning, pages 18940-18956.
+PMLR, 2023.
+[18] Eugenio Lomurno and Matteo Matteucci. Federated
+knowledge recycling: Privacy-preserving synthetic
+data sharing. Pattern Recognition Letters, 190:124-
+130, 2025.
+Inference-Time Refinement Closes the Synthetic-Real Gap in Tabular Diffusion
+[19] Eugenio Lomurno and Matteo Matteucci. Synthetic
+image learning: Preserving performance and pre-
+venting membership inference attacks.
+Pattern
+Recognition Letters, 190:52-58, 2025.
+[20] Juntong Shi, Minkai Xu, Harper Hua, Hengrui Zhang,
+Stefano Ermon, and Jure Leskovec.
+Tabdiff: a
+mixed-type diffusion model for tabular data genera-
+tion. arXiv preprint arXiv:2410.20626, 2024.
+[21] Andrey Sidorenko, Ivona Krchova, Mariana Vargas
+Vieyra, Paul Tiwald, Mario Scriminaci, and Michael
+Platzer. Tabularargn: An auto-regressive generative
+network for tabular data generation. In EurIPS 2025
+Workshop: AI for Tabular Data, 2025.
+[22] Mihaela CÄ Stoian, Eleonora Giunchiglia, and
+Thomas Lukasiewicz. A survey on tabular data gen-
+eration: Utility, alignment, fidelity, privacy, and be-
+yond. arXiv preprint arXiv:2503.05954, 2025.
+[23] HaiYing Wang,
+Min Yang,
+and John Stufken.
+Information-based optimal subdata selection for big
+data linear regression. Journal of the American Sta-
+tistical Association, 114(525):393-405, 2019.
+[24] Lei Xu, Maria Skoularidou, Alfredo Cuesta-Infante,
+and Kalyan Veeramachaneni. Modeling tabular data
+using conditional gan. Advances in neural informa-
+tion processing systems, 32, 2019.
+[25] Hengrui Zhang, Jiani Zhang, Balasubramaniam
+Srinivasan, Zhengyuan Shen, Xiao Qin, Chris-
+tos Faloutsos, Huzefa Rangwala, and George
+Karypis.
+Mixed-type tabular data synthesis with
+score-based diffusion in latent space. arXiv preprint
+arXiv:2310.09656, 2023.
+[26] Zilong Zhao, Aditya Kunar, Robert Birke, Hiek
+Van der Scheer, and Lydia Y Chen.
+Ctab-gan+:
+Enhancing tabular data synthesis. Frontiers in big
+Data, 6:1296508, 2024.
+Inference-Time Refinement Closes the Synthetic-Real Gap in Tabular Diffusion
+A
+Bidirectional Chamfer Refinement: Properties and Saturation
+This appendix collects the structural properties of the symmetric Chamfer functional C (Section A.1), the saturation
+argument that motivates the empirical knee structure of Figure 2b (Section A.2), and its empirical validation on the
+cardinality sweep of Section 4.2 (Section A.3).
+A.1
+Properties of the Symmetric Chamfer Functional
+Let φ : X →Rd be a representation map and A, B ⊂X finite multisets with φ injective on A ∪B. The functional C of
+Equation 3 satisfies: (P1) non-negativity, C(A, B) ≥0 (Euclidean norm under uniform weighting); (P2) identity of
+indiscernibles, C(A, B) = 0 ⇐⇒φ(A) = φ(B) as multisets, since fidelity and coverage terms vanish jointly only
+when the two sets coincide in φ-space; (P3) symmetry, C(A, B) = C(B, A) by construction. P1-P3 jointly justify the
+use of C as a single optimization target: minimizing C(Dsyn, Dreal) at the continuous (Stage II) and discrete (Stage III)
+refinement levels is a coherent objective, since any reduction at one level corresponds to monotone movement toward
+the same target distribution in φ-space.
+A.2
+The BCR Saturation Argument
+We argue that, under reasonable assumptions on the candidate pool and the discrete sampler, Usyn exhibits a
+monotone-then-plateau dependence on the subsampling fraction K, with the knee location governed by the M/K
+ratio. We state this as a principled argument rather than a formal theorem: we do not characterize the convergence
+rate as M →∞, the empirical knee depends on the intrinsic dimension of Dreal in φ-space which we do not formalize,
+and we hold M = 50 fixed throughout our experiments.
+Argument (BCR Saturation). Under the assumptions that (i) Stage II concentrates the empirical density of φ(Dcand)
+around the support of φ(Dreal), (ii) Stage III selects the top K/M fraction of Dcand by C-rank, and (iii) the downstream
+learner is consistent in the cardinality of training data, we expect Usyn to be monotonically non-decreasing in M/K and
+to saturate at K = K∗for a dataset-dependent knee K∗≤M.
+Reasoning. As K decreases relative to M, the Stage III sampler retains only the most C-aligned candidates,
+sharpening φ(Dsyn) around the support of φ(Dreal) and reducing the fidelity term msr of Equation 6; as K →M, the
+selection becomes vacuous and the discrete refinement contributes negligibly. Saturation occurs when the coverage
+term mrs becomes the binding constraint, i.e., when a smaller selection fraction risks under-covering isolated regions
+of the real-data manifold. The knee K∗is expected to scale with the effective intrinsic dimension of Dreal in φ-space
+and with the inverse local density of real samples.
+A.3
+Empirical Validation
+The cardinality sweep K ∈{0.1, 0.5, 1, 3, 5, 10, 20} with M = 50 on Adult, Diamonds, and Beijing (Figure 2b) verifies
+the predicted monotone-then-plateau profile. The knees occur at K∗≈3 for Adult, K∗≈5 for Diamonds, and beyond
+K = 20 for Beijing, an ordering consistent with the intrinsic-dimension intuition (Adult mixed-type but compact; Beijing
+combines hourly cycles and multi-scale meteorology, yielding the highest effective dimension).
+B
+Backbone Selection
+The choice of TabDiff [20] as the underlying backbone for TARDIS results from a controlled head-to-head comparison
+against TabSyn [25] and TabularARGN [21] on 10 of the 15 corpus benchmarks (Adult, Default, Magic, Bank, Music,
+Diamonds, Abalone, Insurance, Beijing, News), for which all three baselines have been independently trained at
+matched 1:1 cardinality. Each backbone was evaluated under the same TSTR protocol of Section 4, with multiple
+utility and fidelity metrics per dataset.
+Aggregate dominance. Of the 50 metric cells, TabDiff dominates on 23, TabSyn on 14, and TabularARGN on 13,
+with dominance concentrated on the primary TSTR metrics (classification AUROC, regression RMSE). TabularARGN
+remains competitive on Bank classification, where its autoregressive factorization handles class-conditional distributions
+effectively, and on News regression, where the high-dimensional feature space (46 attributes) favors per-feature
+autoregressive heads over latent-space diffusion.
+Architecture and TARDIS compatibility. TabDiff’s per-feature noise schedules differentiate noising rates across
+features of heterogeneous scale and cardinality, avoiding the bias that a single shared schedule introduces on
+mixed-type inputs; its continuous reverse process and exposed score εθ make it directly compatible with the Stage II
+score perturbation of Equation 5. TabSyn is similarly compatible via latent-space score perturbation, but loses the
+per-feature inductive bias. TabularARGN and variational generators (e.g., TVAE) are excluded from Stage II since the
+perturbation presumes a continuous reverse process; Stage III remains compatible with any generator producing a
+candidate pool, so the discrete level of BCR transfers to those generators independently.
+Inference-Time Refinement Closes the Synthetic-Real Gap in Tabular Diffusion
+Table 3: Backbone comparison on 10 corpus benchmarks under matched 1:1 cardinality. Primary downstream metric reported:
+AUROC ↑for binary classification, weighted-AUROC ↑for multiclass classification, RMSE ↓for regression. Bold indicates the best
+generator per column, excluding Real. The final column reports the average percentage delta with respect to Real, computed as
+100(m −r)/r for AUROC and 100(r −m)/r for RMSE; higher is better.
+Classification (AUROC ↑)
+Regression (RMSE ↓)
+∆% vs Real ↑
+Model
+Adult Default Magic Bank Music Diamonds Abalone Insurance Beijing
+News
+Avg.
+Real
+.927
+.764
+.956
+.929
+.729
+.943
+.081
+.118
+.033
+.01154
+-
+TabularARGN
+.914
+.751
+.909
+.911
+.714
+.907
+.096
+.281
+.062
+.01117
+−25.72
+TabSyn
+.908
+.768
+.942
+.896
+.724
+.929
+.079
+.132
+.055
+.01201
+−8.88
+TabDiff
+.913
+.765
+.940
+.856
+.823
+.930
+.079
+.132
+.051
+.01194
+−6.68
+C
+Stage II Schedules and Reference Batching
+This appendix specifies the schedule families exposed to the TPE search: the guidance scaling Γ(t) of Stage II
+(Section C.1), the KL annealing weight β(t) used during β-VAE training of φ (Section C.2), and the reference batching
+strategies (Section C.3). Bounds γmin/γmax and βmin/βmax are selected per dataset.
+C.1
+Guidance Schedules Γ(t)
+Let T denote the total number of reverse-diffusion steps, with t ∈[0, T] counting from t = T (pure noise) to t = 0 (final
+sample). We define four functional families for Γ(t), each parameterized by (γmin, γmax) and bounded in [γmin, γmax]:
+Constant:
+Γ(t) = γmax
+(7)
+Linear:
+Γ(t) = γmin + (γmax −γmin) · t
+T
+(8)
+Cosine:
+Γ(t) = γmin + 1
+2(γmax −γmin)
+ 1 + cos
+ π · t
+T
+
+(9)
+Sine:
+Γ(t) = γmax −1
+2(γmax −γmin)
+ 1 + cos
+ π · t
+T
+
+(10)
+Behavioral characterization.
+Constant applies uniform guidance across the trajectory.
+Linear and Sine rise
+monotonically from γmin at t = 0 to γmax at t = T (Sine with cosine curvature, Linear straight); Cosine is the mirror
+image, decaying monotonically from γmax at t = 0 to γmin at t = T.
+C.2
+KL Annealing Schedules β(t)
+Let TVAE denote the total number of training epochs of the β-VAE encoder φ. We define five functional families for the
+KL weight β(t), each parameterized by (βmin, βmax):
+Constant:
+β(t) = βmax
+(11)
+Linear:
+β(t) = βmax · min
+
+1,
+t
+TVAE
+
+(12)
+Cosine:
+β(t) = βmin + 1
+2(βmax −βmin)
+
+1 + cos
+
+π
+t
+TVAE
+
+(13)
+Sine:
+β(t) = βmax −1
+2(βmax −βmin)
+
+1 + cos
+
+π
+t
+TVAE
+
+(14)
+Cyclical:
+β(t) = βmax · t mod Tcyc
+Tcyc
+(15)
+Linear and Sine implement standard KL warmup (low β early, βmax at convergence); Cosine inverts the profile, decaying
+from βmax at initialization to βmin. The Cyclical schedule alternates between regularized and reconstruction-emphasized
+regimes to mitigate posterior collapse on high-cardinality categorical features.
+C.3
+Reference Batching
+The reference batch xr used in Equation 5 is sampled at the start of each generation and held fixed across all
+reverse-diffusion steps. Two batching strategies are exposed to the TPE search:
+Class-conditional batching. For classification tasks, xr is drawn from the same target class as the candidate batch
+xt. This concentrates the gradient ∇xtC on the conditional manifold relevant to the candidate’s target class.
+Inference-Time Refinement Closes the Synthetic-Real Gap in Tabular Diffusion
+Global batching. xr is drawn uniformly from Dreal. It is the default for regression, where there is no class structure,
+and is exposed as an alternative for classification tasks where class-conditional sampling under-represents the global
+manifold structure.
+Per-dataset selection is reported in Appendix F, Table 6.
+D
+Stage III Sampler Definitions
+This appendix defines the five sampler variants composing the Stage III grid: the Chamfer Sampler (Section D.1,
+recap from main text), and the four alternatives Stratified, IBOSS, HDBSCAN, and MDSampler (Sections D.2-D.5).
+All samplers operate on the candidate pool Dcand of cardinality M · Nr produced by Stage II and return a subset of
+cardinality K · Nr that constitutes the synthetic dataset Dsyn.
+D.1
+Chamfer Sampler
+The Chamfer Sampler (Section 3.3) partitions Dcand into batches {Bk} of size b, ranks each by C(Bk, Dreal) (Equation 6),
+and retains the union of the top-ranked batches up to K · Nr samples. It is the discrete counterpart of Stage II’s score
+perturbation, both minimizing C in φ-space.
+D.2
+Stratified Sampler
+The Stratified Sampler partitions Dcand along the target variable for classification tasks, or along quantile bins of the
+target for regression, and samples uniformly within each stratum to match the per-class frequencies of Dreal. The
+selection is independent of feature-space proximity, retaining only the marginal target distribution of the real set.
+D.3
+IBOSS Sampler
+IBOSS (Information-Based Optimal Subdata Selection) [23] selects candidates that span the feature space, ensuring
+every region of the candidate manifold has comparable representation in Dsyn. It favors extremal points at the boundary
+of the candidate distribution and is target-agnostic, operating independently of Dreal.
+D.4
+HDBSCAN Sampler
+The HDBSCAN Sampler clusters Dcand in φ-space using the HDBSCAN algorithm [3] with min_cluster_size = b,
+retaining the top K · Nr clusters by density. It exploits the manifold structure of the candidate pool but is one-directional
+with respect to the real-data manifold: synthetic-pool clusters are selected without aligning to Dreal.
+D.5
+MDSampler
+The MDSampler (Manifold-Distance Sampler) approximates the support of φ(Dreal) as the union of k-nearest-neighbor
+hyperspheres around each real point in φ-space, with each hypersphere centered at φ(r) and radius ρk(r) equal to
+the distance from φ(r) to its k-th nearest neighbor in φ(Dreal) (we use k = 10). Each candidate x ∈Dcand is scored by
+its distance to this estimated manifold,
+dMD(x) =
+min
+r∈Dreal max
+ 0, ∥φ(x) −φ(r)∥2 −ρk(r)
+
+,
+(16)
+which is zero whenever x lies inside any hypersphere and equals the distance from the nearest hypersphere boundary
+otherwise. The MDSampler retains the K ·Nr candidates with smallest dMD, prioritizing candidates inside the real-data
+manifold and falling back on the closest off-manifold ones once the inside set is exhausted. The construction follows
+the manifold Precision proxy of [16]: dMD = 0 corresponds to the inside-the-manifold criterion that defines that metric.
+The MDSampler is the fidelity-driven counterpart of the bidirectional Chamfer Sampler: when Stage II is disabled,
+the candidate pool retains broad coverage by construction, the coverage term mrs of Equation 6 is approximately
+satisfied a priori, and inside-manifold selection suffices; when Stage II is enabled and concentrates the pool around
+φ(Dreal), most candidates already satisfy dMD ≈0 and the bidirectional Chamfer Sampler is needed to discriminate
+via coverage.
+E
+Generative Knowledge Distillation Details
+This appendix details the Generative Knowledge Distillation (GKD) component of Stage III, introduced in Section 3.3.
+Procedure. GKD trains a teacher classifier fGKD : X →∆|Y|−1 on Dreal, where ∆|Y|−1 denotes the (|Y| −1)-
+dimensional probability simplex. For each candidate ˆxj ∈Dcand produced by Stage II, the hard target ˆyj is replaced by
+Inference-Time Refinement Closes the Synthetic-Real Gap in Tabular Diffusion
+the soft-label distribution fGKD(ˆxj), yielding the relabeled set
+DGKD
+cand =
+
+(ˆxj, fGKD(ˆxj))
+	|Dcand|
+j=1
+,
+(17)
+which is then passed to Stage III’s sampler in place of Dcand. The downstream learner A trains under cross-entropy
+with soft targets. GKD relabels targets only, leaving feature vectors ˆxj unchanged.
+Teacher classifier. In our experiments fGKD is XGBoost trained on Dreal under the same hyperparameter search as
+the downstream learner A, with predicted-probability outputs used as soft labels. Matching fGKD to the architectural
+family of A reduces teacher-student mismatch.
+Restriction to classification. GKD is structurally undefined for continuous regression targets: soft labels over R
+require a parametric assumption (e.g., Gaussian conditional) unrelated to the BCR mechanism. GKD is therefore
+disabled by construction on the 6 regression datasets, halving the Stage III grid on those.
+Selection regime. The empirical regime in which GKD is selected is characterized in Section 4.2 (Low-cardinality
+regime).
+F
+Per-Dataset Configurations
+This appendix reports the per-dataset structural attributes of the 15 corpus benchmarks (Section F.1, Table 4), the
+search space optimized by the Tree-structured Parzen Estimator over Stage II hyperparameters (Section F.2, Table 5),
+and the configuration retained per dataset against the validation split (Section F.3, Table 6).
+F.1
+Dataset Summary
+Table 4 reports the structural attributes of the 15 corpus benchmarks, sourced from UCI and Kaggle. Three datasets
+contain missing values (Adult, Beijing, Infrared Thermography), imputed identically across all models: median for
+numerical features, mode for categorical, per training split.
+Table 4: Dataset summary. n = number of instances; d = number of feature columns excluding the target; dn/dc = numerical /
+categorical feature counts; NaN indicates presence of missing values (imputed identically across all models, see Appendix F).
+Dataset
+Task
+n
+d
+dn
+dc
+NaN
+Binary classification
+Adult
+BC
+48,842
+6
+Yes
+Bank
+BC
+45,211
+7
+No
+Default
+BC
+30,000
+14
+No
+Diabetic Retinopathy
+BC
+1,151
+19
+No
+Magic
+BC
+19,020
+10
+No
+Multiclass classification
+Contraceptive
+MC (3)
+1,473
+2
+No
+Diamonds
+MC (5)
+53,940
+6
+No
+Music
+MC (11)
+25,709
+13
+No
+Student Performance
+MC (4)
+11
+11
+No
+Regression
+Abalone
+R
+4,177
+7
+No
+Beijing
+R
+43,824
+6
+Yes
+Infrared Thermography
+R
+1,020
+30
+Yes
+Insurance
+R
+10
+7
+No
+News
+R
+39,644
+44
+No
+Solar Flare
+R
+1,066
+7
+No
+F.2
+TPE Search Space
+Table 5 reports the Stage II hyperparameter search space optimized per dataset by the Tree-structured Parzen
+Estimator. The β-VAE inner study (latent dimension and KL annealing schedule) is invoked only when the outer search
+selects β-VAE mapping; its functional families are reported in Appendix C.2.
+F.3
+Selected Per-Dataset Configurations
+Table 6 reports the configuration retained per dataset by the search procedure against the validation split.
+Inference-Time Refinement Closes the Synthetic-Real Gap in Tabular Diffusion
+Table 5: Stage II hyperparameter search space optimized per dataset by the Tree-structured Parzen Estimator. Domains follow
+Optuna conventions: Cat = categorical, Int = integer-valued with the indicated step, Log = log-uniform, Lin = linear with the indicated
+step. The β-VAE inner study (latent dimension and KL annealing schedule) is invoked only when the outer search selects β-VAE
+mapping; its search space is reported in Appendix C.
+Parameter
+Domain
+Description
+Scale
+K
+[0.1, 25.0]
+Final cardinality multiplier
+Lin (0.1)
+Guidance variant
+{None, identity, β-VAE}
+Toggle and form of φ
+Cat
+Schedule Γ(t)
+{constant, linear, cosine, sine}
+Guidance scaling family
+Cat
+γmax
+[10−1, 5.0]
+Upper bound of Γ(t)
+Log
+γmin
+[10−8, γmax −0.1]
+Lower bound of Γ(t)
+Log
+tg
+[3, 20]
+Guidance step count
+Int (1)
+Batching ratio
+{None, 1, 1/2, 1/4, 1/8, 1/10}
+Class-conditional fraction
+Cat
+Table
+6:
+Per-dataset
+configurations
+selected
+by
+the
+search
+procedure
+against
+the
+validation
+split.
+Stage
+II
+hyperparameters
+from
+TPE
+optimization;
+Stage
+III
+combination
+from
+grid
+search
+over
+{GKD off, GKD on} ×
+{Stratified, IBOSS, HDBSCAN, MDSampler, Chamfer Sampler}.
+Columns:
+K cardinality multiplier; G guidance toggle (✗
+disabled, ✓enabled); Γ schedule family (Section C.1); φ representation map (β-VAE(d) for β-VAE mapping with latent dimension d,
+identity for identity mapping, dash when guidance is disabled); Bratio reference batching fraction; Type class-conditional (cls) or
+global (glob). CS = Chamfer Sampler, MD = MDSampler.
+Stage II (TPE)
+Stage III (grid)
+Dataset
+K
+G
+Γ
+φ
+Bratio
+Type
+GKD
+Sampler
+Adult
+0.5
+✗
+-
+-
+-
+cls
+✓
+CS
+Bank
+24.9
+✗
+-
+-
+-
+cls
+✗
+MD
+Default
+13.1
+✓
+cosine
+identity
+1/4
+cls
+✗
+CS
+Diabetic Retin.
+22.5
+✓
+cosine
+β-VAE(4)
+1/2
+cls
+✗
+CS
+Magic
+23.9
+✗
+-
+-
+-
+cls
+✗
+MD
+Contraceptive
+8.5
+✓
+sine
+β-VAE(16)
+1/4
+cls
+✗
+CS
+Diamonds
+23.1
+✓
+sine
+β-VAE(4)
+1/4
+cls
+✗
+CS
+Music
+20.0
+✗
+-
+-
+-
+cls
+✗
+MD
+Student Perf.
+15.2
+✓
+cosine
+β-VAE(16)
+1/8
+cls
+✗
+CS
+Abalone
+23.0
+✗
+-
+-
+-
+glob
+✗
+MD
+Beijing
+20.0
+✓
+cosine
+identity
+glob
+✗
+CS
+Infrared Therm.
+12.8
+✓
+cosine
+β-VAE(32)
+1/2
+glob
+✗
+CS
+Insurance
+10.0
+✓
+sine
+identity
+1/10
+glob
+✗
+CS
+News
+14.8
+✓
+constant
+β-VAE(4)
+1/8
+glob
+✗
+CS
+Solar Flare
+0.1
+✗
+-
+-
+-
+glob
+✓
+CS
+Aggregate selection counts. The configuration space partitions cleanly along the Stage II guidance toggle. Of the 9
+datasets enabling guidance, 3 select identity mapping in the data space (Default, Beijing, Insurance) and 6 select
+β-VAE mapping in the encoder’s latent space (Diabetic Retinopathy, Contraceptive, Diamonds, Student Performance,
+Infrared Thermography, News); all 9 select the Chamfer Sampler in Stage III. Of the 6 datasets disabling guidance, 4
+select the MDSampler (Bank, Magic, Music, Abalone) and 2 select the Chamfer Sampler with GKD enabled (Adult
+K=0.5, Solar Flare K=0.1, both within the low-cardinality regime K ≤1). GKD is therefore selected on 2 of 15
+datasets, both classification datasets at low K. Reference batching is class-conditional on all 9 classification datasets
+and global on all 6 regression datasets, consistent with the structural distinction between the two task families.
+G
+Auxiliary Metrics
+This appendix reports auxiliary metrics complementing the AUROC, weighted-AUROC, and RMSE numbers of Table 1:
+F1 for classification benchmarks (Section G.1) and per-dataset DCR-1 share and NNDR breakdowns (Section G.2).
+The fidelity (Precision) and diversity (Recall) numbers are reported aggregated in Table 2 of the main text.
+G.1
+Classification F1
+F1 dominance. TARDIS achieves the best F1 on 8 of 9 classification datasets, with the only exception on Adult (0.707
+Real vs. 0.704 TARDIS). Gains concentrate on datasets with strong class imbalance or low-cardinality minority classes
+(Diabetic Retinopathy, Student Performance, Bank), consistent with BCR retaining samples aligned with real-data
+class-conditional manifolds.
+Inference-Time Refinement Closes the Synthetic-Real Gap in Tabular Diffusion
+Table 7: Per-dataset auxiliary downstream classification metrics under TSTR: F1 for binary classification, macro-F1 for multiclass
+classification. Best per row in bold.
+Dataset
+Metric
+Real
+TabDiff
+TARDIS×1
+TARDIS
+Diabetic Retin.
+F1
+0.5329
+0.5469
+0.5999
+0.7407
+Adult
+F1
+0.707
+0.671
+0.696
+0.704
+Default
+F1
+0.447
+0.443
+0.460
+0.460
+Magic
+F1
+0.862
+0.817
+0.837
+0.880
+Bank
+F1
+0.538
+0.463
+0.503
+0.562
+Student Perf.
+macro-F1
+0.5076
+0.5119
+0.3972
+0.7299
+Contraceptive
+macro-F1
+0.4229
+0.4622
+0.4671
+0.5322
+Music
+macro-F1
+0.364
+0.470
+0.471
+0.489
+Diamonds
+macro-F1
+0.801
+0.774
+0.787
+0.804
+G.2
+Per-Dataset Privacy Breakdown
+Table 8: Per-dataset DCR-1 share (closer to 0.50 indicates better balance between train-data proximity and novelty) and NNDR
+(higher indicates more diverse synthetic samples).
+DCR-1 share
+NNDR
+Dataset
+TabDiff
+TARDIS
+TabDiff
+TARDIS
+Solar Flare
+0.4906
+0.5063
+0.8876
+0.8673
+Infrared Therm.
+0.5283
+0.4902
+0.9517
+0.9540
+Abalone
+0.490
+0.494
+0.853
+0.852
+Insurance
+0.487
+0.487
+0.762
+0.773
+Beijing
+0.501
+0.500
+0.857
+0.857
+News
+0.503
+0.505
+0.942
+0.943
+Diabetic Retin.
+0.5068
+0.5382
+0.8706
+0.8689
+Adult
+0.502
+0.498
+0.769
+0.768
+Default
+0.505
+0.500
+0.822
+0.823
+Magic
+0.501
+0.491
+0.882
+0.879
+Bank
+0.489
+0.497
+0.911
+0.910
+Student Perf.
+0.5008
+0.4758
+0.4970
+0.5373
+Contraceptive
+0.5061
+0.5023
+0.6995
+0.6871
+Music
+0.506
+0.504
+0.883
+0.877
+Diamonds
+0.500
+0.499
+0.761
+0.761
+Privacy preservation. TARDIS DCR-1 share remains within ±0.04 of TabDiff on all 15 datasets, with most absolute
+deviations under ±0.02. The three largest deviations (Infrared Thermography −0.0381, Diabetic Retinopathy +0.0314,
+Student Performance −0.0250) correspond to small-corpus datasets where DCR-1 is more sensitive to the specific
+subset retained by Stage III. NNDR is similarly preserved; the largest deviation on Student Performance (+0.0403)
+reflects an unusually low TabDiff baseline (0.4970) on a 666-instance dataset where the metric is unstable.
+H
+Runtime Breakdown
+This appendix details the per-dataset wall-clock time of the TARDIS refinement pipeline (Nvidia GTX 1080 Ti, 12 GB,
+2017 consumer GPU). Per-stage runtimes are reported in Table 9 and visualized in Figure 3. Total times include
+only the TARDIS refinement passes; TabDiff backbone training is performed once per dataset and reused across
+configurations.
+Inference-Time Refinement Closes the Synthetic-Real Gap in Tabular Diffusion
+Table 9: Per-dataset TARDIS runtime breakdown. Stage II is the guided generation of Dcand (M = 50); Stage III is the post-hoc
+selection (Chamfer Sampler or MDSampler); GKD is the soft-label distillation overhead, applicable only when the configuration
+enables it. Datasets sorted by total runtime ascending.
+Dataset
+Stage II Stage III
+GKD
+Total
+(min)
+(min) (min) (min)
+Solar Flare
+0.7
+0.1
+0.1
+0.9
+Insurance
+0.8
+0.2
+-
+1.1
+Student Perf.
+1.0
+0.2
+-
+1.4
+Diabetic Retin.
+1.2
+0.3
+-
+1.7
+Contraceptive
+1.8
+0.1
+-
+2.0
+Infrared Therm.
+1.3
+0.6
+-
+2.1
+Abalone
+2.5
+1.0
+-
+3.8
+Magic
+9.8
+4.9
+-
+16.1
+Music
+14.3
+11.4
+-
+29.8
+Adult
+22.9
+7.0
+2.3
+32.2
+Default
+38.5
+7.1
+-
+47.9
+Beijing
+45.3
+4.9
+-
+53.7
+Diamonds
+43.3
+16.0
+-
+65.3
+News
+36.3
+29.8
+-
+77.7
+Bank
+65.7
+10.1
+-
+79.4
+Figure 3: Stacked-bar visualization of Table 9, with stages ordered Stage II (guided generation), Stage III (selection), GKD. Datasets
+sorted by total runtime ascending.

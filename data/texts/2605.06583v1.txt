@@ -1,0 +1,2217 @@
+IMPROVED TECHNIQUES FOR FINE-TUNING FLOW MODELS VIA
+ADJOINT MATCHING: A DETERMINISTIC CONTROL PIPELINE
+ZHENGYI GUO, JIAYUAN SHENG, DAVID D. YAO, AND WENPIN TANG
+Abstract. We propose a deterministic adjoint matching framework that formulates human
+preference alignment for flow-based generative models as an optimal control problem over
+velocity fields. One can directly regress the control toward a value-gradient-induced target
+under the current policy, leading to a simple and stable training objective. Building on
+this perspective, we introduce a truncated adjoint scheme that focuses computation on the
+terminal portion of the trajectory, where reward-relevant signals concentrate, which yields
+substantial computational savings while preserving alignment quality. We further generalize
+the framework beyond standard KL-based regularization, allowing more flexible trade-offs
+between alignment strength and distributional preservation. Experiments on SiT-XL/2 and
+FLUX.2-Klein-4B demonstrate consistent gains across multiple alignment metrics, along
+with substantially improved diversity and mode preservation.
+FLUX.2-Klein-4B
+2nd ODE-AM-3 (Fine-tuning)
+Figure 1. Prompts are "a sad muppet funeral in a rainy graveyard"; "a futuristic house on
+a floating island with waterfalls and moons"; "a monkey in a blue top hat painted in oil by
+Vincent van Gogh".
+1. Introduction
+Flow matching models [1, 21, 24] are a class of generative models that train neural networks
+to predict a velocity field. This velocity field, described by an ordinary differential equation
+Date: May 8, 2026.
+arXiv:2605.06583v1 [cs.AI] 7 May 2026
+(ODE), enables the transformation of simple probability distributions into complex data dis-
+tributions along straighter, continuous-time trajectories. Due to their training and sampling
+efficiency, flow matching models have seen immense success in large-scale, high-fidelity im-
+age/video generation, powering state-of-the-art models such as Stable Diffusion v3 [9], Flux.2
+[5] and WAN [38].
+It is known that pretrained base models often fail to produce samples that align with human
+preferences for quality and prompt adherence [45]. This is observed even for state-of-the-art
+flow-based models such as Flux.2; see Figure 2. To align a base model with desired outputs
+without compromising its foundational strengths, reward-based post-training is necessary.
+Figure 2. Prompts are "Two planes are placed next to each other." and "Two planes sit
+together on the grass." From left to right: (1) Base, (2) 4th ODE-AM-1, (3) 2nd ODE-AM-3,
+(4) DRaFT-1, and (5) ReFL-5 on FLUX.2-Klein-4B.
+Reinforcement learning from human feedback (RLHF), a reward-based post-training tech-
+nique, was first applied to fine-tune LLMs [27] and has since been extended to diffusion
+model post-training [4, 10]. It encompasses RL with zeroth-order reward such as DDPO
+[4], DPOK [11] and MixGRPO [20]; direct reward-feedback methods such as ReFL [47] and
+DRaFT [6]; and diffusion-DPO [42]. In another direction, stochastic control approaches were
+developed to fine-tune diffusion models [7, 37, 40]. Typically, the objective is to maximize
+reward(post-output) −βDKL(post-output, pre-output),
+(1.1)
+where post/pre-output is the post/pre-trained generation. One advantage of (1.1) is that
+it has a closed-form solution, which is an exponential tilting of the pre-output. The goal is
+to sample this exponential-tilted distribution by solving a stochastic control problem on the
+pretrained base model; see [39] for a review.
+Recently, a series of works [7, 14, 22] proposed to sample a target distribution via adjoint
+matching in the context of stochastic control. The idea is to align the control field with a
+target reward by solving an adjoint ODE backward in time, which has its root in Pontryagin’s
+maximum principle [29, 49].
+However, there are several drawbacks: (1) the objective of
+sampling the exponential-tilted distribution seems to be restrictive for diffusion post-training;
+(2) solving the adjoint ODE can be computationally expensive, especially for large foundation
+models where accurate adjoint integration requires finer time discretization.
+The purpose of this paper is to improve upon adjoint matching techniques for flow models,
+enhancing both training flexibility and efficiency.
+The contributions of this paper are as
+follows:
+• Deterministic control pipeline: As mentioned, most leading-edge base models have
+shifted to flow-based architectures. It is more natural to work within a deterministic control
+framework that aligns with the base model’s inherently efficient sampling scheme, though flow
+matching models do support stochastic samplers [12, 34, 51]. Here, we formulate post-training
+as a deterministic control problem that learns a velocity perturbation on top of a pretrained
+base model.We point out that adjoint matching under this deterministic control setting does
+not generate exactly the exponential-tilted distribution (i.e., the solution to (1.1)), which
+requires a stochastic sampler with memoryless noise schedule [7]. Nevertheless, it bypasses
+extremely large noise in the initial sampling phase with memoryless noise schedule, leading
+to much faster convergence.
+• Beyond KL regularization: KL regularization constrains the fine-tuned model to remain
+close to the base model, mitigating reward hacking.
+In the stochastic control setting, it
+translates into a running cost equal to the squared norm of the control field. While most prior
+works [7, 11, 25, 54] adopted KL regularization in diffusion model alignment, recent studies
+[18, 37, 43] suggest that alternative regularizers may offer superior performance. Here, we
+propose a regularization term defined as an increasing function of the control norm. Particular
+examples include polynomial norms of the control field, which offer greater flexibility in fine-
+tuning flow-based models.
+• Adjoint matching with practical acceleration: We derive simple adjoint matching
+objectives under the deterministic control setting.
+However, solving the adjoint ODE is
+computationally expensive. Here, we introduce a truncated adjoint scheme that allocates
+computation to the most influential terminal steps, following the observations in [7, 19, 47].
+This truncated variant enhances the scalability of adjoint matching for large models: it yields
+a substantial speedup from 345s to 32s per update on FLUX.2-Klein, and meanwhile, the
+image quality is significantly improved with respect to the base model generation. Theoret-
+ically, we illustrate with a few examples where the control norm becomes large toward the
+terminal steps, thus justifying the truncated scheme.
+• Empirical performance: We show that our approach achieves a stronger balance between
+various reward improvements and distributional preservation on two pretrained backbones
+SiT-XL/2 and FLUX.2-Klein. On top of improving reward-related metrics such as Aesthetic
+Score, HPSv2, ImageReward, and PickScore, it also maintains diversity and reduces mode
+collapse as reflected by LPIPS, MS-SSIM, Coverage, and Recall.
+Closely related to our paper is the work [25], where deterministic control was applied to
+fine-tune flow matching models. Different from our approach, they learn the value gradient
+by directly solving the corresponding partial differential equation.
+Related Works: Flow Matching [21] trains a neural network to match a continuous-time
+velocity field, and Rectified Flow [24] learns straight transport paths between noise and
+data, enabling efficient ODE-based sampling. Early large-scale image generation systems
+mostly relied on U-Net [32] backbones, particularly in latent diffusion models(LDMs) and
+the Stable Diffusion [31]. More recently, transformer-based architectures have replaced U-
+Nets in high-capacity generative models. Diffusion Transformers [28] introduced ViT [8]-style
+backbones for diffusion models, while SiT [26] studied scalable interpolant transformers under
+both diffusion and flow-based formulations. Modern text-to-image systems such as Stable
+Diffusion 3 [9] and FLUX [5] further combine rectified-flow-style objectives with transformer
+architectures, showing the scalability of flow-based modeling.
+RLHF has recently been extended from LLMs to diffusion-based generative models. DDPO [4]
+and DPOK [11] cast the generation process as a stochastic policy and optimizes it via policy
+gradient methods. Continuous RL approach was developed in [53, 54] to fine-tune diffusion
+models by treating score matching as action. More recently, GRPO [20, 23, 48]-style methods
+extend group-relative preference optimization to diffusion models. Despite their flexibility,
+RL-based approaches often suffer from high variance in gradient estimation and require care-
+ful tuning of reward scaling and KL constraints. These challenges become more pronounced
+in large-scale text-to-image models, where long sampling trajectories amplify optimization
+instability.
+Optimal control provides a principled framework for steering dynamical systems toward de-
+sired objectives under trajectory-level costs. More recently, it has been used in generative
+modeling and sampling [3, 7, 13, 25, 37, 41, 50]. These approaches provide a more principled
+alternative to reinforcement learning and direct reward optimization, but often suffer from
+high computational cost due to the need for solving auxiliary equations.
+Organization of the paper: The rest of the paper is organized as follows. Section 2 re-
+views flow models and formulates our fine-tuning problem. Section 3 derives our adaptive
+deterministic-control pipeline. Section 4 provides theoretical examples that justify its effi-
+ciency. Section 5 demonstrates the robust empirical performance of our method. Section 6
+concludes.
+2. Preliminaries of flow matching models
+Flow-based generative models. We present flow matching models, following [21, 24]. Let
+X0 ∼p0 = N(0, I) and X1 ∼pdata. Define the reference flow
+¯Xt = βtX0 + αtX1,
+t ∈[0, 1],
+(2.1)
+where α0 = β1 = 0, α1 = β0 = 1, and α′
+t, β′
+t denote the time derivatives of αt, βt. Let pt be the
+marginal probability distribution of ¯Xt. The velocity field is v⋆
+t (x) := E
+
+β′
+tX0 + α′
+tX1
+ ¯Xt = x
+
+,
+which is learned by solving vbase := arg minv Et,X0,X1
+hv( ¯Xt, t) −(β′
+tX0 + α′
+tX1)
+2i
+. Then
+the flow-based sampler is the probability-flow ODE:
+dXt = vbase(Xt, t) dt.
+(2.2)
+When vbase = v⋆, the solution to (2.2) has marginals Xt ∼pt for all t ∈[0, 1], and hence
+X1 ∼pdata.
+The same marginal curve can also be generated by a family of stochastic
+dynamics:
+dXt =
+
+v⋆
+t (Xt) + σ2(t)
+∇log pt(Xt)
+
+dt + σ(t)dBt,
+(2.3)
+for any state-independent diffusion schedule σ(t) (see e.g., [36, Section 5]).
+Unified view of different parameterizations. Flow matching and diffusion models can
+be understood from a common marginal-preserving perspective. Denote
+st(x) := ∇log pt(x),
+κt := α′
+t
+αt
+,
+ηt := βt
+α′
+t
+αt
+βt −β′
+t
+
+.
+By [17, Proposition 6.3.1], for the affine flow (2.1) with Gaussian initial noise, the velocity
+and score are related by v⋆
+t (x) = κtx + ηtst(x). Equivalently, when ηt ̸= 0, st(x) = v⋆
+t (x)−κtx
+ηt
+.
+So different model parameterizations can be converted into the same velocity representation,
+see Table 1 for details. As a result, the stochastic and deterministic flow fine-tuning can be
+unified by holding the same learned velocity vθ:
+dXODE
+t
+= vθ(XODE
+t
+, t) dt,
+dXSDE
+t
+=
+
+vθ(XSDE
+t
+, t) + σ2(t)
+2ηt
+ vθ(XSDE
+t
+, t) −κtXSDE
+t
+
+dt + σ(t)dBt.
+Parameterization
+Predicted quantity
+Conversion to velocity
+Velocity field
+vθ(x, t)
+vθ(x, t)
+Score
+sθ(x, t) ≈∇log pt(x)
+vθ(x, t) = κtx + γtsθ(x, t)
+Noise
+ϵθ(x, t) ≈E[X0 | Xt = x]
+vθ(x, t) = κtx −(κtβt −β′
+t) ϵθ(x, t)
+Clean data
+xθ(x, t) ≈E[X1 | Xt = x]
+vθ(x, t) = β′
+t
+βt x −( β′
+t
+βt αt −α′
+t)xθ(x, t)
+Table 1. Equivalent parameterizations under (2.1).
+3. Fine-tune flow models with adjoint matching
+3.1. Deterministic Optimal Control. Consider the control problem [2, 29, 35]:
+min
+u L(u; Xu) =
+Z 1
+f(∥u(Xt, t)∥) dt + g(X1),
+X0 = x,
+(3.1)
+subject to the deterministic control-affine dynamics
+˙Xt = vbase(Xt, t) + u(Xt, t),
+t ∈[0, 1].
+(3.2)
+Here Xt ∈Rd denotes the state of the system, u : Rd × [0, 1] →Rd is the control, vbase is
+the pre-trained velocity field, f : R+ →R is a regularization on the control magnitude, and
+g : Rd →R is the terminal cost.
+Define the cost-to-go functional starting from state x at time t under control u:
+J(u; x, t) :=
+Z 1
+t
+f(∥u(Xs, s)∥) ds + g(X1),
+where Xt = x.
+The corresponding value function is:
+V (x, t) := min
+u J(u; x, t) = J(u⋆; x, t),
+(3.3)
+where u⋆(x, t) denotes the pointwise optimal control.
+Under regularity assumptions, the
+equality of V (x, t) and the optimal control at u = u⋆is given by (See Appendix A.1&A.2):
+∇uf(∥u∥)
+
+u=u⋆+ ∇xV (x, t) = 0.
+(3.4)
+Motivation for general regularization: As mentioned in the introduction, the common
+choice is f(r) = 1
+2r2, which corresponds to the KL-regularized control cost. However, this
+quadratic choice is not indispensable: more general control penalties f can be used in the
+the adjoint-matching target.
+3.2. Adjoint Matching(AM). To compute the gradient of L(u; Xu) in (3.1) with respect
+to control parameters, we rely on the adjoint method. As shown in [7, Appendix E.2], this
+continuous-adjoint gradient can be learned by a matching objective. Define
+a(t; Xu, u) := ∇Xt
+Z 1
+t
+f(∥u(Xs, s)∥) ds + g(X1)
+
+,
+representing the sensitivity of the cost-to-go under current control u. We have a(t; Xu, u)∥Xt=x =
+∇xJ(u; x, t). It can be shown that the adjoint state satisfies the backward ODE:
+d
+dta(t; Xu, u) = −
+h
+a⊤∇Xt
+
+vbase(Xt, t) + u(Xt, t)
+
++ ∇Xtf(∥u(Xt, t)∥)
+i
+,
+(3.5)
+with the terminal condition a(1; Xu, u) = ∇X1g(X1). Note that at the optimum u(x, t) =
+u⋆(x, t), a = ∇xV (x, t). Multiplying (3.4) by ∇Xtu(Xt, t), we have:
+a⊤∇Xtu(Xt, t) + ∇Xtf(∥u(Xt, t)∥) = 0.
+Substituting it into (3.5) yields a simplified "lean" adjoint:
+d
+dt˜a(t; Xu, u) = −
+h
+˜a(t; Xu, u)⊤∇Xtvbase(Xt, t)
+i
+,
+˜a(1; Xu, u) = ∇X1g(X1).
+(3.6)
+Motivation for truncated time-steps: Theoretical and empirical analysis (Section 4 and
+Appendix C) on the backward ODE (3.6) shows that the last few denoising steps are the
+most important. The parameter τ ∈[0, 1) allows us to start control from an intermediate
+denoising time. Since the dynamics are deterministic, the distribution of X1 is induced solely
+by the distribution Xτ and the chosen control u.
+Observe that Equation (3.4) is a fixed-point problem.
+As long as f is differentiable and
+invertible, we can solve for u⋆(x, t) as a function of the (optimal) lean adjoint ˜a(x, t) from
+this equation. This provides a surrogate target to train our control iteratively.
+Theorem 3.1. For the deterministic controlled problem (3.1) on the time horizon [τ, 1]
+subject to (3.2), if f : R+ →R is continuously differentible, strictly convex and increasing,
+then there is an optimal control u⋆given by
+u⋆
+t = −(f′)−1(∥at∥)
+∥at∥
+at,
+t ∈[τ, 1].
+(3.7)
+Example: Typically, we can choose polynomial regularization f(x) =
+pλxp. Then the
+optimal control is u⋆
+t = −λ
+p−1 ∥at∥
+2−p
+p−1 at.
+Now we propose our Deterministic Adjoint Matching (AM) objective:
+LAdj-Match(u; X) := 1
+Z 1
+τ
+u(Xt, t) −u⋆(˜a(t, Xt))
+2 dt,
+1
+3
+10
+15 20
+Truncation Steps (nc)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Normalized improvement over base
+SDE Sampling
+2
+5
+15 20
+Truncation Steps (nc)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+ODE Sampling
+HPSv2
+ImageReward
+CLIPScore
+PickScore
+(a) Normalized reward improvement for Trun-
+cated AM. ntruncate = 10, 12, 15 achieves best
+performances.
+13
+17
+log10 (Reward Scale)
+0.80
+0.85
+0.90
+0.95
+1.00
+Normalized improvement over base
+HPSv2
+13
+17
+log10 (Reward Scale)
+0.80
+0.85
+0.90
+0.95
+1.00
+ImageReward
+ODE-AM-4
+ODE-AM-6
+(b) Normalized reward improvement for HPSv2
+(left) and ImageReward (right) under ODE-
+AM-4 and -6 at ntruncate = 10.
+Figure 3. Ablations on SiT-XL/2: (a) truncation horizon and (b) reward
+scale across higher-order ODE adjoint matching variants. See Table 6 and
+Table 5 in Appendix D for full results
+where ˜at satisfies ODE (3.6) and the stochastic process X ∼p¯u with ¯u = stopgrad(u). See
+Algorithm 1 for the empirical implementation pipelines of our adaptive methods, where our
+adaptions are marked in red as well.
+Stochastic adjoint matching algorithm can also be leveraged in our finetuning tasks, see
+Appendix B for detailed explanations on stochastic AM and corresponding algorithm.
+4. Theory and Algorithms of deterministic adjoint matching
+Section 3 introduced two additional components of deterministic adjoint matching: a trun-
+cated time horizon τ and a general control regularizer f(·). Empirically, control intensity is
+highly non-uniform: [19] showed that successful first-order methods assign more weight to
+high-SNR steps. Two toy models with Variance Exploding and Variance Preserving dynamics
+also show the same trend (Figure 6 in Appendix C). Moreover, integrating the full-trajectory
+adjoint ODE is expensive for large models and prone to error accumulation.
+Quadratic regularization overemphasizes steps with maximal adjoints. Higher-order regu-
+larization mitigates this issue (see Appendix D.1). Here we give some simple calculations
+motivating why combining time truncation with higher-order regularization can significantly
+reduce computational cost while improving performance. Proofs are deferred to Appendix C.
+4.1. Time Horizon. Consider the following elementary setting: X0 ⊥X1 and the rectified
+flow Xt = (1 −t)X0 + tX1, t ∈[0, 1]. Let vt(x) := E[X1 −X0 | Xt = x] be the corresponding
+velocity. We analyze the controlled dynamics ˙Xu
+t = vt(Xu
+t )+ut with terminal adjoint a(1) ̸= 0
+and optimal control u⋆
+t given by Theorem 3.1. Proposition 4.1 shows that, when σ > 1, the
+control maximizer lies in the later stage of the denoising trajectory.
+Proposition 4.1 (Unique later-stage control maximum). Suppose X0 ∼N(µ, σ2) and X1 ∼
+N(0, 1) are independent, the control intensity takes a unique maximum at t⋆=
+σ2
+1+σ2 .
+Relative intensity is independent of the specific fine-tuned target. Also, the reward scale λ
+changes only the absolute, rather than relative, control intensity.
+4.2. Regularization. Proposition 4.2 below shows that higher-order polynomial regulariza-
+tion preserves the same peak location but smooths the normalized control curve (see Figure 7
+in Appendix C). Therefore, a broader later-stage region remains close to the maximal control
+strength, which helps truncated adjoint matching retain neighboring reward-relevant signals.
+This toy example aligns with our empirical observations in Appendix D.1.
+Proposition 4.2 (Relative Control strength). Under the same setup as Proposition 4.1, for
+p-th order polynomial regularization, the normalized relative control strength is given by
+Rp(t) :=
+∥u⋆
+t ∥
+maxs∈[0,1] ∥u⋆s∥=
+
+σ2
+((1 −t)2σ2 + t2)(1 + σ2)
+1/(2p−2)
+.
+Algorithm 1 Deterministic Adjoint Matching with polynomial regularization
+Require: Pretrained velocity field vbase, parametrized velocity field vθ, reward model r,
+exponent p > 1, cost weight λ > 0, step size h, number of control steps T, number of
+finetune iterations N, batch size m.
+1: Initialize vθ ←vbase.
+2: for n = 0, . . . , N −1 do
+3:
+Generate m trajectories using current model at t = 0, . . . , 1 −h:
+Xt+h = Xt + hvθ(Xt, t),
+X0 ∼N(0, I).
+4:
+Integrate the lean adjoint backwards in t = 1, 1 −h, . . . , 1 −(T −1)h:
+˜at−h = ˜at + h˜a⊤
+t ∇Xtvbase(Xt, t)
+˜a1 = −∇X1r(X1).
+Note that both Xt and ˜at should be computed without gradients, i.e. Stop gradients:
+Xt = stopgrad(Xt), ˜at = stopgrad(˜at).
+5:
+Compute target-matching loss for each trajectory:
+L(θ) =
+mT
+X
+t∈{1,...,1−Th}
+
+
+vθ(Xt, t) −vbase(xt, t)
+
+−
+
+−λ
+p−1 ∥˜at∥(2−p)/(p−1)˜at
+
+.
+6:
+Compute the gradient ∇θL and update θ.
+7: end for
+5. Numerical Results
+In this section, we test our algorithms against two flow matching baselines: SiT-XL/2
+(675M Params., [26]) and FLUX.2-Klein (4B Params., [5]). For both models, we fine-
+tune with HPSv2 reward [46]. For evaluation, we also use other preference and alignment
+metrics: ImageReward [47], Aesthetic Score [33], CLIPScore [30], and PickScore [16].
+We present our method by "Regularization order" + "ODE/SDE" + "AM" + "Truncate
+steps". For example, 4th ODE-AM-3 means deterministic (ODE) adjoint matching with
+4th order polynomial regularization and truncate adjoint ODE to the last 3 steps.
+5.1. SiT-XL/2 on ImageNet. SiT achieves strong ImageNet generation quality with small
+parameter sizes, ideal for detailed ablation studies. To evaluate this class-conditional model,
+we convert each of the 1000 ImageNet classes into a descriptive class prompt and generate
+Method
+ntruncate
+Regularization
+HPSv2 ↑
+ImageReward ↑
+CLIPScore ↑
+PickScore ↑
+Iter. Time (s) ↓
+Base Model
+-
+-
+0.183±0.038
+−0.658±0.915
+0.239±0.049
+0.190±0.011
+−
+DRaFT-1
+-
+-
+0.296±0.041
+0.266±0.909
+0.260±0.041
+0.200±0.011
+26.7
+ReFL-10
+-
+-
+0.297±0.034
+0.282±0.885
+0.265±0.038
+0.200±0.011
+26.4
+SDE-AM
+2nd
+0.319±0.038
+0.491±0.876
+0.271±0.038
+0.206±0.011
+47.6
+SDE-AM
+2nd
+0.318±0.038
+0.522±0.867
+0.273±0.038
+0.206±0.011
+49.6
+SDE-AM
+50(Full)
+2nd
+0.279±0.038
+−0.084±0.989
+0.244±0.052
+0.197±0.012
+83.8
+ODE-AM
+2nd
+0.316±0.040
+0.450±0.903
+0.266±0.040
+0.204±0.011
+47.3
+ODE-AM
+4th
+0.328±0.038
+0.574±0.834
+0.269±0.040
+0.206±0.011
+47.3
+ODE-AM
+6th
+0.329±0.039
+0.535±0.862
+0.269±0.039
+0.207±0.011
+47.7
+ODE-AM
+2nd
+0.321±0.039
+0.477±0.860
+0.266±0.039
+0.205±0.011
+49.3
+ODE-AM
+2nd
+0.324±0.039
+0.522±0.877
+0.267±0.040
+0.206±0.011
+52.0
+ODE-AM
+50(Full)
+2nd
+0.290±0.037
+0.185±0.967
+0.243±0.049
+0.199±0.012
+83.8
+Table 2. Comparison on reward metrics with SiT-XL/2. Best values are
+shown in bold, second-best are underlined.
+Figure 4. Above: SiT-XL/2 base model. Below: SiT-XL/2 with 6th ODE-AM-10
+finetune for 150 steps. ImageNet classes, from left to right Shetland sheepdog, tiger cat, esser
+panda (red panda), castle, forklift and computer keyboard.
+images conditioned on the corresponding class labels. We investigate the effects of trajectory
+stochasticity, truncate steps and regularization mode with four reward/alignment metrics,
+see Table 2. The results show our pipelines improve over the base SiT model across all four
+fidelity metrics, while 10-step truncation with 6th order regularization achieves the overall
+best performance. See Figure 3 for ablations and Figure 4 for generated images.
+SDE-AM-Full and ODE-AM-Full already improve over the base SiT model, but they are
+less efficient, as discussed in Section 4.1. In particular, truncated AM consistently improves
+the four reward metrics while reducing the per-iteration wall-clock time from 83.8s for ODE-
+AM-Full to 39 ∼57s. Detailed ablation studies are provided in Appendix D.3.
+5.2. FLUX.2-Klein-4B Text to Image. We fine-tune FLUX.2-Klein-4B with 20 sampling
+steps and 500 iterations, using prompt set from the dataset HPDv2 in HPSv2. For evalua-
+tion, other than the fidelity scores, we also report within-prompt diversity metrics LPIPS [52],
+1-MS-SSIM [44], and distribution-preservation metrics Recall and Recovery. Detailed evalu-
+ation protocols are deferred to Appendix D.4.
+From Table 3, our truncated AM variants (even with 1 step) improve the HPSv2 reward
+dramatically compared to the base model. While the baselines DRaFT and ReFL achieve
+slightly stronger gains on some fidelity metrics, our methods preserve much better within-
+prompt diversity and the base-model distribution, as shown in Table 4. In addition, with
+qualitative examples provided in Figure 5, we see clearly that truncated AM is less prone to
+reward hacking and mode collapse.
+Figure 5. Prompts are "A portrait of a cat wearing a samurai helmet." and "A snowy lake
+in Sweden captured in a vibrant, cinematic style with intense detail and raytracing technology
+showcased on Artstation." Left to right: (1) Base, (2) 2nd ODE-AM-1, (3) 2nd ODE-AM-3,
+(4) DRaFT-1, and (5) ReFL-5.
+To put it more clearly, some methods such as 6th ODE-AM-1 and ReFL-5, appear to score
+higher on training reward HPSv2. However, when it comes to image diversity, methods such
+as 2nd ODE-AM-3, 2nd ODE-AM-1 and 6th ODE-AM-3 outperforms, as they have
+high LPIPS and 1-MS-SSIM. Overall, our approach is better at preserving diversity, which is
+consistent with the observation in [25] that methods based on direct differentiation tend not
+to align with the target distribution, but only favor some modes of it. To examine whether
+fine-tuning leads to mode collapse, we also compute Recall and Coverage to measure how
+much the fine-tuned distribution deviates from the original base distribution. We observe that
+2nd ODE-AM-1 and 6th ODE-AM-3 preserve the distribution significantly better than
+others. One reason is that high-reward training methods such as DRaFT and ReFL tend
+to produce overly bright or visually flashy images, often at the cost of semantic alignment.
+Through various level of truncated steps and order of regularization, our methods managed
+to balance the tradeoff between achieving high image fidelity and preventing reward hacking.
+Finally, we observe significant acceleration with truncated Adjoint Matching compared to full
+adjoint matching during training: wall-clock time decreased from 345s/iter. in ODE-AM-Full
+to 32s/iter. in ODE-AM-1. For detailed analysis, see Appendix D.3.
+6. Conclusion and Future Directions
+We introduced a deterministic AM pipeline for fine-tuning flow models, combining general
+control regularization with truncated adjoint computation. The method improves reward
+alignment while preserving diversity and substantially reducing training cost.
+In the future, we will extend deterministic adjoint matching to video generation or discrete
+diffusion models. In addition, our adaptive regularization is currently developed only for the
+Method
+ntruncate
+Regularization
+Aesthetic ↑
+HPSv2 ↑
+ImageReward ↑
+PickScore ↑
+Iter. Time (s) ↓
+Base Model
+-
+-
+5.549±0.665
+0.290±0.039
+1.074±0.645
+0.221±0.014
+-
+DRaFT-1
+-
+-
+6.440±0.385
+0.458±0.045
+1.556±0.455
+0.235±0.017
+24.7
+ReFL-5
+-
+-
+6.336±0.356
+0.466±0.046
+1.473±0.521
+0.234±0.018
+24.1
+ODE-AM
+2nd
+6.297±0.544
+0.413±0.047
+1.470±0.503
+0.235±0.017
+32.2
+ODE-AM
+4th
+6.307±0.427
+0.449±0.043
+1.522±0.503
+0.235±0.017
+32.2
+ODE-AM
+6th
+6.204±0.400
+0.470±0.046
+1.531±0.514
+0.235±0.018
+32.2
+ODE-AM
+2nd
+6.297±0.550
+0.422±0.047
+1.505±0.490
+0.236±0.017
+65.3
+ODE-AM
+4th
+6.313±0.440
+0.449±0.043
+1.557±0.475
+0.235±0.017
+65.3
+ODE-AM
+6th
+6.309±0.530
+0.422±0.043
+1.502±0.524
+0.234±0.017
+65.3
+ODE-AM
+20(Full)
+2nd
+6.437±0.520
+0.382±0.044
+1.160±0.679
+0.227±0.017
+345.5
+Table 3. Comparison on fidelity/reward/time metrics with FLUX.2-
+Klein-4B. Best values are in bold, second-best are underlined .
+Method
+ntruncate
+Regularization
+LPIPS ↑
+1-MS-SSIM ↑
+Coverage ↑
+Recall ↑
+Base Model
+-
+-
+0.505±0.073
+0.857±0.113
+-
+-
+DRaFT-1
+-
+-
+0.401±0.069
+0.757±0.102
+0.080
+0.010
+ReFL-5
+-
+-
+0.431±0.070
+0.779±0.103
+0.047
+0.002
+ODE-AM
+2nd
+0.448±0.078
+0.832±0.111
+0.376
+0.129
+ODE-AM
+4th
+0.420±0.074
+0.801±0.109
+0.204
+0.037
+ODE-AM
+6th
+0.424±0.073
+0.804±0.102
+0.139
+0.012
+ODE-AM
+2nd
+0.454±0.074
+0.843±0.104
+0.306
+0.057
+ODE-AM
+4th
+0.432±0.075
+0.810±0.111
+0.224
+0.042
+ODE-AM
+6th
+0.450±0.073
+0.813±0.115
+0.396
+0.083
+ODE-AM
+20(Full)
+2nd
+0.449±0.065
+0.817±0.098
+0.262
+0.106
+Table 4. Comparison on diversity and distribution metrics with FLUX.2-
+Klein-4B. Best values are in bold, second-best are underlined (excluding the
+base model).
+deterministic dynamics; extending it under the stochastic maximum principle would provide
+a more complete theory.
+Finally, a principled recipe for optimal truncation, potentially
+through online estimation of control intensity, is left for future work.
+Acknowledgment: Wenpin Tang is supported by NSF CAREER Award DMS-2538791
+and the Tang Family Assistant Professorship. Jiayuan Sheng and David D. Yao are part
+of a Columbia-CityU/HK collaborative project that is supported by InnoHK Initiative, The
+Government of the HKSAR and the AIFT Lab.
+References
+[1] M. S. Albergo, N. M. Boffi, and E. Vanden-Eijnden. Stochastic interpolants: a unifying framework for
+flows and diffusions. J. Mach. Learn. Res., 26:Paper No. [209], 80, 2025.
+[2] R. Bellman. Dynamic Programming. Princeton Landmarks in Mathematics. Princeton University Press,
+Princeton, NJ, 1957. Reprinted in 2010 by Princeton University Press.
+[3] J. Berner, L. Richter, and K. Ullrich. An optimal control perspective on diffusion-based generative mod-
+eling. Transactions on Machine Learning Research, 2024.
+[4] K. Black, M. Janner, Y. Du, I. Kostrikov, and S. Levine. Training diffusion models with reinforcement
+learning. In ICLR, 2024.
+[5] Black Forest Labs. FLUX.2: Frontier Visual Intelligence.  2025.
+[6] K. Clark, P. Vicol, K. Swersky, and D. J. Fleet. Directly fine-tuning diffusion models on differentiable
+rewards. 2023. arXiv:2309.17400.
+[7] C. Domingo-Enrich, M. Drozdzal, B. Karrer, and R. T. Chen. Adjoint matching: Fine-tuning flow and
+diffusion generative models with memoryless stochastic optimal control. In ICLR, 2025.
+[8] A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M. Min-
+derer, G. Heigold, S. Gelly, J. Uszkoreit, and N. Houlsby. An image is worth 16x16 words: Transformers
+for image recognition at scale. In ICLR, 2021.
+[9] P. Esser, S. Kulal, A. Blattmann, R. Entezari, J. M¨uller, H. Saini, Y. Levi, D. Lorenz, A. Sauer, and
+F. Boesel. Scaling rectified flow transformers for high-resolution image synthesis. In ICML, pages 12606-
+12633, 2024.
+[10] Y. Fan and K. Lee. Optimizing DDPM sampling with shortcut fine-tuning. 2023. arXiv:2301.13362.
+[11] Y. Fan, O. Watkins, Y. Du, H. Liu, M. Ryu, C. Boutilier, P. Abbeel, M. Ghavamzadeh, K. Lee, and
+K. Lee. DPOK: Reinforcement learning for fine-tuning text-to-image diffusion models. In Neurips, 2023.
+[12] R. Gao, E. Hoogeboom, J. Heek, V. De Bortoli, K. P. Murphy, and T. Salimans. Diffusion meets flow
+matching: Two sides of the same coin. 2024. 
+[13] Y. Han, M. Razaviyayn, and R. Xu. Stochastic control for fine-tuning diffusion models: Optimality,
+regularity, and convergence. In ICML, pages 21844 - 21870, 2025.
+[14] A. Havens, B. K. Miller, B. Yan, C. Domingo-Enrich, A. Sriram, B. Wood, D. Levine, B. Hu, B. Amos,
+B. Karrer, X. Fu, G.-H. Liu, and R. T. Q. Chen. Adjoint sampling: Highly scalable diffusion samplers
+via adjoint matching. 2025. arXiv:2504.11713.
+[15] J. Ho and T. Salimans. Classifier-free diffusion guidance. In NeurIPS 2021 Workshop on Deep Generative
+Models and Downstream Applications, 2021.
+[16] Y. Kirstain, A. Polyak, U. Singer, S. Matiana, J. Penna, and O. Levy. Pick-a-Pic: An open dataset of
+user preferences for text-to-image generation. 2023. arXiv:2305.01569.
+[17] C.-H. Lai, Y. Song, D. Kim, Y. Mitsufuji, and S. Ermon. The principles of diffusion models, 2025.
+arXiv:2510.21890.
+[18] C. Laidlaw, S. Singhal, and A. Dragan. Correlated proxies: A new definition and improved mitigation
+for reward hacking. In ICLR, 2025.
+[19] J. Lee, J. Chang, J. Kim, and J. C. Ye. Reward score matching: Unifying reward-based fine-tuning for
+flow and diffusion models. 2026. arXiv:2604.17415.
+[20] J. Li, Y. Cui, T. Huang, Y. Ma, C. Fan, Y. Cheng, M. Yang, Z. Zhong, and L. Bo. MixGRPO: Unlocking
+flow-based GRPO efficiency with mixed ODE-SDE. 2025. arXiv:2507.21802.
+[21] Y. Lipman, R. T. Chen, H. Ben-Hamu, M. Nickel, and M. Le. Flow matching for generative modeling.
+In ICLR, 2023.
+[22] G.-H. Liu, J. Choi, Y. Chen, B. K. Miller, and R. T. Chen. Adjoint Schr¨odinger bridge sampler. In
+Neurips, 2025.
+[23] J. Liu, G. Liu, J. Liang, Y. Li, J. Liu, X. Wang, P. Wan, D. Zhang, and W. Ouyang. Flow-GRPO:
+Training flow matching models via online RL. 2025. arXiv:2505.05470.
+[24] X. Liu and C. Gong. Flow straight and fast: Learning to generate and transfer data with rectified flow.
+In ICLR, 2023.
+[25] Z. Liu, T. Z. Xiao, C. Domingo-Enrich, W. Liu, and D. Zhang. Value gradient guidance for flow matching
+alignment. In Neurips, 2025.
+[26] N. Ma, M. Goldstein, M. S. Albergo, N. M. Boffi, E. Vanden-Eijnden, and S. Xie. SiT: Exploring flow
+and diffusion-based generative models with scalable interpolant transformers. In ECCV. Springer, 2024.
+[27] L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama,
+and A. Ray. Training language models to follow instructions with human feedback. In Neurips, volume 35,
+pages 27730-27744, 2022.
+[28] W. Peebles and S. Xie. Scalable diffusion models with transformers. In ICCV, 2023.
+[29] L. S. Pontryagin, V. G. Boltyanskii, R. V. Gamkrelidze, and E. F. Mishchenko. The Mathematical Theory
+of Optimal Processes. Interscience Publishers John Wiley & Sons, Inc., New York-London, 1962.
+[30] A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin,
+J. Clark, G. Krueger, and I. Sutskever. Learning transferable visual models from natural language super-
+vision. In ICML, pages 8748-8763, 2021.
+[31] R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer. High-resolution image synthesis with
+latent diffusion models. In CVPR, pages 10684-10695, June.
+[32] O. Ronneberger, P. Fischer, and T. Brox. U-net: Convolutional networks for biomedical image segmen-
+tation. In MICCAI, volume 9351 of Lecture Notes in Computer Science, pages 234-241, 2015.
+[33] C. Schuhmann, R. Beaumont, R. Vencu, C. Gordon, R. Wightman, M. Cherti, T. Coombes, A. Katta,
+C. Mullis, M. Wortsman, P. Schramowski, S. Kundurthy, K. Crowson, L. Schmidt, R. Kaczmarczyk, and
+J. Jitsev. Laion-5b: An open large-scale dataset for training next generation image-text models. 2022.
+arXiv:2210.08402.
+[34] J. Sheng, H. Zhao, H. Chen, D. D. Yao, and W. Tang. Understanding sampler stochasticity in training
+diffusion models for RLHF. 2025. arXiv:2510.10767.
+[35] W. Tang, H. V. Tran, and Y. P. Zhang. Policy iteration for the deterministic control problems: a viscosity
+approach. SIAM J. Control. Optim., 63, 2025.
+[36] W. Tang and H. Zhao. Score-based diffusion models via stochastic differential equations. Stat. Surv.,
+19:28-64, 2025.
+[37] W. Tang and F. Zhou. Fine-tuning of diffusion models via stochastic control: entropy regularization and
+beyond. 2026. To appear in ACC.
+[38] Team WAN. WAN: Open and advanced large-scale video generative models. 2025. arXiv:2503.20314.
+[39] M. Uehara, Y. Zhao, T. Biancalani, and S. Levine. Understanding reinforcement learning-based fine-
+tuning of diffusion models: A tutorial and review. 2024. arXiv:2407.13734.
+[40] M. Uehara, Y. Zhao, K. Black, E. Hajiramezanali, G. Scalia, N. L. Diamant, A. M. Tseng, T. Biancalani,
+and S. Levine. Fine-tuning of continuous-time diffusion models as entropy-regularized control. 2024.
+arXiv:2402.15194.
+[41] M. Uehara, Y. Zhao, K. Black, E. Hajiramezanali, G. Scalia, N. L. Diamant, A. M. Tseng, T. Biancalani,
+and S. Levine. Fine-tuning of continuous-time diffusion models as entropy-regularized control. 2024.
+arXiv:2402.15194.
+[42] B. Wallace, M. Dang, R. Rafailov, L. Zhou, A. Lou, S. Purushwalkam, S. Ermon, C. Xiong, S. Joty, and
+N. Naik. Diffusion model alignment using direct preference optimization. In CVPR, pages 8228-8238,
+2024.
+[43] C. Wang, Y. Jiang, C. Yang, H. Liu, and Y. Chen. Beyond reverse KL: Generalizing direct preference
+optimization with diverse divergence constraints. In ICLR, 2024.
+[44] Z. Wang, E. P. Simoncelli, and A. C. Bovik. Multi-scale structural similarity for image quality assessment.
+In Conf. Rec. Asilomar Conf. Signals Syst. Comput., 2003.
+[45] G. I. Winata, H. Zhao, A. Das, W. Tang, D. D. Yao, S.-X. Zhang, and S. Sahu. Preference tuning
+with human feedback on language, speech, and vision tasks: a survey. J. Artificial Intelligence Res.,
+82:2595-2661, 2025.
+[46] X. Wu, Y. Hao, K. Sun, Y. Chen, F. Zhu, R. Zhao, and H. Li. Human preference score v2: A solid
+benchmark for evaluating human preferences of text-to-image synthesis. In ICCV, 2023.
+[47] J. Xu, X. Liu, Y. Wu, Y. Tong, Q. Li, M. Ding, J. Tang, and Y. Dong. ImageReward: Learning and
+evaluating human preferences for text-to-image generation. In Neurips, volume 36, pages 15903-15935,
+2023.
+[48] Z. Xue, J. Wu, Y. Gao, F. Kong, L. Zhu, M. Chen, Z. Liu, W. Liu, Q. Guo, W. Huang, and P. Luo.
+DanceGRPO: Unleashing GRPO on visual generation. 2025. arXiv:2505.07818.
+[49] J. Yong and X. Y. Zhou. Stochastic controls: Hamiltonian systems and HJB equations, volume 43 of
+Applications of Mathematics (New York). Springer-Verlag, New York, 1999.
+[50] D. Zhang, Y. Zhang, J. Gu, R. Zhang, J. Susskind, N. Jaitly, and S. Zhai. Improving GFlowNets for
+text-to-image diffusion alignment. 2024. arXiv:2406.00633.
+[51] Q. Zhang, M. Tao, and Y. Chen. gDDIM: generalized denoising diffusion implicit models. In ICLR, 2023.
+[52] R. Zhang, P. Isola, A. A. Efros, E. Shechtman, and O. Wang. The unreasonable effectiveness of deep
+features as a perceptual metric. In CVPR, 2018.
+[53] H. Zhao, H. Chen, J. Zhang, D. D. Yao, and W. Tang. Scores as Actions: a framework of fine-tuning
+diffusion models by continuous-time reinforcement learning. 2024. arXiv:2409.08400.
+[54] H. Zhao, H. Chen, J. Zhang, D. D. Yao, and W. Tang. Scores as Actions: fine tuning diffusion generative
+models by continuous-time reinforcement learning. In ICML, pages 77371 - 77389, 2025.
+Appendix Contents
+Appendix Contents
+Appendix A.
+Proof of Deterministic Optimal Control
+A.1.
+HJB equation of Deterministic Optimal Control
+A.2.
+Pontryagin Maximal Principle(PMP) on Deterministic Control
+A.3.
+Proof of Theorem 3.1
+A.4.
+Justification to Generalized Time Horizon
+Appendix B.
+Extension to Stochastic cases
+B.1.
+Stochastic Maximum Principle (SMP)
+B.2.
+Stochastic adjoint matching
+B.3.
+General Stochastic Adjoint Matching
+Appendix C.
+Control intensity throughout denoising timesteps
+C.1.
+Variance Exploding (VE) Examples
+C.2.
+Variance Preserving (VP) Example
+C.3.
+Probability Flow Example
+Appendix D.
+Experimental Details
+D.1.
+Analysis on SiT Control Intensity
+D.2.
+Analysis on SiT Schedules
+D.3.
+Performance Evaluation on SiT
+D.4.
+Detailed Performance Evaluation on FLUX
+D.5.
+How our algorithm accelerates post-training pipeline
+D.6.
+Hyper-parameters and details in training
+D.7.
+Training curve
+Appendix E.
+Additional Images
+15
+Appendix A. Proof of Deterministic Optimal Control
+In this section, we derive all conclusions using a more general version of formulation (3.1)
+min
+u L(u; Xu) =
+Z 1
+
+f(∥u(Xt, t)∥) + h(Xt, t)
+
+dt + g(X1),
+X0 = x.
+(A.1)
+In this main part of this paper, we set h = 0 by default.
+A.1. HJB equation of Deterministic Optimal Control. Consider the formulation (A.1),
+deterministic dynamic (3.2) and value function (3.3), we apply the dynamic programming
+principle on [t, t + ∆t], then obtain
+V (x, t) = min
+u
+n
+(f(∥u(x, t)∥) + h(x, t)) ∆t + V
+ x + (vbase(x, t) + u(x, t))∆t, t + ∆t
+o
+.
+Expanding V to first order in ∆t yields
+0 = min
+u
+h
+f(∥u∥) + h(x, t) + ∂tV (x, t) + ∇xV (x, t)⊤(vbase(x, t) + u)
+i
+.
+The minimizing control satisfies
+∇uf(∥u∥) + ∇xV (x, t) = 0.
+Therefore, when f is polynomial (or otherwise explicitly differentiable and invertible in a
+useful way), one can solve for u⋆(x, t) pointwisely from this equation. This establishes the
+deterministic Hamilton-Jacobi-Bellman equation
+f(∥u⋆(x, t)∥) + h(x, t) + ∂tV (x, t) + ∇xV (x, t)⊤(vbase(x, t) + u⋆(x, t)) = 0,
+V (x, 1) = g(x).
+A.2. Pontryagin Maximal Principle(PMP) on Deterministic Control. The deter-
+ministic Hamitonian of Problem (A.1) under dynamic (3.2) is
+H(t, x, u, a) = a⊤
+vbase(x, t) + u(x, t)
+
++ f(∥u∥) + h(x, t).
+The Pontryagin maximum principle gives the forward-backward system
+
+
+
+
+
+
+
+˙Xt = ∇aH(t, x, u, a) = vbase(x, t) + u(x, t),
+˙at = −∇xH(t, x, u, a) = −
+h
+a⊤∇xvbase(x, t) + ∇xh(x, t)
+i
+,
+a1 = ∇X1g(X1).
+(A.2)
+For u⋆to be the optimal control, the necessary first order condition is that
+0 = ∇uH(t, x, u, a) = a + ∇uf(∥u∥).
+at is the costate and can be defined as gradient of value function, i.e. ∇xV (x, t), which
+perfectly aligns with Appendix A.1. That is under deterministic optimal control perspec-
+tive, HJB and PMP give the same relationship between optimal control and value function.
+Therefore, lean adjoint ˜at acts as a reasonable surrogate in Algorithm 1.
+A.3. Proof of Theorem 3.1. The result follows from PMP in a straightforward way. In
+our setup given by (A.2), since the optimal control minimizes H pointwise, we have
+∇uH = f′(∥u∥) u
+∥u∥+ a = 0.
+Thus u is colinear with −a. Let r = ∥u∥. Taking norms gives
+f′(r) = ∥a∥.
+By invertibility of f′, we obtain
+r = (f′)−1(∥a∥).
+Substituting back yields
+u⋆= −(f′)−1(∥a∥)
+∥a∥
+a.
+Typically when f(x) =
+pλxp, then f′(x) = xp−1/λ, we have (f′)−1(y) = λ
+p−1 y
+p−1 . Substi-
+tuting y = ∥at∥into Theorem 3.1 yields
+u⋆
+t = −(f′)−1(∥at∥)
+∥at∥
+at = −λ
+p−1 ∥at∥
+2−p
+p−1 at.
+A.4. Justification to Generalized Time Horizon. By the deterministic PMP theorem,
+we apply (A.2) on the truncated interval [t, 1], and the adjoint variable satisfies a same
+formulation
+˙as = −∇xH(Xs, u⋆
+s, as, s),
+a1 = −∇g(X1).
+For all t ≤s ≤1, we have
+∇uH(Xs, u⋆
+s, as, s) = 0.
+With a similar argument to Appendix A.3, we yields
+u⋆
+s = −(f′)−1(∥as∥)
+∥as∥
+as.
+Appendix B. Extension to Stochastic cases
+In this section we consider the stochastic control problem
+dXt =
+ b(Xt, t) + σ(t)u(Xt, t)
+
+dt + σ(t)dBt,
+with objective
+J(u) = E
+Z 1
+1
+2∥u(Xt, t)∥2 + h(Xt, t)
+
+dt + g(X1)
+
+,
+X0 given.
+Here Bt is a Brownian motion and control u is adapted to the filtration generated by the noise
+and observations. For clear illustration, in stochastic case we only apply quadratic penalty
+2∥ut∥2, general form can also be derived similarly as in deterministic optimal control.
+B.1. Stochastic Maximum Principle (SMP). For the controlled SDE, the stochastic
+Hamiltonian is
+H(t, x, u, p, q) = p⊤ b(x, t) + σ(t)u
+
++ Tr
+ q⊤σ(t)
+
++ 1
+2∥u∥2 + h(x, t).
+The classical stochastic maximum principle introduces a pair of adjoint processes (pt, qt)
+solving the BSDE
+dpt = −∇XtH(t, Xt, ut, pt, qt)dt + qtdBt,
+p1 = ∇X1g(X1).
+Since σ = σ(t) is independent of x, we have
+dpt = −
+h
+p⊤
+t ∇xb(x, t) + ∇xh(x, t)
+i
+dt + qtdBt,
+p1 = ∇X1g(X1).
+The optimality condition is
+0 = ∇uH(t, Xt, ut, pt, qt) = σ(t)⊤pt + ut,
+so that
+u⋆
+t = −σ(t)⊤pt.
+On a historical note, adjoint variables (or costates) are Lagrangian multipliers in control
+theory, representing the sensitivity of the optimal cost to changes in state. In the stochastic
+control setting, the adjoint variables are a pair: first-order value gradient pt and second-order
+correction qt from noise, which are specified by a system of backward stochastic differential
+equations derived from the maximum principle [49]. The "adjoint" defined in [7] is an estimate
+of the first-order value gradient by averaging out the noise, and can thus be viewed as a
+degenerate form in standard control theory.
+On the other hand, such-defined adjoint in
+deterministic control is exactly the one derived from the maximum principle. Next we will
+explain the intuition for both pt and qt.
+Intuition for pt. In the stochastic maximum principle, the adjoint process pt can be inter-
+preted as the sensitivity of the future minimal cost with respect to the current state Xt.
+The value function V (t, x) in SOC setting is defined as the minimum expected future cost
+starting from state x at time t:
+V (t, x) := min
+u E
+Z 1
+t
+1
+2∥us∥2 + h(Xs, s)
+
+ds + g(X1)
+ Xt = x
+
+,
+More precisely, if the value function V (x, t) is sufficiently smooth, then along the optimal
+trajectory one has
+pt = ∇xV (x, t).
+This is exactly the same as adjoint at in deterministic optimal control PMP setting. If pt
+is large in some direction, then moving the current state in that direction will significantly
+increase the future cost. In the control-affine case
+dXt =
+ b(Xt, t) + σ(t)ut
+
+dt + σ(t)dBt,
+with quadratic control cost, the optimality condition gives
+u⋆
+t = −σ(t)⊤pt.
+Thus the optimal control pushes the state in the direction that decreases the future cost.
+Intuition for qt. The process pt is itself random, because it is evaluated along the stochastic
+trajectory Xt driven by Brownian Motion Bt. To understand the role of qt, suppose again
+that the value function is smooth and
+pt = ∇xV (x, t).
+Applying Itˆo’s formula to pt, gradient of value function, we obtain
+dpt =
+
+∂t∇xV (x, t) + ∇2
+xV (x, t)
+ b(x, t) + σ(t)ut
+
++ 1
+2 Tr
+
+σ(t)σ(t)⊤∇3
+xV (x, t)
+
+dt+∇2
+xV (x, t)σ(t)dBt.
+On the other hand, the stochastic maximum principle writes the adjoint equation as
+dpt = −Hx(t, Xt, ut, pt, qt)dt + qtdBt.
+Comparing the martingale parts of the two expressions, we get
+qt = ∇2
+xV (x, t)σ(t).
+Hence qt is the Brownian noise coefficient of the adjoint process pt. Since pt represents the
+gradient of the future cost, qt describes how this gradient changes along the stochastic noise
+directions.
+B.2. Stochastic adjoint matching. Adjoint Matching reformulates the stochastic optimal
+control problem as a regression-style fixed-point problem. For the controlled process
+dXt =
+
+b(Xt, t) + σ(t)u(Xt, t)
+
+dt + σ(t)dBt,
+define the cost-to-go under a fixed control u by
+J(u; x, t) := EX∼pu
+Z 1
+t
+1
+2∥u(Xs, s)∥2 + h(Xs, s)
+
+ds + g(X1)
+ Xt = x
+
+.
+The value function is then
+V (x, t) = min
+u J(u; x, t) = J(u⋆; x, t),
+and the optimal control satisfies
+u⋆(x, t) = −σ(t)⊤∇xV (x, t) = −σ(t)⊤∇xJ(u∗; x, t).
+Instead of constructing an importance-weighted estimator of u⋆, Adjoint Matching directly
+regresses the current control toward
+−σ(t)⊤∇xJ(u; x, t),
+so that the optimal control is characterized as the fixed point
+u(x, t) = −σ(t)⊤∇xJ(u; x, t).
+Pathwise adjoint versus the SMP adjoint.
+The adjoint used in Adjoint Matching
+should not be confused with the classical stochastic maximum principle adjoint (pt, qt). For
+a sampled trajectory X ∼pu, this work[7] defines the pathwise adjoint
+a(t; Xu, u) := ∇Xt
+Z 1
+t
+1
+2∥u(Xs, s)∥2 + h(Xs, s)
+
+ds + g(X1)
+
+.
+This quantity is the sensitivity of the realized remaining cost along one trajectory with respect
+to the intermediate state Xt. It is therefore a pathwise sensitivity, not the BSDE adjoint in
+the stochastic maximum principle. Its conditional expectation recovers the gradient of the
+fixed-control cost-to-go:
+EX∼pu [a(t; Xu, u) | Xt = x] = ∇xJ(u; x, t).
+Consequently, only at the optimal control u = u⋆do we obtain
+EX∼pu⋆[a(t; Xu, u⋆) | Xt = x] = ∇xJ(u⋆; x, t) = ∇xV (x, t).
+Thus the pathwise adjoint used by Adjoint Matching becomes an estimator of the value-
+gradient adjoint only at the optimal fixed point.
+Basic Adjoint Matching objective. Using the pathwise adjoint as a stochastic target,
+the basic Adjoint Matching loss is
+LBasic-AM(u; X) = 1
+Z 1
+u(Xt, t) + σ(t)⊤a(t; X, ¯u)
+dt,
+X ∼p¯u,
+where ¯u = stopgrad(u). This objective can be viewed as a consistency loss for the fixed-point
+equation
+u(x, t) = −σ(t)⊤∇xJ(u; x, t).
+Adjoint ODE in Stochastic AM can be derived as
+d
+dta(t; Xu, u) = −
+h
+a⊤∇xvbase(x, t) + a⊤σ(t)∇xu(x, t) + ∇xh(x, t) + u(x, t)⊤∇xu(x, t)
+i
+a(1; X) =∇X1g(X1)
+At the optimal control, Adjoint Matching uses the fixed-point relation
+u⋆(x, t) = E
+h
+−σ(t)⊤a(t; Xu, u⋆)
+ Xt = x
+i
+.
+Multiplying by ∇xu⋆(x, t) gives
+E
+h
+u⋆(x, t)⊤∇xu⋆(x, t) + a(t; Xu, u⋆)⊤σ(t)∇xu⋆(x, t)
+ Xt = x
+i
+= 0.
+These are exactly the two u-dependent Jacobian terms in the full pathwise adjoint ODE.
+Thus, at the optimum, their conditional expectation vanishes. The lean adjoint drops these
+terms and uses
+d
+dt˜a(t; X) = −
+h
+˜a(t; X)⊤∇xvbase(Xt, t) + ∇xh(Xt, t)
+i
+,
+˜a(1; X) = ∇X1g(X1).
+Hence ˜a is not generally the true pathwise gradient; it is a simplified surrogate adjoint that
+preserves the optimal fixed point while avoiding the expensive ∇xu terms.
+B.3. General Stochastic Adjoint Matching. The memoryless schedule σ(t)2 = 2ηt (see
+Theorem 1, [7]) is a sufficient theoretical condition for robust fine-tuning results, as it cancels
+the initial-value bias and yields the tilted terminal law p⋆(X1) ∝pbase(X1) exp(r(X1)).
+However, this condition is not necessarily the best choice to implement in finite-step training:
+since the memoryless schedule injects very large noise near early denoising times, it may over-
+explore highly noisy states and weaken useful reward propagation in practice. To implement
+this memoryless noise schedule, we have to clip near the initial noise and decrease step size
+for higher accuracy.
+Theorem B.1. Denote κt := α′
+t
+αt and ηt := βt(α′
+t
+αt βt −β′
+t), where αt and βt are schedules
+define in refence flow (2.1). Suppose we already have a flow model vbase or score estimator
+sbase, equivalent backward sampling SDEs with noise schedule σ(t) are
+dXt =
+
+κtx +
+σ2(t)
++ ηt
+
+sbase(Xt, t)
+
++ σ(t)dBt
+=
+
+1 + σ2(t)
+2ηt
+
+vbase(Xt, t) −σ2(t)κt
+2ηt
+Xt
+
+|
+{z
+}
+b(Xt,t)
+dt + σ(t)dBt
+where the base model satisfies vbase(x, t) = κtx + ηtsbase(x, t). Assume σ(t) > 0, ηt > 0, and
+the controlled model uθ is obtained by the difference between finetuned model and base model.
+Then the induced stochastic optimal control for
+dXt =
+
+b(Xt, t) + σ(t)uθ(Xt, t)
+
+dt + σ(t)dBt,
+(B.1)
+is
+uθ(x, t) = σ(t)2 + 2ηt
+2σ(t)
+ sθ(x, t) −sbase(x, t)
+
+(B.2)
+= σ(t)2 + 2ηt
+2σ(t)ηt
+ vθ(x, t) −vbase(x, t)
+
+.
+(B.3)
+Proof sketch. According to Equation (10), (11) in [7], the unified base SDE can be written
+as
+bbase(x, t) = κtx +
+σ(t)2
++ ηt
+
+sbase(x, t).
+After fine-tuning, the drift becomes
+bθ(x, t) = κtx +
+σ(t)2
++ ηt
+
+sθ(x, t).
+Thus the drift difference is
+bθ −bbase =
+σ(t)2
++ ηt
+
+(sθ −sbase).
+In the control-affine SOC form, this difference must equal σ(t)uθ:
+σ(t)uθ =
+σ(t)2
++ ηt
+
+(sθ −sbase).
+Hence
+uθ = σ(t)2 + 2ηt
+2σ(t)
+(sθ −sbase) = σ(t)2 + 2ηt
+2σ(t)ηt
+(vθ −vbase).
+Adjoint Matching regresses the current control onto the lean adjoint target −σ(t)⊤˜at, so
+substituting this expression for uθ gives the stated loss.
+□
+Corollary B.2. the Adjoint Matching loss
+LAM(θ) = E
+Z 1
+σ(t)2 + 2ηt
+2σ(t)ηt
+ vθ(Xt, t) −vbase(Xt, t)
+
++ σ(t)⊤˜at
+dt
+is the least-squares matching objective for the control uθ under an arbitrary non-memoryless
+noise schedule.
+Algorithm 2 is the designed for KL-regularization stochastic adjoint matching with general
+noise schedule.
+Algorithm 2 Stochastic Adjoint Matching with General Noise Schedule
+Require: Pre-trained velocity field vbase(x, t), noise schedule σ(t), step size h, number of
+iterations N, batch size m.
+1: Initialize vθ ←vbase
+2: for n = 0, . . . , N −1 do
+3:
+Sample m trajectories {Xt}t∈{0,h,...,1} using current model via:
+Xt+h = Xt + h
+
+vθ(Xt, t) + σ(t)2
+2ηt
+ vθ(Xt, t) −κtXt
+
++
+√
+h σ(t) ϵt,
+ϵt ∼N(0, I)
+4:
+Solve lean adjoint ODE backward:
+˜at−h = ˜at + h ˜a⊤
+t ∇Xt
+
+vbase(Xt, t) + σ(t)2
+2ηt
+ vbase(Xt, t) −κtXt
+
+,
+˜a1 = −∇X1r(X1)
+Note that both Xt and ˜at should be computed without gradients, i.e. Stop gradients:
+Xt = stopgrad(Xt), ˜at = stopgrad(˜at).
+5:
+Compute loss:
+L(θ) = h
+m
+X
+t
+
+σ(t)2 + 2ηt
+2σ(t)ηt
+ vθ(Xt, t) −vbase(Xt, t)
+
++ σ(t)˜at
+6:
+Compute the gradient ∇θL and update θ
+7: end for
+Appendix C. Control intensity throughout denoising timesteps
+In this section, we are motivated to train stochastic and deterministic controls with adaptive
+importance weights on denoising time steps. To explain the efficiency of our adaption, we
+analyze the tractable inconsistent monotonicity trend of control norms. For simplicity, we
+illustrate with 1D Gaussian priors, in which the noise schedules and the log-likelihoods of
+process distributions (the "score" functions) jointly contribute to unique control intensity
+maxima. Then we move on to the ODE analysis, in which the multi-modal mix-Gaussian
+priors become the principal factor that steers control intensity.
+Proposition C.1. Consider a one-dimensional backward process with Brownian noise sched-
+ule β(·): dXt = b(Xt, T −t) dt + η
+p
+2β(T −t) dBt, in which η ≥0 is a free parameter on
+injected noise, differentiable reward function r(·) is evaluated on XT at the terminal backward
+denoising time. If the associated adjoint [7] evolves according to
+d
+dta(Xt, t) = −∇Xb(Xt, T −t) a(Xt, t),
+a(XT , T) = −∇r(XT ).
+Then the optimal control admits the form
+u∗(Xt, t) = c∗
+β(t, T, η) ∇r(XT ),
+in which we define the time-aware component
+c∗
+β(t, T, η) = η
+p
+2β(T −t) exp
+Z T
+t
+∇Xb(Xs, T −s) ds
+
+.
+Remark. Consequently, the monotonicity of |u∗(Xt, t)| is determined jointly by the noise
+schedule β and the accumulated drift Jacobian ∇Xb. In particular, if c∗
+β(t, T, η) has a unique
+critical point t∗∈(0, T), with
+d
+dtc∗
+β(t, T, η) > 0
+for t < t∗,
+d
+dtc∗
+β(t, T, η) < 0
+for t > t∗,
+then both |u∗(Xt, t)| and E|u∗(Xt, t)| exhibits a unique maximum in t∗∈[0, T].
+C.1. Variance Exploding (VE) Examples. Assume we start from a simplest Gaussian
+model Y0 ∼N(0, 1) and consider its corresponding 1D Variance Exploding (VE) forward
+process dYt =
+√
+2t dBt. The VE trajectory Yt = Y0 +
+R t
+√
+2s dBs ∼N(0, 1 + t2) follows
+immediately from our strong assumption on Law(Y0), and its score function exhibits a closed
+form expression: ∇log p(Yt) = −Yt
+1+t2 . If we fix a finite time horizon T, the backward process
+Xt := YT−t of our VE model is given in the form of gDDIM[51]:
+dXt = −(1 + η2)(T −t)
+1 + (T −t)2
+Xtdt + η
+p
+2(T −t) dBt
+where X0 ∼N(0, 1 + T 2). By solving the t-linear ODE from Proposition C.1, we obtain
+a(Xt, t) = a(XT , T)[1 + (T −t)2]−(1+η2)/2 = −∇r(XT )[1 + (T −t)2]−(1+η2)/2.
+Therefore, the time-aware component of optimal control follows
+c∗
+V E(Xt, t) = η
+p
+2(T −t)
+
+(T −t)
+[1 + (T −t)2](1+η2)
+1/2
+,
+arg max
+t
+c∗
+V E = T −
+p
+1 + 2η2 .
+(a) VE, T = 1
+(b) VE, T = 5
+(c) VE, T = 10
+(d) VP, T = 1
+(e) VP, T = 5
+(f) VP, T = 10
+Figure 6. Curves of c∗(t, T, η) versus denoising time t under different ter-
+minal horizons T and stochasticity levels η in the 1D VE (top row) and VP
+(bottom row) cases. Data variance is set to 1.
+To illustrate the inconsistent monotonicity of u∗, we plot the norm of c∗against denoising
+time t ∈[0, T]. We see from Figure 6 that the maximum value of c∗(t, T, η) is more heavily
+tilted towards terminal time-steps for larger T, an observation consistent with Equation
+(C.1).
+C.2. Variance Preserving (VP) Example. Similarly, for VP model dYt = −tYtdt +
+√
+2tdBt, Y0 ∼N(0, 1), the marginal distribution is standard Gaussian N(0, 1). Therefore, its
+score function ∇log p(Yt) = −Yt, and the backward process of VP model is given in the form
+of gDDIM[51]:
+dXt = −η2(T −t)Xtdt + η
+p
+2(T −t) dBt.
+With Proposition C.1,
+a(Xt, t) = a(XT , T)e−η2
+2 (T−t)2 = −∇r(XT )e−η2
+2 (T−t)2,
+and the time-aware component of optimal control follows
+c∗
+V P (Xt, t) = η
+p
+2(T −t) · e−η2
+2 (T−t)2,
+arg max
+t
+c∗
+V P = T −
+√
+2η
+(C.1)
+Similar to 1D VE case, we plot the curve of c∗and t in Figure 6. A similar argument can be
+applied to a bi-modal data prior as well:
+Proposition C.2. Let (Xt)0≤t≤T follow the ODE flow dXt = b(Xt, t) dt, in which pnoise =
+X0 ∼N(0, T 2) and pdata = X1 ∼N(−µ, 1) + N(µ, 1). (1 << µ << T). Then the control
+norm has a unique extreme value at t ∈[0, T].
+Proof. Suppose Xt = X0 +
+R t
+√
+2t dt, Xt ∼N(−µ, 1 + t2) + N(µ, 1 + t2), which gives
+p(t, x) =
+2
+p
+2π(1 + t2)
+
+exp
+ −(x −µ)2
+2(1 + t)2
+
++ exp
+ −(x + µ)2
+2(1 + t)2
+
+,
+and
+s(t, x) := ∇x log p(t, x) =
+−x + µ tanh( µx
+1+t2 )
+1 + t2
+.
+When t = 0, for 0 < x < O(µ), s(0, x) = −x + µ tanh(µx) > 0. But s(x, T) ≈−
+x
+1+T 2 < 0.
+Therefore, for multimodal data, the control norm increases at t = T and decreases when
+t →0.
+□
+C.3. Probability Flow Example. To motivate the empirical effectiveness of adaptive AM
+algorithms on flow-based models, we study the following probability flow example. In this
+elementary setting, we explicitly calculate the control norm intensity, which attains a unique
+maximum at some later denoising time-step.
+Moreover, we discover that higher-order polynomial regularization f(r) = λrp/p preserves the
+same peak location but flattens the normalized control curves, so a broader later denoising
+time region remains close to the maximal control strength.
+This improves second-order
+truncated adjoint matching by keeping the neighboring control signals effective as well.
+Proposition C.3. Let Xt = (1 −t)X0 + tX1, where X0 ∼N(µ, σ2) and X1 ∼N(0, 1), then
+the control norm takes a unique extreme value at t∗=
+σ2
+1+σ2 .
+Proof. Observe that Xt is the linear combination of 2 i.i.d Gaussian, so
+Xt ∼N
+ (1 −t)µ, (1 −t)2σ2 + t2
+and we denote (1 −t)µ := m(t) and (1 −t)2σ2 + t2 := D(t). Since (X1 −X0, Xt) is joint
+Gaussian,
+v(t) = E[X1 −X0|Xt = x] = E[X1 −X0] + Cov(X1 −X0, Xt)
+V ar(Xt)
+(x −m(t))
+= −µ + t −(1 −t)σ2
+D(t)
+(x −m(t))
+:= A(t)x + B(t).
+Since ∇xvt(x) = A(t) and with lean adjoint formulation,
+a(t) = a(1) exp
+
+−
+Z 1
+t
+A(s) ds
+
+= a(1) exp
+
+−1
+Z 1
+t
+D′(s)
+D(s) ds
+
+= a(1) exp
+
+−1
+2 log D(t)
+
+=
+a(1)
+p
+(1 −t)2σ2 + t2 .
+□
+Proposition C.4 (Normalized temporal control strength). With a same setup as Proposition
+C.3, for generalized polynomial regularization f(r) = 1
+prp (p > 1), the optimal lean-adjoint
+control satisfies ∥u⋆
+t ∥∝D(t)−
+2(p−1) . Let
+t⋆=
+σ2
+1 + σ2
+be the unique maximizer of ∥u⋆
+t ∥. Then the normalized relative control strength
+Rp(t) :=
+∥u⋆
+t ∥
+maxs∈[0,1] ∥u⋆s∥
+is given by
+Rp(t) =
+D(t⋆)
+D(t)
+
+2(p−1)
+=
+ 
+σ2
+1+σ2
+(1 −t)2σ2 + t2
+!
+2(p−1)
+.
+Remark C.1. In particular, Rp(t⋆) = 1 and Rp(t) ≤1 for all t ∈[0, 1]. Moreover, for every
+fixed t ̸= t⋆, Rp(t) is increasing in p. Therefore larger p yields a flatter normalized control
+profile and keeps a broader time region close to the maximal control strength.
+Proof. From the Gaussian interpolation calculation,
+∥a(t)∥= ∥a(1)∥
+p
+D(t)
+.
+For f(r) = rp/(pλ), the optimality condition gives
+∥u⋆
+t ∥= λ
+p−1 ∥a(t)∥
+p−1 = CpD(t)−
+2(p−1) ,
+where Cp = λ1/(p−1)∥a(1)∥1/(p−1) is independent of t. Thus maximizing ∥u⋆
+t ∥is equivalent to
+minimizing D(t). Since
+D′(t) = −2(1 −t)σ2 + 2t,
+the unique critical point is
+t⋆=
+σ2
+1 + σ2 ,
+and
+D(t⋆) =
+σ2
+1 + σ2 .
+Dividing ∥u⋆
+t ∥by its maximum gives
+Rp(t) =
+D(t⋆)
+D(t)
+
+2(p−1)
+.
+Since D(t) ≥D(t⋆), we have Rp(t) ≤1. Finally, for t ̸= t⋆,
+0 < D(t⋆)
+D(t) < 1,
+so decreasing the exponent 1/(2(p −1)) increases Rp(t). Hence Rp(t) is increasing in p.
+□
+Figure 7. Normalized relative control strength Rp(t) for the polynomial reg-
+ularizer with order p ∈{2, 4, 6} and three noise levels σ ∈{1.5, 2.0, 5.0}.
+According to Figure 7, The peak location t⋆= σ2/(1 + σ2) migrates toward t = 1 as σ grows
+(vertical dashed line in each panel), reflecting that the informative control mass concentrates
+near the deterministic endpoint X1 when X0 is highly diffuse.
+Across all σ, raising the
+exponent p flattens the normalized profile and widens the time region in which ∥u⋆
+t ∥stays
+close to its maximum; the effect is modest at σ = 1.5 but dramatic at σ = 5.0, where
+R2(0) ≈0.20 while R6(0) ≈0.72.
+Appendix D. Experimental Details
+D.1. Analysis on SiT Control Intensity. At each denoising step along a sampling tra-
+jectory of SiT-XL/2, we compute the per-step control utk = vθ(xtk, tk) −vbase(xtk, tk) and
+record its scaled L2 magnitude ∥utk∥2 ∆t for each sample in a training batch.
+The i-th iteration panel reports per-step controls measured immediately after the i-th gra-
+dient update, e.g. "Iter 0" column shows the controls produced by the model after one opti-
+mization step, which explains the small fluctuation around zero in that row. As fine-tuning
+progresses, the controls grow into a coherent profile, but early steps (t ≲0.3) consistently
+accumulate less mass than later ones. This suggests that the early portion of the trajectory
+contributes little reward-relevant signal even after 250 iterations and is the direct empirical
+motivation for late-horizon truncation.
+The same observation also explains why a higher-order ODE AM helps. 6th ODE-AM-Full
+sustains non-trivial control through t = 1 where 2nd ODE-AM-Full collapses, achieving
+implicitly the late-horizon emphasis that Truncate-12 enforces explicitly.
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+1.2
+1.4
+Iter 0
+2nd ODE-AM-Full
+2nd ODE-Truncate-12
+2nd SDE-AM-Full
+2nd SDE-Truncate-12
+6th ODE-AM-Full
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+1.2
+1.4
+Iter 50
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+1.2
+1.4
+Iter 100
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+1.2
+1.4
+Iter 150
+0.00
+0.25
+0.50
+0.75
+1.00
+t
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+1.2
+1.4
+Iter 250
+0.00
+0.25
+0.50
+0.75
+1.00
+t
+0.00
+0.25
+0.50
+0.75
+1.00
+t
+0.00
+0.25
+0.50
+0.75
+1.00
+t
+0.00
+0.25
+0.50
+0.75
+1.00
+t
+Control intensity
+Figure 8. Control intensity along the diffusion trajectory across fine-tuning
+iterations (rows) for five adjoint-matching variants (columns) on SiT-XL/2.
+D.2. Analysis on SiT Schedules. In SiT, every sample is constructed as a stochastic
+interpolant xt = α(t) x1 + σ(t) x0 between data x1 and Gaussian noise x0 ∼N(0, I), with α
+and σ jointly fixing the marginal of xt at every denoising time t ∈[0, 1] (here t = 0 is noise
+and t = 1 is data). Because this marginal is preserved by a whole family of reverse-time
+SDEs, inference is free to inject extra Gaussian noise on top of the deterministic flow,
+dxt =
+h
+vθ(xt, t) +
+2 wt sθ(xt, t)
+i
+dt + √wt d ¯Wt,
+where wt ≥0 controls how much fresh noise is mixed in.
+Figure 9. Interpolant coefficients α(t), σ(t), and three noise schedules wt on
+the Linear path {(αt, σt)}1
+t=0 = {(t, 1 −t)}1
+t=0
+Although the KL family wins for pretraining (Table 6, [26]), in AM finetune, wKL
+t
+near
+t = 0 blows up gradients in the most chaotic part of the trajectory, while wt = 1 −t keeps
+injecting noise right at the early stages where exploration is not very useful (see discussion
+in Appendix D.1. sin2(πt) avoids both pathologies and gives the best empirical reward fine-
+tuning performance (best reward value with best sample diversity) among the three.
+Figure 10. ImageReward mean (left) reward std (right) of finetuned SiT-
+XL/2 + SDE-AM-Full under the three SDE schedules; bold lines are 10-
+step rolling averages.
+D.2.1. Discussion on Memoryless Schedule. The schedule wKL
+t
+coincides exactly with the
+memoryless noise schedule σAM(t)2 = 2ηt formalized in [7], where ηt = βt(α′
+tβt/αt −β′
+t).
+According to Theorem 1 in [7], this schedule is necessary for the fine-tuned model to
+converge to the tilted distribution p∗(X1) ∝pbase(X1) exp(r(X1)) in continuous time, since
+it is the unique choice that X0 ⊥X1 and thereby removes the value-function bias at t = 0.
+By this criterion σt and sin2(πt) are biased. However, empirically we find that the correct
+injection of noise outweighs this bias (Fig. 10). Both schedules deliver the right amount of
+stochasticity in the middle and later stages of the trajectory to encourage exploration, while
+keeping noise bounded at t ≤0.3 so the optimization stays stable and avoids reward collapse.
+The truncated wKL
+t
+, by contrast, concentrates its stochasticity precisely where the adjoint
+signal is most fragile and is not ideal in practice.
+Figure 11. From top to bottom: (1) sin2(πt) schedule, (2) σ schedule, (3) wKL schedule.
+ImageNet class is lighthouse.
+D.3. Performance Evaluation on SiT. We use 1000 class-level prompts and generate two
+images for each class, yielding 2000 images in total. We conduct two ablation studies on SiT
+to examine the effect of the truncation horizon ntruncate and the reward scale. The base SiT
+model obtains HPSv2 0.183, ImageReward −0.658, CLIPScore 0.239, and PickScore 0.190.
+Full-horizon AM already improves these metrics, with 2nd SDE-AM-Full reaching HPSv2
+0.279 and 2nd ODE-AM-Full reaching HPSv2 0.290.
+However, both full AM variants
+require 83.8s per iteration, and their performance is weaker than the truncated variants.
+Table 5 studies higher-order ODE-AM under different reward scales with ntruncate = 10.
+For 4th ODE-AM-10, the best overall reward scale is 1013, reaching ImageReward 0.574
+and HPSv2 0.328.
+For 6th ODE-AM-10, the best configuration is reward scale 1015,
+which achieves HPSv2 0.329, ImageReward 0.535, CLIPScore 0.269, and PickScore 0.207.
+Compared with DRaFT-1 and ReFL-10, which are faster per iteration but obtain HPSv2
+around 0.296 ∼0.297, the higher-order AM variants provide stronger final reward alignment.
+Method
+Reward Scale
+HPSv2 ↑
+ImageReward ↑CLIPScore ↑PickScore ↑Iter.Time (s) ↓
+Base Model
+-
+0.183±0.038
+−0.658±0.915
+0.239±0.049
+0.190±0.011
+−
+DRaFT-1
+-
+0.296±0.041
+0.266±0.909
+0.260±0.041
+0.200±0.011
+26.7
+ReFL-10
+-
+0.297±0.034
+0.282±0.885
+0.265±0.038
+0.200±0.011
+26.4
+2nd SDE-AM-Full
+0.279±0.038
+−0.084±0.989
+0.244±0.052
+0.197±0.012
+83.8
+2nd ODE-AM-Full
+0.290±0.037
+0.185±0.967
+0.243±0.049
+0.199±0.012
+83.8
+4th ODE-AM-10
+0.309±0.038
+0.361±0.902
+0.266±0.041
+0.203±0.011
+47.3
+4th ODE-AM-10
+0.328±0.038
+0.574±0.834
+0.269±0.040
+0.206±0.011
+47.3
+4th ODE-AM-10
+0.326±0.039
+0.491±0.878
+0.265±0.041
+0.206±0.011
+47.3
+6th ODE-AM-10
+0.327±0.039
+0.531±0.872
+0.265±0.040
+0.206±0.011
+47.7
+6th ODE-AM-10
+0.329±0.039
+0.535±0.862
+0.269±0.039 0.207±0.011
+47.7
+6th ODE-AM-10
+0.328±0.039
+0.497±0.871
+0.261±0.041
+0.205±0.011
+47.7
+Table 5. Higher order ODE ablations: baselines (top) vs. 4th ODE-AM-
+10 and 6th ODE-AM-10 on SiT-XL/2.
+Table 6 shows the effect of varying ntruncate. For both SDE and ODE samplers, increasing the
+truncation horizon from very small values improves the reward metrics, but the gain saturates
+after roughly 10-15 terminal steps. For 2nd AM-SDE, the best performance appears around
+ntruncate = 12, achieving ImageReward 0.522, CLIPScore 0.273, and PickScore 0.206. For
+2nd AM-ODE, the best performance appears around ntruncate = 15, achieving HPSv2 0.324,
+ImageReward 0.522, and PickScore 0.206. At the same time, truncated AM reduces the per-
+iteration time from 83.8s to roughly 39 ∼57s, depending on the number of active terminal
+steps. Recall that we use 50 denoising steps for all SiT experiments. This confirms that most
+useful reward-alignment signal is concentrated near the terminal denoising stage.
+Overall, the ablation studies further confirm two observations. First, full-horizon AM is not
+the best use of computation; truncating to the final part of the trajectory is both faster and
+more effective. Second, higher-order ODE-AM can further improve the reward metrics when
+combined with a properly chosen reward scale. These results justify our use of truncated and
+(or) higher-order adjoint matching in the main SiT experiments.
+Method
+Trunc. Steps
+HPSv2 ↑
+ImageReward ↑CLIPScore ↑PickScore ↑Iter.Time (s) ↓
+Base Model
+-
+0.183±0.038
+−0.658±0.915
+0.239±0.049
+0.190±0.011
+−
+0.301±0.040
+0.331±0.917
+0.261±0.041
+0.201±0.011
+38.9
+0.282±0.042
+0.227±0.916
+0.265±0.041
+0.202±0.011
+40.2
+0.294±0.041
+0.305±0.911
+0.267±0.040
+0.204±0.011
+41.3
+0.304±0.040
+0.410±0.891
+0.268±0.039
+0.205±0.011
+43.2
+2nd SDE-AM
+0.319±0.038
+0.491±0.876
+0.271±0.038 0.206±0.011
+47.6
+0.318±0.038
+0.522±0.867
+0.273±0.038 0.206±0.011
+49.6
+0.319±0.038
+0.489±0.864
+0.269±0.039
+0.205±0.011
+52.3
+0.317±0.038
+0.496±0.874
+0.270±0.041
+0.205±0.011
+57.1
+2nd SDE-AM-Full
+0.279±0.038
+−0.084±0.989
+0.244±0.052
+0.197±0.012
+83.8
+0.266±0.043
+0.116±0.913
+0.265±0.041
+0.200±0.011
+39.2
+0.305±0.041
+0.344±0.895
+0.264±0.039
+0.202±0.011
+40.1
+0.307±0.040
+0.367±0.884
+0.265±0.040
+0.203±0.011
+40.8
+0.312±0.040
+0.404±0.897
+0.263±0.040
+0.203±0.011
+42.7
+2nd ODE-AM
+0.316±0.040
+0.450±0.903
+0.266±0.040
+0.204±0.011
+47.3
+0.321±0.039
+0.477±0.860
+0.266±0.039
+0.205±0.011
+49.3
+0.324±0.039
+0.522±0.877
+0.267±0.040 0.206±0.011
+52.0
+0.324±0.039
+0.478±0.870
+0.265±0.041
+0.205±0.011
+56.7
+2nd ODE-AM-Full
+0.290±0.037
+0.185±0.967
+0.243±0.049
+0.199±0.012
+83.8
+Table 6. Effect of truncation steps in 2nd SDE-AM, 2nd ODE-AM on
+SiT-XL/2.
+D.4. Detailed Performance Evaluation on FLUX. Taking advantage of this distilled
+flow matching backbone, we can use fewer sampling steps; in our case, we use 20 steps for
+both forward sampling and adjoint ODE integration. Moreover, the conditional guidance is
+also distilled into this model. In contrast to the usual classifier-free guidance [15], where both
+conditional and unconditional velocity predictions must be evaluated, FLUX.2-Klein-4B
+only requires a single model evaluation at each step, which effectively helps alleviate OOM
+issues.
+For post-training, we use our truncated ODE adjoint matching algorithms, 2nd ODE-
+AM-1 and 2nd ODE-AM-3, where only the last one and three adjoint ODE steps are
+integrated and included in the loss, respectively. We find that keeping more terminal adjoint
+matching steps does not improve training, and even made optimization slower and harder
+to converge, especially for full-step adjoint matching. As baselines, we consider two reward-
+backpropagation methods that can be applied to flow models: DRaFT-1[6] and ReFL-5[47],
+where the reward signal is back-propagated through the last 1 step and through one randomly
+selected step among the last 5 steps, respectively.
+For fairness, the main methods shown in Table 3 are all trained for 500 iterations. In addition
+to the HPSv2 reward curve during training, we also evaluate other types of feedback, not only
+image-quality-related metrics such as Aesthetic Score [33], ImageReward [47], and PickScore
+[16], but also within-prompt diversity metrics such as LPIPS [52] and MS-SSIM [44], as well
+as prompt-wise mode collapse metrics, namely Recall and Recovery. Note that we generate
+6 images for each prompt in the test set. For Recall and Recovery, we first extract image
+(a) Aesthetic Score
+(b) PickScore
+(c) ImageReward
+(d) HPSv2
+Figure 12. Image fidelity metrics evaluations on FLUX.2-Klein-4B.
+features using CLIP ViT-L/14[30], and set k = 5 in the kNN-based evaluation; that is, we
+use the distance between each image and its 5th nearest neighbor as the radius.
+We use only HPSv2 as the reward model during post-training, but other metrics, including
+Aesthetic Score, PickScore, and ImageReward, also improve substantially over the training;
+see Figure 13 for the evolution of image fidelity metrics through training using HPSv2. Some
+methods, 6th ODE-AM-1, DRaFT-1 and ReFL-5, appear to have slight advantages on
+training curve.
+However, when it comes to image diversity, methods like 2nd ODE-AM-3, 2nd ODE-AM-
+1 and 6th ODE-AM-3, show strong potential for keep diversity; see Figure 13(A)(B) for
+pairwise within-prompt diversity. For simplicity, we report 1−MS-SSIM instead of MS-SSIM
+itself. Overall, our methods are better at preserving diversity, which is consistent with the
+observation in prior work[25] that methods based on direct differentiation tend not to align
+with the target distribution, but instead favor only some modes of it. Moreover, to examine
+whether fine-tuning leads to mode collapse, we also compute Recall and Coverage to measure
+how much the fine-tuned distribution deviates from the original base distribution. As shown
+in Figure 13(C)(D), our methods like 2nd ODE-AM-1 and 6th ODE-AM-3 preserve the
+distribution significantly better than others. One possible reason is that those high-reward
+training methods like DRaFT and ReFL tend to produce overly bright or visually flashy
+images to obtain higher reward scores, often at the cost of semantic alignment. See Figure 5
+for illustration. A detailed quantitative comparison between our method and the baselines
+is provided in Table 3 and Table 4.
+(a) LPIPS
+(b) MS-SSIM
+(c) Recall
+(d) Coverage
+Figure 13. Within-prompt diversity metrics and prompt-wise mode preser-
+vation metrics on FLUX.2-Klein-4B.
+D.5. How our algorithm accelerates post-training pipeline. In standard AM for dif-
+fusion models finetuning[7], each gradient update requires two sequential phases that both
+scale linearly with the number of ODE steps N. In the adjoint ODE integration phase, the
+adjoint signal is propagated backward through all N steps sequentially; each step requires
+one forward pass through the frozen base model to compute the vector-Jacobian product
+(VJP) with respect to the intermediate latent state. In the control loss phase, the trainable
+model is evaluated at each of the N trajectory states to compute the matching loss, with each
+evaluation requiring one forward pass through both the base and trainable models, followed
+by a backward pass to accumulate parameter gradients. Due to the sequential dependency
+between steps and memory limitations, neither phase can be trivially parallelized. For a
+large-scale model such as FLUX.2-Klein-4B, this results in prohibitively slow per-update
+wall time.
+Our truncated AM algorithm restricts both phases to only the final ntruncate ≪N steps of
+the trajectory: the adjoint ODE is integrated backward for ntruncate steps from the terminal
+state, and the control loss is evaluated only at the corresponding ntruncate trajectory states.
+Since both phases dominate total training time and each scales linearly with the number of
+active steps, the per-update cost reduces proportionally. In practice, a full 20-step update
+requires approximately 345 seconds, whereas the 1-step truncated variant reduces this to 32
+seconds.
+D.6. Hyper-parameters and details in training. For the experimental setup, training
+is performed on 7 Nvidia L40S GPUs. Note that although SiT-XL/2 and FLUX.2-Klein-
+4B are training based on flow matching objective, their convention is a bit different. While
+SiT-XL/2 generates images from t = 0 to t = 1, FLUX.2-Klein-4B does that from t = 1
+to t = 0. In this paper, all analysis are based on t = 0 to t = 1 fashion.
+Parameter setting for FLUX.2-Klein-4B is shown in Table 7. We post-trained it with 7×
+NVIDIA L40S GPUs with 48 GB VRAM each.
+Category
+FLUX.2-Klein-4B
+SiT-XL/2-256
+Optimization
+Optimizer
+Adam
+Adam
+β1
+0.9
+0.9
+β2
+0.99
+0.99
+Learning Rate
+1 × 10−5
+6 × 10−5
+LR Schedule
+Cosine decay
+Constant
+Weight Decay
+0.01
+0.0
+Gradient Clipping
+1.0
+10.0
+Training
+Image Size
+256
+Number of Steps
+50
+Batch Size
+8
+Warmup Steps
+25
+Reward Scale
+2 × 105
+1 × 105
+Precision
+Model Parameters
+FP32
+FP32
+Adjoint Trajectory
+FP32
+FP32
+Forward Pass
+BF16
+FP32
+Table 7. Hyper-parameters for finetuning FLUX.2-Klein-4B and SiT-
+XL/2-256 using Truncated Adjoint Matching.
+D.7. Training curve. The SiT-XL/2 training curves show that truncated and higher-order
+AM variants consistently outperform baselines; in particular ODE-AM-6 gives the strongest
+trajectory. For FLUX.2-Klein-4B, all Truncated AM methods remain competitive with
+the two baselines DRaFT-1 and ReFL-5.
+Figure 14. HPSv2 reward mean during training with different adaptive
+modes on SiT-XL/2.
+Figure 15. HPSv2 reward mean during training on FLUX.2-Klein-4B.
+Appendix E. Additional Images
+Figure 16. Methods from left to right: (1) Base, (2) 2nd ODE-AM-Full, (3)
+2nd SDE-AM-Full, (4) DRaFT-1, (5) ReFL-10, (6) 2nd SDE-AM-12, (7) 4th
+ODE-AM-10, (8) 6th ODE-AM-10 on SiT-XL/2.
+Prompt = "Photo of a baby chick dressed as an inmate."
+Prompt = "Portrait of a beautiful cyberpunk Asian female."
+Prompt = "A siamese cat curled up in a sink"
+Prompt = "Sci-fi skill game icon in flat vector style, displayed in black and white."
+Prompt = "A wizard casting a spell."
+Prompt = "A Chinese dragon flying above a busy San Francisco street at night."
+Prompt = "A volcano made of ivory vines and crimson rocks erupts with a smoke resembling a demonic eye."
+Prompt = "Riding neon bicycles in the woods."
+Figure 17. Methods from left to right: (1) Base, (2) 2nd ODE-AM-Full, (3)
+6th ODE-AM-3, (4) 4th ODE-AM-3, (5) 2nd ODE-AM-3, (6) DRaFT-1, (7)
+ReFL-5 on FLUX.2-Klein-4B.
+Prompt = "1979 magazine cover featuring a traditional Japanese village in the style of Moebius."
+Prompt = "3D cat in shape of mango fruit."
+Prompt = "5 roman soldiers burning down a small house in a snow filled valley."
+Prompt = "A bathroom sink with a tooth shaped toothbrush holder."
+Prompt = "A kitchen range with food cooking in the oven and on the stove top."
+Prompt = "A motorcycle racer is going into a turn."
+Prompt = "A park with marble statues."
+Prompt = "A silver park bench sits in concrete with grass behind."
+Figure 18. Methods from left to right: (1) Base, (2) 2nd ODE-AM-Full, (3)
+6th ODE-AM-3, (4) 4th ODE-AM-3, (5) 2nd ODE-AM-3, (6) DRaFT-1, (7)
+ReFL-5 on FLUX.2-Klein-4B.
+Department of Industrial Engineering and Operations Research, Columbia University.
+Email address: zg2525@columbia.edu
+Department of Industrial Engineering and Operations Research, Columbia University.
+Email address: js6646@columbia.edu
+Department of Industrial Engineering and Operations Research, Columbia University.
+Email address: ddy1@columbia.edu
+Department of Industrial Engineering and Operations Research, Columbia University.
+Email address: wt2319@columbia.edu

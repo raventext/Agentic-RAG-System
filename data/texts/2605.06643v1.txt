@@ -1,0 +1,3391 @@
+Are We Making Progress in Multimodal Domain
+Generalization? A Comprehensive Benchmark Study
+Hao Dong1
+Hongzhao Li2∗
+Shupan Li2
+Muhammad Haris Khan3
+Eleni Chatzi1
+Olga Fink4
+1ETH Zürich
+2Zhengzhou University
+3MBZUAI
+4EPFL
+Abstract
+Despite the growing popularity of Multimodal Domain Generalization (MMDG)
+for enhancing model robustness, it remains unclear whether reported performance
+gains reflect genuine algorithmic progress or are artifacts of inconsistent evalua-
+tion protocols. Current research is fragmented, with studies varying significantly
+across datasets, modality configurations, and experimental settings. Furthermore,
+existing benchmarks focus predominantly on action recognition, often neglecting
+critical real-world challenges such as input corruptions, missing modalities, and
+model trustworthiness. This lack of standardization obscures a reliable assessment
+of the field’s advancement. To address this issue, we introduce MMDG-Bench,
+the first unified and comprehensive benchmark for MMDG, which standardizes
+evaluation across six datasets spanning three diverse tasks: action recognition,
+mechanical fault diagnosis, and sentiment analysis. MMDG-Bench encompasses
+six modality combinations, nine representative methods, and multiple evalua-
+tion settings. Beyond standard accuracy, it systematically assesses corruption
+robustness, missing-modality generalization, misclassification detection, and out-
+of-distribution detection. With 7, 402 neural networks trained in total across 95
+unique cross-domain tasks, MMDG-Bench yields five key findings: (1) under fair
+comparisons, recent specialized MMDG methods offer only marginal improve-
+ments over ERM baseline; (2) no single method consistently outperforms others
+across datasets or modality combinations; (3) a substantial gap to upper-bound
+performance persists, indicating that MMDG remains far from solved; (4) trimodal
+fusion does not consistently outperform the strongest bimodal configurations; and
+(5) all evaluated methods exhibit significant degradation under corruption and
+missing-modality scenarios, with some methods further compromising model trust-
+worthiness. We release MMDG-Bench to enable more rigorous, reproducible,
+and directly comparable evaluation, addressing current limitations in evaluation
+practices and providing a stronger foundation for future progress in multimodal
+domain generalization.1
+Introduction
+Machine learning (ML) models often suffer substantial performance degradation when deployed in
+dynamic real-world environments due to distribution shifts between training and testing data [40].
+Consequently, generalizing to unseen domains has become a central challenge for building reliable
+ML systems. Multimodal learning, which integrates complementary signals such as video, audio, and
+optical flow, is widely regarded as a promising approach to improve robustness. While multimodal
+models achieve strong in-distribution performance across applications including egocentric action
+∗Corresponding author.
+1
+Preprint.
+arXiv:2605.06643v1 [cs.CV] 7 May 2026
+
+MMDG-Bench
+Methods
+ERM, RNA-Net, 
+SimMMDG, MOOSA, 
+CMRF, NEL, JAT, 
+MBCD, GMP
+Evaluations
+Standard Accuracy,
+Corruption Robustness,
+Missing-modality,
+MisD & OOD Detection
+Tasks
+Action Recognition,
+Fault Diagnosis,
+Sentiment Analysis
+Modalities
+Video, Optical Flow, 
+Audio, Text, 
+Vibration, Acoustic
+Scale
+7,402 Trained Models,
+95 Cross-Domain Tasks
+Datasets
+EPIC-Kitchens, HAC, 
+HUST motor, MOSI,
+MOSEI, SIMS
+ No single method consistently dominates.
+ Limited gains of MMDG methods. 
+ Large gap to upper bound.
+ Severe degradation under realistic challenges.
+ Trimodal fusion does not always win.
+Key Observations
+Figure 1: An overview of the MMDG-Bench and a summary of our key observations.
+recognition [6], mechanical fault diagnosis [15, 14], and affective computing [47, 48, 46], they
+remain brittle under domain shifts caused by environmental changes, operating conditions, or cultural
+variations. Moreover, multimodal systems introduce unique challenges such as modality imbalance,
+unreliable fusion, and sensitivity to missing or corrupted inputs [11, 12]. These challenges have driven
+increasing interest in multimodal domain generalization (MMDG), with a growing body of work
+proposing specialized methods that report consistent empirical gains [37, 11, 8, 12, 49, 30, 45, 29].
+Despite this apparent progress, it remains unclear to what extent current MMDG methods yield
+genuine improvements in cross-domain generalization, as opposed to benefiting from inconsistent
+evaluation protocols. In unimodal domain generalization, DomainBed [17] revealed that carefully
+tuned empirical risk minimization (ERM) can match or outperform many specialized methods, funda-
+mentally reshaping the field’s understanding of progress. In contrast, MMDG lacks a comparable,
+rigorous benchmark. Existing evaluations vary widely in datasets, modality configurations, training
+protocols, and metrics, often focusing narrowly on action recognition while overlooking realistic
+challenges such as missing modalities, input corruptions, and model trustworthiness. Consequently,
+this lack of standardization hinders reliable assessment and raises a fundamental question: are we
+measuring genuine progress, or simply overfitting to biased evaluation protocols?
+To answer this question, we introduce MMDG-Bench, a comprehensive and standardized benchmark
+for evaluating multimodal domain generalization (Figure 1). MMDG-Bench unifies evaluation across
+six datasets spanning three tasks: egocentric action recognition (EPIC-Kitchens [6], HAC [11]),
+mechanical fault diagnosis (HUST Motor [51]), and multimodal sentiment analysis (CMU-MOSI [47],
+CMU-MOSEI [48], CH-SIMS [46]). It covers six modality combinations and evaluates nine
+representative methods across 95 cross-domain tasks under both multi-source and single-source
+settings. Beyond standard accuracy, we systematically assess corruption robustness, missing-modality
+generalization, misclassification detection, and out-of-distribution (OOD) detection, capturing both
+predictive performance and model reliability. To ensure fair comparison, we standardize data splits,
+hyperparameter search, optimization protocols, and model selection criteria. With 7, 402 neural
+networks trained in total, MMDG-Bench provides a comprehensive evaluation and yields critical
+insights to guide future research:
+• Under fair evaluation, specialized MMDG methods offer only marginal gains over strong baselines,
+with ERM frequently matching or outperforming recent approaches.
+• No single method consistently dominates across datasets or modality configurations.
+• A substantial gap relative to the Oracle model remains, confirming that MMDG is far from solved.
+• Trimodal fusion does not consistently surpass the strongest bimodal configurations, challenging the
+assumption that additional modalities inherently improve generalization.
+• All methods remain highly vulnerable to corruptions and missing modalities, with some degrading
+model trustworthiness despite improving raw accuracy.
+These results suggest that progress in MMDG may be partially overestimated due to inconsistencies
+in evaluation protocols, underscoring the need for rigorous and standardized benchmarking.
+2
+A Comprehensive Benchmark for Multimodal Domain Generalization
+This section outlines the design and scope of MMDG-Bench. We first formalize the relevant
+MMDG paradigms (Sec. 2.1), then describe the representative methods included (Sec. 2.2), and
+finally detail the datasets, modality configurations, backbone architectures, evaluation protocols, and
+hyperparameter search procedures utilized (Sec. 2.3).
+2.1
+Multimodal Domain Generalization Paradigms
+Let M = {m1, . . . , mK} denote a set of K modalities (e.g., video, audio, optical flow). A multi-
+modal sample (xm1, . . . , xmK, y) is drawn from a joint distribution PD associated with domain D,
+where xmk represents the input from modality mk, and y ∈Y is the corresponding label.
+Definition 1 (Multi-source MMDG). Given Ns labeled source domains {Ds
+i }Ns
+i=1 sharing a common
+label space and modality set, multi-source MMDG seeks to learn a model f : X m1 ×· · ·×X mK →Y
+that generalizes effectively to an unseen target domain Dt, without access to any target-domain data
+during training.
+Definition 2 (Single-source MMDG). Given a single labeled source domain Ds and an unseen target
+domain Dt sharing the same label space and modality set, single-source MMDG seeks to train a
+model that transfers robustly from Ds to Dt without target-domain access during training.
+Definition 3 (Corruption Robustness). Given a source-trained MMDG model, corruption robustness
+evaluates performance when one or more target-domain modalities undergo realistic perturbations
+(e.g., audio wind noise, video defocus blur). It is quantified by the performance degradation between
+clean and corrupted target conditions.
+Definition 4 (Missing-modality Generalization). Given a source-trained MMDG model, this setting
+measures generalization when modalities present during training are absent during target-domain
+inference, reflecting real-world scenarios such as sensor failures or incomplete observations.
+2.2
+Multimodal Domain Generalization Methods
+MMDG-Bench evaluates nine representative MMDG methods alongside an Oracle reference.
+ERM [41] serves as our foundational baseline, pooling all source domains to minimize empirical risk
+without explicit MMDG objectives.
+RNA-Net [37] aligns the average feature norms across modalities using a Relative Norm Alignment
+objective, mitigating modality-induced domain bias without requiring domain annotations.
+SimMMDG [11] decomposes representations into modality-shared and modality-specific com-
+ponents. It uses supervised contrastive learning to extract domain-invariant shared features and
+incorporates a cross-modal translation module to improve missing-modality robustness.
+MOOSA [8] utilizes masked cross-modal translation and multimodal jigsaw puzzles as self-
+supervised auxiliary tasks, combined with entropy-guided modality balancing. Though designed for
+open-set MMDG, it remains highly competitive in standard closed-set settings.
+CMRF [12] addresses modality competition and inconsistent unimodal flatness in sharpness-aware
+minimization. It flattens the cross-modal representation landscape by interpolating between modality-
+specific minima, followed by feature distillation into individual modality branches.
+NEL [49] mitigates representation polarization, where one modality dominates the shared embedding
+space, via a nonpolarized learning objective that encourages balanced, domain-invariant multimodal
+representations.
+JAT [30] performs adversarial training using gradient reversal layers on both modality-specific and
+fused representations, enforcing domain invariance across multiple representation levels.
+MBCD [45] observes that asynchronous modality convergence limits conventional weight averaging
+and introduces a collaborative distillation framework utilizing adaptive modality dropout, gradient
+consistency regularization, and an EMA teacher for cross-modal knowledge transfer.
+GMP [29] revisits gradient modulation under domain shift by decomposing modality gradients into
+classification-oriented and domain-invariant components. By dynamically modulating and projecting
+these gradients based on semantic and domain confidence, it resolves optimization conflicts.
+Training:
+Testing:
+Action Recognition
+(Video+Flow+Audio)
+中文：你说的那些
+都是我的业余爱好
+ENGLISH: BUT IT WAS 
+A GOOD MOVIE
+Training:
+Testing:
+Sentiment Analysis
+(Video+Text+Audio)
+Training:
+Testing:
+Fault Diagnosis
+(Vibration+Acoustic)
+Figure 2: Illustration of three core tasks included in the MMDG-Bench.
+Finally, our Oracle model is trained directly on target-domain data. While not a valid domain
+generalization method, it provides an empirical performance ceiling to quantify the remaining gap
+between current MMDG approaches and ideal target-domain performance.
+2.3
+Experimental Setups
+Datasets. MMDG-Bench unifies six datasets across three task families for diverse evaluation
+(Figure 2). For action recognition, we include EPIC-Kitchens [6] (eight classes across three kitchen
+environments) and HAC [11] (seven classes performed by humans, animals, and cartoons). Both
+provide video (V), audio (A), and optical flow (F). For mechanical fault diagnosis, we adopt HUST
+motor [51], comprising four operating-condition domains with vibration and acoustic signals. For
+sentiment analysis, we evaluate CMU-MOSI [47], CMU-MOSEI [48], and CH-SIMS [46] (video,
+audio, text); each acts as a distinct domain for cross-dataset MMDG. Detailed statistics, preprocessing,
+and splits are in the Appendix C.
+Modality combinations. We assess six modality configurations: four for action recognition (V+A,
+V+F, A+F, V+A+F), one for fault diagnosis (vibration+acoustic), and one for sentiment analysis
+(video+audio+text), enabling systematic evaluation of both bimodal and trimodal fusion.
+Backbone architectures. For action recognition, we build on MMAction2 [5]: video via Kinetics-
+400 pretrained SlowFast [13], audio via VGGSound pretrained ResNet-18 [20], and optical flow via
+a Kinetics-initialized SlowFast slow-only pathway. For fault diagnosis, we employ a four-layer 1D
+CNN for vibration and acoustic signals [51]. For sentiment analysis [19], we extract 768-dimensional
+text embeddings via pretrained BERT [7], audio features via LibROSA [34], and visual facial features
+via OpenFace 2.0 [2], fused by a Transformer encoder [42].
+Evaluation protocols. Multi-source MMDG follows a leave-one-domain-out protocol, while single-
+source evaluates all source-target pairs. For sentiment analysis, we report binary accuracy (ACC2),
+F1 score, and mean absolute error (MAE). To ensure fair comparisons, all methods use identical data
+splits, optimizers, and training-domain validation for model selection [17].
+Hyperparameter search. For each algorithm-dataset pair, we evaluate the default hyperparameters
+alongside 10 random-search trials (detailed in the Appendix D). The optimal configuration, selected
+via training-domain validation, is retrained with two additional random seeds to mitigate variance
+from random initialization and stochastic optimization, and the final performance is reported as the
+average across all seeds to provide a more reliable estimate. This rigorous protocol requires training
+7, 402 neural networks, making MMDG-Bench the most comprehensive MMDG benchmark studies
+to date.
+Multimodal Domain Generalization Under Fair Comparison
+Experimental setup. This section examines whether recent MMDG algorithms still outperform
+strong baselines once major confounding factors are removed. To ensure a fair and rigorous com-
+parison, we standardize all key pipeline components, including data splits, batch sizes, optimizers,
+and model selection strategies. All methods are selected using training-domain validation, thereby
+isolating algorithmic contributions rather than evaluation artifacts.
+Table 1: Multimodal multi-source DG with different modality combinations on EPIC-Kitchens and
+HAC datasets for action recognition task.
+Modality
+EPIC-Kitchens dataset
+HAC dataset
+Method
+Video Audio Flow D2, D3 →D1 D1, D3 →D2 D1, D2 →D3 Mean A, C →H H, C →A H, A →C Mean
+ERM
+✓
+✓
+57.47
+61.20
+60.68
+59.78
+75.91
+77.48
+53.40
+68.93
+RNA-Net [37]
+✓
+✓
+57.24
+60.40
+60.47
+59.37
+75.20
+77.48
+53.58
+68.75
+SimMMDG [11]
+✓
+✓
+58.62
+66.40
+65.30
+63.44
+78.59
+78.04
+55.79
+70.81
+MOOSA [8]
+✓
+✓
+59.31
+65.33
+66.63
+63.76
+79.38
+78.70
+54.78
+70.95
+CMRF [12]
+✓
+✓
+57.01
+69.47
+64.37
+63.62
+77.94
+78.26
+51.84
+69.35
+NEL [49]
+✓
+✓
+54.63
+66.75
+62.55
+61.31
+76.33
+76.42
+51.07
+67.94
+JAT [30]
+✓
+✓
+57.98
+66.82
+64.14
+62.98
+78.16
+77.99
+53.11
+69.75
+MBCD [45]
+✓
+✓
+59.38
+69.60
+65.63
+64.87
+78.12
+78.91
+53.49
+70.17
+GMP [29]
+✓
+✓
+57.62
+65.39
+64.88
+62.63
+77.36
+76.47
+52.33
+68.72
+Oracle
+✓
+✓
+60.23
+76.13
+76.80
+71.05
+92.75
+97.16
+88.53
+92.81
+ERM
+✓
+✓
+59.77
+66.13
+62.73
+62.88
+76.93
+77.59
+49.82
+68.11
+RNA-Net [37]
+✓
+✓
+60.00
+67.47
+64.58
+64.02
+77.58
+76.71
+52.85
+69.05
+SimMMDG [11]
+✓
+✓
+60.69
+69.33
+64.07
+64.70
+78.95
+75.94
+54.60
+69.83
+MOOSA [8]
+✓
+✓
+61.84
+69.20
+64.89
+65.31
+80.46
+76.71
+56.71
+71.29
+CMRF [12]
+✓
+✓
+61.61
+69.33
+65.81
+65.58
+81.47
+76.38
+52.30
+70.05
+NEL [49]
+✓
+✓
+59.00
+67.02
+63.99
+63.34
+80.29
+76.45
+51.16
+69.30
+JAT [30]
+✓
+✓
+61.88
+68.79
+65.82
+65.50
+78.39
+77.38
+52.17
+69.31
+MBCD [45]
+✓
+✓
+63.36
+71.06
+67.18
+67.20
+81.39
+77.08
+53.67
+70.71
+GMP [29]
+✓
+✓
+60.37
+67.21
+65.82
+64.47
+77.92
+76.35
+52.56
+68.94
+Oracle
+✓
+✓
+65.52
+80.00
+81.21
+75.58
+93.48
+96.59
+85.78
+91.95
+ERM
+✓
+✓
+52.18
+61.47
+58.31
+57.32
+55.66
+63.90
+47.24
+55.60
+RNA-Net [37]
+✓
+✓
+52.41
+59.47
+62.53
+58.14
+56.67
+64.13
+46.42
+55.74
+SimMMDG [11]
+✓
+✓
+55.86
+69.20
+63.04
+62.70
+58.83
+65.45
+45.96
+56.75
+MOOSA [8]
+✓
+✓
+58.16
+68.27
+62.42
+62.95
+59.55
+66.11
+46.88
+57.51
+CMRF [12]
+✓
+✓
+53.56
+68.40
+61.81
+61.26
+58.54
+65.34
+46.42
+56.77
+NEL [49]
+✓
+✓
+56.24
+63.33
+61.09
+60.22
+58.80
+64.08
+45.95
+56.28
+JAT [30]
+✓
+✓
+56.83
+65.26
+62.17
+61.42
+59.32
+65.12
+45.07
+56.50
+MBCD [45]
+✓
+✓
+56.78
+66.57
+65.36
+62.90
+61.60
+66.07
+48.71
+58.79
+GMP [29]
+✓
+✓
+55.38
+64.92
+62.77
+61.02
+57.31
+65.13
+46.84
+56.43
+Oracle
+✓
+✓
+59.77
+74.13
+73.61
+69.17
+81.52
+90.91
+68.35
+80.26
+ERM
+✓
+✓
+✓
+56.78
+66.67
+65.61
+63.02
+73.32
+76.49
+53.86
+67.89
+RNA-Net [37]
+✓
+✓
+✓
+57.24
+66.00
+67.97
+63.74
+73.68
+76.16
+54.41
+68.08
+SimMMDG [11]
+✓
+✓
+✓
+63.91
+71.47
+68.89
+68.09
+78.15
+75.39
+54.60
+69.38
+MOOSA [8]
+✓
+✓
+✓
+59.77
+72.93
+69.82
+67.51
+75.70
+78.37
+56.43
+70.17
+CMRF [12]
+✓
+✓
+✓
+62.76
+70.40
+68.17
+67.11
+79.02
+80.35
+54.87
+71.41
+NEL [49]
+✓
+✓
+✓
+60.46
+68.48
+65.02
+64.65
+77.26
+78.10
+55.88
+70.41
+JAT [30]
+✓
+✓
+✓
+61.38
+69.96
+66.37
+65.90
+77.32
+77.59
+54.88
+69.93
+MBCD [45]
+✓
+✓
+✓
+61.29
+71.24
+69.50
+67.34
+79.06
+79.21
+55.64
+71.30
+GMP [29]
+✓
+✓
+✓
+59.77
+68.39
+66.33
+64.83
+78.26
+77.35
+53.97
+69.86
+Oracle
+✓
+✓
+✓
+65.52
+79.47
+78.64
+74.54
+92.75
+96.02
+86.24
+91.67
+Results on action recognition. Table 1 summarizes multi-source MMDG results on EPIC-Kitchens
+and HAC. Crucially, no single method consistently dominates across datasets, modality combinations,
+or domain shifts. Performance rankings fluctuate substantially, and gains over strong baselines
+(e.g., ERM, SimMMDG) are often modest, indicating that reported MMDG progress remains highly
+context-dependent. Furthermore, the Audio+Flow configuration consistently yields the weakest
+results across both benchmarks, confirming that video remains the most informative modality for
+action recognition.
+Results on fault diagnosis. Table 2 presents results multi-source MMDG on HUST motor. The
+performance gap across methods is larger than that observed in action recognition. MOOSA achieves
+the highest mean accuracy (78.23%), followed by GMP and CMRF, significantly outperforming
+ERM (69.90%). However, the ranking of methods differs from that in action recognition. MBCD
+performs strongly on EPIC-Kitchens but drops to the lowest rank on HUST, while GMP improves
+from a mid-tier position in action recognition to second place here. These drastic ranking shifts reveal
+that current methods fail to generalize reliably across task families, highlighting the risk of drawing
+broad conclusions from limited benchmark settings.
+Results on sentiment analysis. Table 3 reports performance multi-source MMDG on sentiment
+analysis datasets, further highlighting the limitations of current methods. The strongest specialized
+method (MOOSA, 66.60% ACC2) outperforms ERM (65.63%) by less than one percentage point. In
+half of the scenarios, ERM matches or exceeds specialized approaches. Moreover, several prominent
+methods (SimMMDG, MBCD, GMP) underperform ERM on mean ACC2, indicating potential
+Table 2: Multimodal multi-source DG on HUST motor dataset with vibration and acoustic modalities
+for fault diagnosis task.
+Method
+D2, D3, D4 →D1
+D1, D3, D4 →D2
+D1, D2, D4 →D3
+D1, D2, D3 →D4
+Mean
+ERM
+42.25
+83.92
+76.25
+77.17
+69.90
+RNA-Net [37]
+43.50
+84.58
+73.25
+79.58
+70.23
+SimMMDG [11]
+42.33
+88.50
+82.42
+82.08
+73.83
+MOOSA [8]
+51.08
+93.00
+84.92
+83.92
+78.23
+CMRF [12]
+47.42
+87.92
+83.67
+80.75
+74.94
+NEL [49]
+46.97
+80.50
+76.53
+78.19
+70.55
+JAT [30]
+44.22
+82.36
+77.36
+79.58
+70.88
+MBCD [45]
+42.89
+83.72
+79.31
+70.64
+69.14
+GMP [29]
+47.45
+91.66
+89.17
+81.61
+77.47
+Oracle
+99.83
+99.83
+100.00
+99.83
+99.87
+Table 3: Multimodal multi-source DG on MOSI, MOSEI, and SIMS datasets with video, audio, and
+text modalities for sentiment analysis task.
+Method
+MOSI, MOSEI →SIMS
+MOSI, SIMS →MOSEI
+Mean
+MAE↓
+F1↑
+ACC2↑
+MAE↓
+F1↑
+ACC2↑
+MAE↓
+F1↑
+ACC2↑
+ERM
+1.82
+69.00
+63.90
+1.02
+67.35
+67.35
+1.42
+68.18
+65.63
+RNA-Net [37]
+1.83
+66.71
+64.55
+0.92
+67.22
+67.22
+1.38
+66.97
+65.89
+SimMMDG [11]
+1.84
+64.39
+61.71
+1.00
+67.87
+67.65
+1.42
+66.13
+64.68
+MOOSA [8]
+1.89
+71.76
+66.30
+0.96
+67.17
+66.90
+1.43
+69.47
+66.60
+CMRF [12]
+1.83
+72.12
+65.21
+0.89
+67.75
+67.74
+1.36
+69.94
+66.48
+NEL [49]
+1.91
+51.79
+52.44
+0.99
+67.55
+67.52
+1.45
+59.67
+59.98
+JAT [30]
+1.85
+67.16
+64.40
+0.98
+67.90
+67.87
+1.42
+67.53
+66.14
+MBCD [45]
+1.84
+58.12
+57.84
+1.03
+67.47
+66.83
+1.44
+62.80
+62.34
+GMP [29]
+1.93
+58.68
+57.54
+1.09
+67.32
+67.16
+1.51
+62.00
+62.35
+Oracle
+1.32
+76.80
+76.80
+0.58
+73.89
+73.63
+0.95
+75.35
+75.22
+negative transfer in text-centric tasks. Moreover, most methods perform poorly on regression tasks,
+as reflected by high MAE. Ultimately, these results show that current MMDG techniques are highly
+task-dependent and lack broad cross-domain robustness.
+Single-source DG. Single-source DG results largely reinforce the trends observed in the multi-source
+setting. On EPIC-Kitchens (Table 4 and Table 8), MBCD achieves the best average performance
+across modality combinations, with SimMMDG and MOOSA closely following. On HAC (Table 9),
+SimMMDG leads in the trimodal V+A+F setting (63.60%), while MBCD remains highly competitive
+(63.53%). HUST Motor (Table 10) provides a particularly challenging evaluation, where limiting
+training to a single source domain substantially reduces performance for all methods. In severe transfer
+scenarios (e.g., D1 →D4), accuracy declines sharply to 1.75% −18.14%, indicating that existing
+methods depend heavily on source-domain diversity. This suggests that much of the improvement
+in multi-source DG may arise from broader source coverage rather than fundamental algorithmic
+advances. For sentiment analysis (Table 11), SimMMDG achieves the strongest average classification
+performance (F1 and ACC2), while CMRF performs best on MAE.
+Trimodal fusion does not consistently improve generalization. Multimodal learning is often
+assumed to improve robustness by incorporating additional modalities. However, the trimodal
+(V+A+F) results in Table 1 present a more complex picture. On HAC, V+A+F outperforms V+F
+in only five of nine methods. For several approaches, including ERM, RNA-Net, SimMMDG, and
+MOOSA, adding a third modality yields minimal benefit or even degrades performance (e.g., MOOSA
+declines from 71.29% to 70.17%). Methods explicitly designed to address modality competition,
+such as CMRF, MBCD, and GMP, demonstrate more consistent gains from trimodal integration
+(+1.36%, +0.59%, +0.92%, respectively), supporting the view that modality competition is a key
+optimization bottleneck. Nevertheless, current solutions remain only partially effective and fail to
+deliver substantial, reliable improvements across datasets.
+Massive gap to Oracle model. Across all datasets, Oracle results reveal a substantial gap be-
+tween current MMDG performance and achievable target-domain accuracy. For example, on HAC
+(V+A), the Oracle reaches 92.81% mean accuracy, surpassing the best-performing method (MOOSA,
+70.95%) by nearly 22 percentage points. These results demonstrate that MMDG remains an open
+and challenging problem and highlight the need for fundamentally new approaches to close this large
+generalization gap.
+Table 4: Multimodal single-source DG with video and audio on EPIC-Kitchens dataset.
+Source: D1
+Source: D2
+Source: D3
+Method
+D1→D2
+D1→D3
+D2 →D1
+D2 →D3
+D3→D1
+D3→D2
+Mean
+ERM
+51.07
+54.72
+43.45
+55.44
+46.67
+56.13
+51.25
+RNA-Net [37]
+52.53
+51.85
+51.03
+56.26
+53.79
+55.60
+53.51
+SimMMDG [11]
+53.33
+51.54
+51.72
+60.16
+55.63
+58.93
+55.22
+MOOSA [8]
+53.60
+51.23
+47.82
+61.91
+56.55
+58.80
+54.98
+CMRF [12]
+58.67
+51.33
+49.66
+62.01
+50.11
+57.73
+54.92
+NEL [49]
+54.66
+54.07
+47.81
+59.13
+48.50
+57.51
+53.61
+JAT [30]
+55.32
+50.08
+50.12
+59.23
+50.18
+56.22
+53.52
+MBCD [45]
+56.22
+55.30
+53.41
+61.17
+53.64
+62.26
+57.00
+GMP [29]
+53.17
+49.82
+48.97
+59.65
+49.81
+57.33
+53.12
+Oracle
+76.13
+76.80
+60.23
+76.80
+60.23
+76.13
+71.05
+A,C
+H
+H,C
+A
+H,A
+C
+ERM
+RNA-Net
+SimMMDG
+MOOSA
+CMRF
+NEL
+JAT
+MBCD
+GMP
++1.52
+-3.09
+-0.73
++0.58
+-3.97
+-4.22
++1.37
+-1.55
++0.46
+-1.73
+-2.99
++0.00
+-1.88
+-6.63
+-4.14
+-0.50
+-2.46
+-4.87
+-1.74
+-3.72
+-3.29
+-0.19
+-2.92
+-1.87
+-0.88
+-1.55
+-3.64
+Wind on audio: accuracy per task (vs. clean V+A)
+A,C
+H
+H,C
+A
+H,A
+C
+ERM
+RNA-Net
+SimMMDG
+MOOSA
+CMRF
+NEL
+JAT
+MBCD
+GMP
+-10.37
+-4.41
+-11.58
+-13.27
+-3.64
+-8.91
+-17.09
+-9.50
+-11.86
+-11.25
+-8.61
+-6.34
+-15.65
+-7.84
+-6.25
+-15.59
+-7.21
+-10.78
+-16.81
+-9.33
+-10.36
+-12.24
+-6.26
+-6.13
+-12.63
+-5.52
+-5.76
+Defocus on video: accuracy per task (vs. clean V+A)
+4
+0
+4
+18
+14
+10
+6
+Figure 3: Multimodal multi-source DG with corruptions on HAC dataset. Values show the change
+relative to the clean Video+Audio setting. Detailed results are in Table 12.
+Takeaways
+1. Under standardized and fair evaluation, specialized MMDG methods yield only marginal
+improvements over strong baselines.
+2. No single method consistently dominates across different datasets, modality combinations, or
+task families.
+3. Trimodal fusion delivers inconsistent gains; while methods targeting modality competition
+benefit more reliably, current solutions remain incomplete.
+4. A substantial performance gap relative to the Oracle persists across all datasets, confirming
+that MMDG remains far from a solved problem.
+Robustness under Corruptions and Missing Modalities
+Real-world deployments frequently expose multimodal systems to corrupted inputs and missing
+modalities, yet these critical scenarios remain largely underexplored in MMDG research. To evaluate
+robustness under realistic sensor failures, we adopt two representative corruptions commonly studied
+in the literature [9]: wind noise in the audio stream and defocus blur in the video stream. We further
+assess missing-modality generalization by removing either video or audio during inference.
+Robustness under corruptions. Figure 3 reports multi-source DG performance on HAC under
+both corruptions, with subscripts indicating deviations from the clean V+A baseline. Under audio
+corruption, degradation is modest but widespread: all methods except SimMMDG decline by
+0.77 −4.22 percentage points. Conversely, video corruption proves substantially more severe,
+causing accuracy drops of 7.97 −12.82 points. Crucially, performance rankings under corruption
+deviate markedly from clean-data rankings: MOOSA rises to first place, while SimMMDG drops
+from second to seventh. This rank inversion yields a critical takeaway: clean benchmark performance
+does not reliably predict deployment robustness under corruption. This suggests that methods
+optimized for clean-domain alignment may overfit to modality-specific statistics, making them
+brittle when modality quality degrades. Notably, the most robust methods under defocus blur
+all incorporate explicit modality-balancing or competition-aware objectives, suggesting that these
+strategies inherently improve corruption robustness.
+Table 5: Multimodal misclassification detection on HAC with video and audio modalities.
+Method
+A, C →H
+H, C →A
+H, A →C
+Mean
+AURC↓AUROC↑FPR95↓AURC↓AUROC↑FPR95↓AURC↓AUROC↑FPR95↓AURC↓AUROC↑FPR95↓
+ERM
+75.02
+84.62
+73.95
+73.26
+84.67
+59.31
+271.82
+74.22
+85.40
+140.03
+81.17
+72.89
+RNA-Net [37]
+84.62
+82.95
+73.84
+75.73
+83.13
+63.73
+266.91
+74.54
+81.78
+142.42
+80.21
+73.12
+SimMMDG [11]
+58.94
+86.06
+68.01
+67.61
+85.19
+68.84
+237.51
+76.42
+84.20
+121.35
+82.56
+73.68
+MOOSA [8]
+63.00
+85.18
+61.19
+65.33
+84.92
+57.51
+264.25
+73.14
+81.91
+130.86
+81.08
+66.87
+CMRF [12]
+69.36
+85.89
+66.88
+83.75
+81.93
+77.21
+359.01
+69.07
+86.43
+170.71
+78.96
+76.84
+NEL [49]
+64.43
+85.34
+68.30
+73.29
+83.78
+59.44
+289.59
+74.62
+79.89
+142.44
+81.25
+69.21
+JAT [30]
+62.33
+85.96
+63.65
+68.46
+84.47
+66.37
+268.85
+74.18
+84.22
+133.21
+81.54
+71.41
+MBCD [45]
+67.54
+85.12
+63.80
+79.35
+82.24
+69.87
+270.52
+74.08
+84.35
+139.14
+80.48
+72.67
+GMP [29]
+66.50
+85.83
+67.49
+69.83
+84.97
+58.39
+304.57
+69.87
+86.47
+146.97
+80.22
+70.78
+A,C
+H
+H,C
+A
+H,A
+C
+ERM
+RNA-Net
+SimMMDG
+MOOSA
+CMRF
+NEL
+JAT
+MBCD
+GMP
++2.97
+-2.76
+-5.70
++2.59
+-2.20
+-3.86
++2.23
+-1.00
+-2.21
+-0.65
+-2.21
+-1.29
++1.87
+-6.85
+-4.60
++3.45
+-3.28
+-3.98
++1.13
+-3.67
+-5.32
++2.06
+-2.17
+-0.87
++0.81
+-0.98
+-1.27
+Video only: accuracy per task (vs. V+A)
+A,C
+H
+H,C
+A
+H,A
+C
+ERM
+RNA-Net
+SimMMDG
+MOOSA
+CMRF
+NEL
+JAT
+MBCD
+GMP
+-49.95
+-40.06
+-31.16
+-47.30
+-46.13
+-35.29
+-47.95
+-50.45
+-26.56
+-52.34
+-39.63
+-32.72
+-45.93
+-39.74
+-23.81
+-53.75
+-47.98
+-30.06
+-50.65
+-44.15
+-31.46
+-46.79
+-40.95
+-24.80
+-47.95
+-42.27
+-28.47
+Audio only: accuracy per task (vs. V+A)
+4
+0
+4
+55
+45
+35
+25
+Figure 4: Multimodal multi-source DG with missing modalities on HAC dataset. Values show the
+change relative to the full Video+Audio setting. Detailed results are in Table 13.
+Missing modalities. Figure 4 evaluates robustness when a modality is unavailable at inference. We
+observe a striking asymmetry: removing audio causes only minor degradation (0.32 −3.20 point
+drops), whereas removing video results in severe failures (36.50 −43.93 point drops). For example,
+SimMMDG loses merely 0.33 points when transitioning from V+A to V-only, but drops by 41.66
+points under A-only inference. Furthermore, in the A, C →H transfer setting, removing audio
+actually improves performance in most cases. This reveals a modality hierarchy under domain shift,
+where dominant modalities (e.g., video) govern robustness, while auxiliary modalities can introduce
+instability when not properly integrated.
+Takeaways
+1. Clean benchmark performance does not reliably predict real-world robustness: methods that
+perform strongly under standard DG settings can degrade substantially under realistic input
+corruptions.
+2. Video remains the dominant modality in action recognition, while audio often provides only
+auxiliary benefits and can even reduce performance when multimodal integration is not
+carefully optimized.
+3. Current MMDG methods remain highly vulnerable to sensor failures, highlighting the urgent
+need for future approaches that explicitly address corruption robustness and missing-modality
+resilience.
+Trustworthiness: Misclassification and Out-of-Distribution Detection
+Beyond classification accuracy, multimodal systems are also expected to identify when their pre-
+dictions are likely to be incorrect (misclassification detection [32]) and to detect inputs that are
+semantically novel (out-of-distribution detection [31, 33]). This is the first standardized evaluation of
+trustworthiness in MMDG. We evaluate both capabilities on HAC using the V+A combination. For
+OOD detection, HAC serves as the in-distribution dataset, while EPIC-Kitchens is used as the OOD
+dataset. For misclassification detection (MisD), we report AURC (Area Under the Risk-Coverage
+Curve), AUROC, and FPR95 (false positive rate at 95% true positive rate). For OOD detection, we
+report AUROC and FPR95.
+Misclassification detection. Table 5 presents the MisD results. SimMMDG achieves the strongest
+overall performance (best mean AURC and AUROC), suggesting that its explicit decomposition
+of modality-shared and modality-specific features yields better-calibrated uncertainty estimates.
+Table 6: Multimodal out-of-distribution detection with video and audio modalities, where HAC is
+the ID dataset and EPIC-Kitchens as OOD dataset.
+Method
+A, C →H
+H, C →A
+H, A →C
+Mean
+AUROC↑
+FPR95↓
+AUROC↑
+FPR95↓
+AUROC↑
+FPR95↓
+AUROC↑
+FPR95↓
+ERM
+70.63
+62.00
+53.64
+88.08
+46.05
+90.53
+56.77
+80.20
+RNA-Net [37]
+68.21
+67.63
+57.68
+83.77
+38.56
+97.61
+54.82
+83.00
+SimMMDG [11]
+77.19
+53.42
+73.12
+62.14
+35.18
+96.50
+61.83
+70.69
+MOOSA [8]
+67.23
+75.13
+64.65
+69.43
+34.29
+98.25
+55.39
+80.94
+CMRF [12]
+77.61
+52.34
+60.04
+79.58
+40.70
+95.59
+59.45
+75.84
+NEL [49]
+69.32
+65.81
+63.20
+78.62
+37.21
+96.65
+56.58
+80.36
+JAT [30]
+72.71
+61.82
+63.62
+70.24
+41.20
+95.33
+59.18
+75.80
+MBCD [45]
+76.44
+53.46
+65.87
+68.16
+34.11
+98.54
+58.81
+73.39
+GMP [29]
+71.54
+61.48
+55.37
+86.46
+39.28
+96.79
+55.40
+81.58
+Meanwhile, MOOSA achieves the best mean FPR95, indicating that its self-supervised pretext tasks
+generate confidence scores that effectively separate correct from incorrect predictions. In contrast,
+while CMRF maintains competitive classification accuracy, it ranks last across all MisD metrics. This
+discrepancy exposes a critical disconnect between predictive accuracy and model trustworthiness, a
+vulnerability largely overlooked in prior MMDG research.
+Out-of-distribution detection. Table 6 reports the OOD detection results, where SimMMDG again
+achieves the strongest overall performance. Interestingly, CMRF, which ranks last in MisD, achieves
+the second-highest mean OOD AUROC. This confirms that these two trustworthiness dimensions are
+non-redundant: mechanisms that improve OOD separation can simultaneously degrade confidence
+calibration for in-distribution errors. The inverse pattern is also observed: MOOSA attains the
+best MisD FPR95 but falls to the bottom in OOD AUROC. Furthermore, despite its exceptional
+classification accuracy across EPIC-Kitchens and HAC, MBCD yields only moderately on OOD
+AUROC and MisD metrics. Ultimately, these findings demonstrate that high predictive accuracy does
+not guarantee model trustworthiness, and even trust-oriented metrics may favor different methods
+depending on whether the focus is on misclassification calibration or OOD detection.
+Takeaways
+1. Predictive accuracy does not guarantee model trustworthiness. High classification perfor-
+mance does not inherently translate to reliable confidence estimation.
+2. Misclassification detection and OOD detection are non-redundant capabilities. A model’s
+ability to separate in-distribution from OOD samples does not predict its ability to properly
+calibrate confidence on in-distribution errors.
+3. Current MMDG methods exhibit substantial limitations in uncertainty calibration, highlight-
+ing the need for future approaches that jointly optimize accuracy and trustworthiness.
+Conclusion
+We introduce MMDG-Bench, the first unified benchmark for multimodal domain generalization,
+providing standardized evaluations across six datasets, three task families, six modality configurations,
+and nine representative methods in both multi- and single-source settings. Beyond clean-domain
+accuracy, MMDG-Bench systematically assesses corruption robustness, missing-modality generaliza-
+tion, misclassification detection, and out-of-distribution detection to rigorously evaluate real-world
+deployment capability. Our large-scale study reveals five key findings: (1) under fair evaluation,
+specialized methods yield only marginal gains over strong baselines; (2) no single method consis-
+tently dominates across datasets, modalities, or task families; (3) a substantial gap relative to the
+target-trained Oracle confirms that MMDG is far from solved; (4) trimodal fusion does not reliably
+outperform the strongest bimodal configurations; and (5) all methods remain highly vulnerable to cor-
+ruptions and missing modalities, with some degrading model trustworthiness despite clean accuracy
+gains. Collectively, these results demonstrate that evaluating clean cross-domain performance alone
+is insufficient. Future MMDG research must prioritize modality competition, corruption resilience,
+and trustworthy uncertainty estimation as first-class objectives. We hope MMDG-Bench serves as a
+rigorous, reproducible foundation to drive the development of robust, deployment-ready multimodal
+systems.
+References
+[1] Martin Arjovsky, Léon Bottou, Ishaan Gulrajani, and David Lopez-Paz. Invariant risk minimization. arXiv
+preprint arXiv:1907.02893, 2019.
+[2] Tadas Baltrušaitis, Peter Robinson, and Louis-Philippe Morency. Openface: an open source facial behavior
+analysis toolkit. In WACV, 2016.
+[3] Gilles Blanchard, Gyemin Lee, and Clayton Scott. Generalizing from several related classification tasks to
+a new unlabeled sample. In NeurIPS, 2011.
+[4] Xin Chen, Huanjie Tao, and Benran Li. Towards robust incomplete multimodal open-set domain general-
+ization with uncertain missing modalities. Knowledge-Based Systems, page 115777, 2026.
+[5] MMAction2 Contributors. Openmmlab’s next generation video understanding toolbox and benchmark.
+ 2020.
+[6] Dima Damen, Hazel Doughty, Giovanni Maria Farinella, Sanja Fidler, Antonino Furnari, Evangelos
+Kazakos, Davide Moltisanti, Jonathan Munro, Toby Perrett, Will Price, and Michael Wray. Scaling
+egocentric vision: The epic-kitchens dataset. In ECCV, 2018.
+[7] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. Bert: Pre-training of deep bidi-
+rectional transformers for language understanding. In Proceedings of the 2019 conference of the North
+American chapter of the association for computational linguistics: human language technologies, volume
+1 (long and short papers), pages 4171-4186, 2019.
+[8] Hao Dong, Eleni Chatzi, and Olga Fink. Towards multimodal open-set domain generalization and
+adaptation through self-supervision. In ECCV, 2024.
+[9] Hao Dong, Eleni Chatzi, and Olga Fink. Towards robust multimodal open-set test-time adaptation via
+adaptive entropy-aware optimization. In ICLR, 2025.
+[10] Hao Dong, Moru Liu, Kaiyang Zhou, Eleni Chatzi, Juho Kannala, Cyrill Stachniss, and Olga Fink.
+Advances in multimodal adaptation and generalization: From traditional approaches to foundation models.
+arXiv preprint arXiv:2501.18592, 2025.
+[11] Hao Dong, Ismail Nejjar, Han Sun, Eleni Chatzi, and Olga Fink. SimMMDG: A simple and effective
+framework for multi-modal domain generalization. In NeurIPS, 2023.
+[12] Yunfeng Fan, Wenchao Xu, Haozhao Wang, and Song Guo. Cross-modal representation flattening for
+multi-modal domain generalization. In NeurIPS, 2024.
+[13] Christoph Feichtenhofer, Haoqi Fan, Jitendra Malik, and Kaiming He. Slowfast networks for video
+recognition. In ICCV, 2019.
+[14] Olga Fink, Ismail Nejjar, Vinay Sharma, Keivan Faghih Niresi, Han Sun, Hao Dong, Chenghao Xu, Amaury
+Wei, Arthur Bizzi, Raffael Theiler, et al. From physics to machine learning and back: Part ii-learning and
+observational bias in prognostics and health management (phm). Reliability Engineering & System Safety,
+page 112376, 2026.
+[15] Olga Fink, Vinay Sharma, Ismail Nejjar, Leandro Von Krannichfeldt, Sergei Garmaev, Zepeng Zhang,
+Amaury Wei, Gaetan Frusque, Florent Forest, Mengjie Zhao, et al. From physics to machine learning and
+back: Part i-learning with inductive biases in prognostics and health management. Reliability Engineering
+& System Safety, page 112213, 2026.
+[16] Yaroslav Ganin and Victor Lempitsky. Unsupervised domain adaptation by backpropagation. In ICML,
+2015.
+[17] Ishaan Gulrajani and David Lopez-Paz.
+In search of lost domain generalization.
+arXiv preprint
+arXiv:2007.01434, 2020.
+[18] Cagri Gungor and Adriana Kovashka. Integrating audio narrations to strengthen domain generalization in
+multimodal first-person action recognition. In ICASSP, 2025.
+[19] Zirun Guo, Tao Jin, Wenlong Xu, Wang Lin, and Yangyang Wu. Bridging the gap for test-time multimodal
+sentiment analysis. In AAAI, 2025.
+[20] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition.
+In CVPR, 2016.
+[21] Dan Hendrycks, Steven Basart, Norman Mu, Saurav Kadavath, Frank Wang, Evan Dorundo, Rahul Desai,
+Tyler Zhu, Samyak Parajuli, Mike Guo, et al. The many faces of robustness: A critical analysis of
+out-of-distribution generalization. In ICCV, 2021.
+[22] Dan Hendrycks and Thomas Dietterich. Benchmarking neural network robustness to common corruptions
+and perturbations. arXiv preprint arXiv:1903.12261, 2019.
+[23] Hai Huang, Yan Xia, Sashuai Zhou, Hanting Wang, Shulei Wang, and Zhou Zhao. Bridging domain
+generalization to multimodal domain generalization via unified representations. In ICCV, 2025.
+[24] Hyeonbin Ji, Juyeob Lee, and Eunil Park. Alignment and distillation: A robust framework for multimodal
+domain generalizable human action recognition. In WACV, 2026.
+[25] Pang Wei Koh, Shiori Sagawa, Henrik Marklund, Sang Michael Xie, Marvin Zhang, Akshay Balsubramani,
+Weihua Hu, Michihiro Yasunaga, Richard Lanas Phillips, Irena Gao, et al. Wilds: A benchmark of
+in-the-wild distribution shifts. In ICML, 2021.
+[26] David Krueger, Ethan Caballero, Joern-Henrik Jacobsen, Amy Zhang, Jonathan Binas, Dinghuai Zhang,
+Remi Le Priol, and Aaron Courville. Out-of-distribution generalization via risk extrapolation (rex). In
+ICML, 2021.
+[27] Da Li, Yongxin Yang, Yi-Zhe Song, and Timothy M Hospedales. Learning to generalize: Meta-learning
+for domain generalization. In AAAI, 2018.
+[28] Hongzhao Li, Hao Dong, Hualei Wan, Shupan Li, Mingliang Xu, and Muhammad Haris Khan. Towards
+multimodal domain generalization with few labels. arXiv preprint arXiv:2602.22917, 2026.
+[29] Hongzhao Li, Guohao Shen, Shupan Li, Mingliang Xu, and Muhammad Haris Khan. Balancing multimodal
+domain generalization via gradient modulation and projection. In AAAI, 2026.
+[30] Hongzhao Li, Hualei Wan, Liangzhi Zhang, Mingyuan Jiu, Shupan Li, Mingliang Xu, and Muham-
+mad Haris Khan. Towards robust multimodal domain generalization via modality-domain joint adversarial
+training. In Proceedings of the 33rd ACM International Conference on Multimedia, 2025.
+[31] Shawn Li, Huixian Gong, Hao Dong, Tiankai Yang, Zhengzhong Tu, and Yue Zhao. Dpu: Dynamic
+prototype updating for multimodal out-of-distribution detection. arXiv preprint arXiv:2411.08227, 2024.
+[32] Moru Liu, Hao Dong, Olga Fink, and Mario Trapp. Adaptive confidence regularization for multimodal
+failure detection. arXiv preprint arXiv:2603.02200, 2026.
+[33] Moru Liu, Hao Dong, Jessica Kelly, Olga Fink, and Mario Trapp. Extremely simple multimodal outlier
+synthesis for out-of-distribution detection and segmentation. arXiv preprint arXiv:2505.16985, 2025.
+[34] Brian McFee, Colin Raffel, Dawen Liang, Daniel PW Ellis, Matt McVicar, Eric Battenberg, Oriol Nieto,
+et al. librosa: Audio and music signal analysis in python. SciPy, 2015(18-24):7, 2015.
+[35] Krikamol Muandet, David Balduzzi, and Bernhard Schölkopf. Domain generalization via invariant feature
+representation. In ICML, 2013.
+[36] Jonathan Munro and Dima Damen. Multi-modal domain adaptation for fine-grained action recognition. In
+CVPR, 2020.
+[37] Mirco Planamente, Chiara Plizzari, Emanuele Alberti, and Barbara Caputo. Domain generalization through
+audio-visual relative norm alignment in first person action recognition. In WACV, 2022.
+[38] Shiori Sagawa, Pang Wei Koh, Tatsunori B Hashimoto, and Percy Liang. Distributionally robust neural
+networks for group shifts: On the importance of regularization for worst-case generalization. arXiv preprint
+arXiv:1911.08731, 2019.
+[39] Baochen Sun and Kate Saenko. Deep coral: Correlation alignment for deep domain adaptation. In ECCV,
+2016.
+[40] Antonio Torralba and Alexei A Efros. Unbiased look at dataset bias. In CVPR, 2011.
+[41] Vladimir N Vapnik. An overview of statistical learning theory. IEEE transactions on neural networks,
+10(5):988-999, 1999.
+[42] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz
+Kaiser, and Illia Polosukhin. Attention is all you need. In NeurIPS, 2017.
+[43] Riccardo Volpi, Hongseok Namkoong, Ozan Sener, John C Duchi, Vittorio Murino, and Silvio Savarese.
+Generalizing to unseen domains via adversarial data augmentation. In NeurIPS, 2018.
+[44] Jindong Wang, Cuiling Lan, Chang Liu, Yidong Ouyang, Tao Qin, Wang Lu, Yiqiang Chen, Wenjun Zeng,
+and Philip S Yu. Generalizing to unseen domains: A survey on domain generalization. IEEE transactions
+on knowledge and data engineering, 35(8):8052-8072, 2022.
+[45] Xiaohan Wang, Zhangtao Cheng, Ting Zhong, Leiting Chen, and Fan Zhou. Modality-balanced collabora-
+tive distillation for multi-modal domain generalization. In AAAI, 2026.
+[46] Wenmeng Yu, Hua Xu, Fanyang Meng, Yilin Zhu, Yixiao Ma, Jiele Wu, Jiyun Zou, and Kaicheng Yang.
+Ch-sims: A chinese multimodal sentiment analysis dataset with fine-grained annotation of modality. In
+ACL, 2020.
+[47] Amir Zadeh, Rowan Zellers, Eli Pincus, and Louis-Philippe Morency. Mosi: multimodal corpus of
+sentiment intensity and subjectivity analysis in online opinion videos. arXiv preprint arXiv:1606.06259,
+2016.
+[48] AmirAli Bagher Zadeh, Paul Pu Liang, Soujanya Poria, Erik Cambria, and Louis-Philippe Morency.
+Multimodal language analysis in the wild: Cmu-mosei dataset and interpretable dynamic fusion graph. In
+ACL, 2018.
+[49] Baoqiang Zhang, Kunze Huang, Luyao Luyao, Xiaotong Tu, and Xiaolu Li. Nonpolarized embedding
+learning in multimodal domain generalization. Neurocomputing, page 131754, 2025.
+[50] Xingxuan Zhang, Yue He, Renzhe Xu, Han Yu, Zheyan Shen, and Peng Cui. Nico++: Towards better
+benchmarking for domain generalization. In CVPR, 2023.
+[51] Chao Zhao, Enrico Zio, and Weiming Shen. Domain generalization for cross-domain fault diagnosis:
+An application-oriented perspective and a benchmark study. Reliability Engineering & System Safety,
+245:109964, 2024.
+[52] Kaiyang Zhou, Ziwei Liu, Yu Qiao, Tao Xiang, and Chen Change Loy. Domain generalization: A survey.
+IEEE transactions on pattern analysis and machine intelligence, 45(4):4396-4415, 2022.
+A
+Related Work
+A.1
+Domain Generalization
+Domain generalization (DG), formalized by [3] and named by [35], aims to learn models that
+transfer to unseen target distributions using only labeled source data, without target access during
+training. Comprehensive surveys [52, 44] categorize prior methodologies into four broad families.
+Domain alignment reduces source-domain feature divergence via moment matching [39], adversarial
+learning [16], or invariant risk minimization [1], positing that source-invariant representations will
+generalize to unseen targets. Meta-learning simulates domain shift by partitioning sources into
+pseudo-train and pseudo-test sets to optimize held-out performance [27]. Data augmentation [43]
+diversifies the training distribution through adversarial examples, mixup, or generative perturbations
+to cover potential test-domain shifts. Finally, regularization enforces solution properties conducive to
+out-of-distribution generalization, such as cross-domain gradient agreement [26] or worst-case group
+robustness [38]. Despite this methodological diversity, [17] demonstrated that under standardized
+evaluation, a carefully tuned ERM baseline matches or outperforms prominent DG algorithms across
+multiple benchmarks. This pivotal finding recentered the field on evaluation rigor, directly motivating
+our parallel investigation in the multimodal setting.
+A.2
+Multimodal Domain Generalization
+Multimodal domain generalization (MMDG) extends DG to inputs comprising heterogeneous modal-
+ities (e.g., video, audio, text) [18, 23, 4, 24]. This setting is uniquely challenging because modalities
+exhibit distinct statistical properties, converge at varying rates [45], and establish spurious cross-
+modal correlations that fracture under distribution shift [12]. The canonical protocol originated with
+MM-SADA [36], which defined the cross-kitchen action recognition task for domain adaptation,
+establishing the de facto MMDG benchmark. For DG specifically, RNA-Net [37] introduced Relative
+Norm Alignment to rebalance audio-visual feature norms across source domains. SimMMDG [11]
+subsequently decomposed representations into modality-shared and -specific components, concur-
+rently introducing the Human-Animal-Cartoon (HAC) dataset to stress-test cross-style generalization.
+MOOSA [8] later extended this approach to open-set MMDG via self-supervised pretext tasks.
+More recent methods have targeted increasingly specific bottlenecks in the multimodal optimization
+landscape: CMRF [12] flattens cross-modal representation spaces to address discrepant modality
+sharpness; NEL [49] mitigates embedding polarization; JAT [30] jointly applies adversarial training
+across modality and domain axes; MBCD [45] replaces weight averaging with collaborative distil-
+lation and adaptive modality dropout; and GMP [29] modulates gradients to resolve cross-modal
+conflicts. While adjacent domains like semi-supervised MMDG [28] and comprehensive surveys
+unifying multimodal adaptation and foundation models [10] have recently emerged, no prior work
+systematically consolidates MMDG evaluation across diverse task families, modality configurations,
+and robustness axes. MMDG-Bench directly addresses this critical gap.
+A.3
+Domain Generalization Benchmarks
+The maturation of the DG field has been largely driven by community benchmarks. DomainBed [17]
+standardized the evaluation of 14 algorithms across seven image datasets, revealing that prior reported
+gains largely stemmed from inconsistent evaluation protocols rather than algorithmic innovation.
+WILDS [25] extended benchmarking to 10 real-world datasets (e.g., satellite imagery, histopathology),
+demonstrating that substantial performance gaps persist on natural distribution shifts even for methods
+excelling on synthetic tasks. NICO++ [50] introduced quantitative metrics for covariate and concept
+shift, showing that prior datasets occupied a narrow shift spectrum, and released a 200,000-image
+benchmark to expand this scope. Additionally, benchmarks like ImageNet-C [22] and ImageNet-
+R [21] have emerged to target specific failure modes, such as visual corruptions.
+MMDG-Bench serves as the multimodal analogue to these foundational efforts. It provides a con-
+solidated testbed that rigorously standardizes backbones, data splits, hyperparameters, and model
+selection across nine MMDG methods, six modality combinations, and six datasets. Furthermore, it
+introduces systematic evaluation axes for corruption robustness, missing modalities, and trustworthi-
+ness, critical dimensions completely absent from prior MMDG evaluations.
+B
+Limitations, Broader Impacts, and Future Work
+B.1
+Limitations
+MMDG-Bench currently focuses on discriminative and regression tasks and does not yet cover other
+important settings such as multimodal retrieval or generative modeling. Additionally, our robustness
+evaluation is limited to two representative perturbations; extending this to broader, modality-specific
+corruption suites and adversarial attacks remains an important direction for future work.
+B.2
+Broader Impacts
+Promoting Safe and Reliable AI Deployment: By systematically exposing the vulnerabilities of
+current multimodal models to real-world noise, missing modalities, and out-of-distribution data,
+MMDG-Bench incentivizes the development of much safer AI systems. This is particularly crucial
+for high-stakes domains, such as industrial safety and predictive maintenance, where model failures
+can lead to physical harm or severe economic loss.
+Enhancing Model Transparency and Trust: Our findings emphasize that high predictive accuracy
+does not guarantee reliable confidence estimation. By evaluating misclassification and out-of-
+distribution detection, our benchmark encourages the community to build AI systems that "know what
+they do not know." This transparency is essential for fostering meaningful human-AI collaboration
+and trust.
+B.3
+Future Work
+Based on the comprehensive evaluations and findings from MMDG-Bench, it is evident that MMDG
+remains far from a solved problem. We identify several critical directions for future research to
+address the limitations of current approaches:
+Developing Beyond-Marginal Algorithms: Current specialized MMDG methods offer only
+marginal improvements over strong baselines like ERM and fail to consistently dominate across
+diverse datasets or task families. Furthermore, a substantial gap to upper-bound performance persists.
+Future work must focus on discovering novel training paradigms or architectural innovations that
+genuinely generalize across task families, rather than overfitting to specific modality combinations or
+datasets.
+Addressing Modality Competition and Adaptive Fusion: Our findings indicate that simply adding
+more modalities, such as through trimodal fusion, produces inconsistent benefits. In tasks like action
+recognition, dominant modalities (e.g., video) often overshadow auxiliary modalities (e.g., audio),
+which can even reduce performance when not properly integrated. These results highlight the need for
+dynamic and adaptive fusion mechanisms that explicitly address modality competition and optimally
+balance modality contributions based on context.
+Building Resilience to Real-World Corruptions and Sensor Failures: Clean benchmark per-
+formance has proven to be a poor predictor of real-world robustness. Existing methods degrade
+substantially under realistic input corruptions and exhibit high vulnerability to missing modalities
+(sensor failures). Future MMDG frameworks must explicitly incorporate corruption robustness and
+missing-modality resilience into their optimization objectives, moving beyond idealized training
+environments.
+Jointly Optimizing Accuracy and Trustworthiness: High predictive accuracy does not inherently
+translate to reliable confidence estimation. We observed that current models struggle with uncertainty
+calibration, and that misclassification detection and OOD detection represent non-redundant chal-
+lenges. Future research should prioritize trustworthy MMDG by jointly optimizing for predictive
+accuracy and robust uncertainty quantification, ensuring models are safe and reliable in open-world
+deployments.
+C
+Introduction of Datasets
+We provide detailed information on the datasets included in MMDG-Bench, including action recogni-
+tion, mechanical fault diagnosis, and sentiment analysis.
+Human
+(a) HAC
+Animal
+Cartoon
+Kitchen 1
+Kitchen 2
+Kitchen 3
+(b) EPIC-Kitchens
+Figure 5: Examples from action recognition datasets.
+Figure 6: Examples from fault diagnosis dataset.
+C.1
+Action Recognition
+Human-Animal-Cartoon (HAC) [11]. The HAC dataset consists of seven actions ("sleeping,"
+"watching TV," "eating," "drinking," "swimming," "running," and "opening door") performed by
+humans, animals, and cartoon characters, forming three distinct domains: Human (H), Animal
+(A), and Cartoon (C). The dataset contains a total of 3, 381 video clips, including 1, 387 human
+samples, 906 animal samples, and 1, 088 cartoon samples. Each sample includes video, audio, and
+pre-computed optical flow modalities.
+EPIC-Kitchens [36]. Following the experimental protocol of prior work [36], we use a subset of
+EPIC-Kitchens containing eight actions ("put," "take," "open," "close," "wash," "cut," "mix," and
+"pour") recorded across three different kitchens, which define three domains: D1, D2, and D3. The
+dataset comprises 10, 094 video clips in total, with 1, 978 samples from D1, 3, 245 from D2, and
+4, 871 from D3. Each sample includes video, audio, and pre-computed optical flow modalities.
+C.2
+Mechanical Fault Diagnosis
+HUST Motor [51]. HUST Motor is a public motor fault diagnosis dataset that provides synchronized
+vibration and acoustic signals collected from a Spectra-Quest Mechanical Fault Simulator, distinguish-
+ing it from the predominantly vibration-only datasets commonly used in this field. The dataset covers
+six motor health states: healthy, bearing fault, bowed rotor, broken rotor bars, rotor misalignment,
+Figure 7: Examples from sentiment analysis datasets.
+and voltage unbalance, with all faults artificially introduced to ensure controlled ground-truth labels.
+Each health condition is recorded under four steady-state rotational speeds (5, 10, 20, and 30 Hz),
+forming four distinct domains. Both vibration and acoustic signals are sampled at 25.6 kHz, with
+163,840 samples collected for each configuration. The combination of complementary modalities,
+multiple operating conditions, and diverse fault categories makes HUST Motor a valuable benchmark
+for multimodal domain generalization in fault diagnosis.
+C.3
+Sentiment Analysis
+CMU-MOSI [47]. CMU-MOSI is a foundational dataset for English-language multimodal sentiment
+analysis. It contains 2,199 short opinion video clips collected from YouTube monologue reviews,
+with each utterance annotated for sentiment intensity on a continuous scale from -3 (highly negative)
+to +3 (highly positive). The dataset provides three temporally aligned modalities: text (transcribed
+speech), acoustic features (e.g., pitch and energy), and visual features (e.g., facial expressions and
+gestures). Despite its relatively modest scale, CMU-MOSI remains a widely used benchmark for
+sentiment regression and classification, and serves as a standard evaluation dataset for multimodal
+fusion methods.
+CMU-MOSEI [48]. CMU-MOSEI extends CMU-MOSI and is one of the largest publicly available
+datasets for multimodal sentiment and emotion analysis. It includes over 23,500 sentence-level video
+utterances from more than 1,000 distinct YouTube speakers across diverse topics. Each utterance is
+annotated with both a sentiment intensity score in [-3, +3] and six Ekman-style emotion categories
+(happiness, sadness, anger, fear, disgust, and surprise) with corresponding intensity labels. Like
+CMU-MOSI, it provides temporally aligned text, acoustic, and visual modalities. Its large scale,
+speaker diversity, and comprehensive annotations make CMU-MOSEI a standard benchmark for
+multimodal fusion, transfer learning, and generalization research. Since CMU-MOSEI is a broader
+and larger-scale extension of CMU-MOSI, we only consider the MOSI →MOSEI generalization
+direction in our experiments.
+CH-SIMS [46]. CH-SIMS is a Chinese-language multimodal sentiment analysis dataset designed to
+address limitations of prior datasets that provide only unified multimodal sentiment labels. It consists
+of 2,281 refined video segments collected from real-world sources such as movies, TV series, and
+variety shows. In addition to an overall multimodal sentiment label, CH-SIMS provides independent
+sentiment annotations for each modality-text, audio, and visual-using a five-point scale ranging
+from negative to positive in [-1, +1]. This modality-specific labeling enables more detailed analysis
+of inter-modality consistency and disagreement, while also supporting unimodal, multimodal, and
+multi-task learning research.
+Since sentiment scales vary across datasets, we formulate sentiment classification as a binary task
+(negative vs. positive) and normalize regression targets to the range [-3, +3].
+Table 7: Hyperparameters, their default values and distributions for random search.
+Condition
+Parameter
+Default value
+Random distribution
+RNA-Net
+alpha_RNA
+1.0
+Uniform(0, 3)
+SimMMDG
+alpha_trans
+0.1
+Uniform(0, 1)
+explore_loss_coeff
+0.7
+Uniform(0, 1)
+alpha_contrast
+3.0
+Uniform(0, 5)
+MOOSA
+entropy_min_weight
+0.001
+Uniform(0, 1)
+jigsaw_ratio
+1.0
+Uniform(0, 3)
+mask_ratio
+0.3
+Uniform(0, 1)
+CMRF
+distill_coef
+3.0
+Uniform(0, 5)
+mix_coef
+2.0
+Uniform(0, 5)
+NEL
+alpha
+0.7
+Uniform(0, 1)
+beta
+1/bsz
+Uniform(0, 1)
+temp_s
+0.1
+Uniform(0, 1)
+temp_u
+0.25
+Uniform(0, 1)
+k
+Choice({4, 8, 12, 16})
+JAT
+alpha_rev
+0.1
+Uniform(0, 1)
+alpha_rev2
+0.3
+Uniform(0, 1)
+domain_adv_loss
+0.5
+Uniform(0, 1)
+modal_adv_loss
+0.1
+Uniform(0, 1)
+cls_loss
+3.0
+Uniform(0, 5)
+MBCD
+ema_beta
+0.999
+Uniform(0.9, 1.0)
+kl_mm_coeff
+1.0
+Uniform(0, 2)
+kl_um_coeff
+1.0
+Uniform(0, 2)
+modality_drop_base
+Uniform(0, 1)
+BMP
+alpha_rev
+0.3
+Uniform(0, 1)
+alpha_k
+0.5
+Uniform(0, 1)
+alpha_p
+0.1
+Uniform(0, 1)
+cls_loss
+3.0
+Uniform(0, 5)
+D
+Hyperparameter Spaces
+We list all hyperparameters, their default values, and the corresponding search distributions used in
+our random hyperparameter sweeps in Table 7.
+E
+Detailed Experimental Results
+We present detailed experimental results for single-source DG (Table 8 to Table 11), as well as under
+corruption(Table 12) and missing-modality settings (Table 13).
+F
+Compute Resources
+All experiments were conducted on servers equipped with NVIDIA RTX 3090 and RTX 4090 GPUs.
+Each model was trained using standard deep learning frameworks with GPU acceleration. In total,
+7,402 neural networks were trained across 95 cross-domain tasks, reflecting the large computational
+scale of MMDG-Bench.
+Table 8: Multimodal single-source DG with different modalities on EPIC-Kitchens dataset.
+Modality
+Source: D1
+Source: D2
+Source: D3
+Method
+Video
+Audio
+Flow
+D1→D2
+D1→D3
+D2 →D1
+D2 →D3
+D3→D1
+D3→D2
+Mean
+ERM
+✓
+✓
+51.07
+54.72
+43.45
+55.44
+46.67
+56.13
+51.25
+RNA-Net [37]
+✓
+✓
+52.53
+51.85
+51.03
+56.26
+53.79
+55.60
+53.51
+SimMMDG [11]
+✓
+✓
+53.33
+51.54
+51.72
+60.16
+55.63
+58.93
+55.22
+MOOSA [8]
+✓
+✓
+53.60
+51.23
+47.82
+61.91
+56.55
+58.80
+54.98
+CMRF [12]
+✓
+✓
+58.67
+51.33
+49.66
+62.01
+50.11
+57.73
+54.92
+NEL [49]
+✓
+✓
+54.66
+54.07
+47.81
+59.13
+48.50
+57.51
+53.61
+JAT [30]
+✓
+✓
+55.32
+50.08
+50.12
+59.23
+50.18
+56.22
+53.52
+MBCD [45]
+✓
+✓
+56.22
+55.30
+53.41
+61.17
+53.64
+62.26
+57.00
+GMP [29]
+✓
+✓
+53.17
+49.82
+48.97
+59.65
+49.81
+57.33
+53.12
+Oracle
+✓
+✓
+76.13
+76.80
+60.23
+76.80
+60.23
+76.13
+71.05
+ERM
+✓
+✓
+58.93
+55.24
+49.43
+56.98
+55.40
+64.40
+56.73
+RNA-Net [37]
+✓
+✓
+56.40
+54.93
+53.56
+58.01
+56.78
+62.27
+56.99
+SimMMDG [11]
+✓
+✓
+59.07
+51.13
+56.55
+59.14
+57.93
+64.27
+58.01
+MOOSA [8]
+✓
+✓
+57.07
+50.51
+54.25
+62.22
+54.94
+66.00
+57.50
+CMRF [12]
+✓
+✓
+58.27
+49.79
+52.64
+60.27
+56.09
+64.00
+56.84
+NEL [49]
+✓
+✓
+54.75
+47.43
+52.79
+60.95
+54.40
+63.11
+55.57
+JAT [30]
+✓
+✓
+55.32
+48.18
+53.16
+59.02
+55.78
+63.55
+55.84
+MBCD [45]
+✓
+✓
+56.31
+53.18
+55.55
+62.28
+56.55
+67.58
+58.57
+GMP [29]
+✓
+✓
+54.83
+50.67
+51.67
+59.19
+55.82
+64.19
+56.06
+Oracle
+✓
+✓
+80.00
+81.21
+65.52
+81.21
+65.52
+80.00
+75.58
+ERM
+✓
+✓
+47.20
+49.38
+42.53
+52.57
+47.13
+57.33
+49.36
+RNA-Net [37]
+✓
+✓
+50.93
+54.00
+42.07
+54.72
+48.51
+57.87
+51.35
+SimMMDG [11]
+✓
+✓
+53.47
+51.33
+47.13
+56.06
+52.64
+63.33
+53.99
+MOOSA [8]
+✓
+✓
+53.07
+54.11
+45.75
+55.75
+54.48
+63.07
+54.37
+CMRF [12]
+✓
+✓
+50.93
+53.59
+43.22
+52.87
+49.89
+62.40
+52.15
+NEL [49]
+✓
+✓
+49.91
+50.34
+44.13
+57.46
+50.19
+60.08
+52.02
+JAT [30]
+✓
+✓
+50.09
+52.11
+43.29
+54.66
+50.17
+59.89
+51.70
+MBCD [45]
+✓
+✓
+52.62
+53.73
+54.35
+52.94
+54.25
+66.02
+55.65
+GMP [29]
+✓
+✓
+49.83
+50.25
+44.32
+53.88
+49.64
+58.71
+51.10
+Oracle
+✓
+✓
+74.13
+73.61
+59.77
+73.61
+59.77
+74.13
+69.17
+ERM
+✓
+✓
+✓
+55.47
+52.87
+52.64
+58.52
+55.86
+63.60
+56.49
+RNA-Net [37]
+✓
+✓
+✓
+59.07
+56.06
+53.10
+60.16
+52.64
+64.80
+57.64
+SimMMDG [11]
+✓
+✓
+✓
+58.27
+53.49
+51.49
+63.35
+58.16
+70.93
+59.28
+MOOSA [8]
+✓
+✓
+✓
+60.27
+57.39
+50.57
+62.53
+61.15
+66.27
+59.70
+CMRF [12]
+✓
+✓
+✓
+59.47
+56.37
+51.72
+61.29
+57.01
+66.40
+58.71
+NEL [49]
+✓
+✓
+✓
+58.40
+54.07
+49.19
+62.25
+55.25
+66.04
+57.53
+JAT [30]
+✓
+✓
+✓
+58.61
+54.35
+50.16
+61.33
+56.38
+63.24
+57.34
+MBCD [45]
+✓
+✓
+✓
+60.04
+55.91
+55.78
+64.81
+56.78
+72.00
+60.89
+GMP [29]
+✓
+✓
+✓
+57.38
+53.59
+50.59
+61.55
+54.82
+65.79
+57.29
+Oracle
+✓
+✓
+✓
+79.47
+78.64
+65.52
+78.64
+65.52
+79.47
+74.54
+Table 9: Multimodal single-source DG with different modalities on HAC dataset.
+Modality
+Source: H
+Source: A
+Source: C
+Method
+Video
+Audio
+Flow
+H→A
+H→C
+A →H
+A →C
+C→H
+C→A
+Mean
+ERM
+✓
+✓
+66.67
+49.36
+65.83
+50.00
+64.67
+72.74
+61.54
+RNA-Net [37]
+✓
+✓
+65.89
+52.11
+67.84
+53.13
+60.27
+71.30
+61.76
+SimMMDG [11]
+✓
+✓
+68.21
+45.86
+75.34
+50.64
+69.00
+73.18
+63.71
+MOOSA [8]
+✓
+✓
+67.99
+43.38
+72.39
+49.45
+70.87
+72.08
+62.69
+CMRF [12]
+✓
+✓
+66.78
+45.59
+73.54
+54.96
+74.55
+71.52
+64.49
+NEL [49]
+✓
+✓
+68.57
+46.32
+74.90
+45.52
+69.50
+69.31
+62.35
+JAT [30]
+✓
+✓
+66.84
+44.15
+70.31
+45.28
+65.51
+70.82
+60.49
+MBCD [45]
+✓
+✓
+68.69
+42.93
+71.52
+43.35
+65.97
+69.57
+60.34
+GMP [29]
+✓
+✓
+67.29
+48.71
+72.43
+44.48
+64.65
+69.13
+61.12
+Oracle
+✓
+✓
+97.16
+88.53
+92.75
+88.53
+92.75
+97.16
+92.81
+ERM
+✓
+✓
+65.78
+45.31
+75.78
+48.35
+69.79
+64.13
+61.52
+RNA-Net [37]
+✓
+✓
+64.90
+45.40
+72.24
+50.09
+59.63
+65.01
+59.54
+SimMMDG [11]
+✓
+✓
+68.87
+43.84
+74.33
+53.13
+71.23
+65.12
+62.75
+MOOSA [8]
+✓
+✓
+67.99
+45.31
+76.42
+54.04
+70.37
+68.10
+63.71
+CMRF [12]
+✓
+✓
+66.78
+47.61
+77.22
+51.93
+69.72
+66.56
+63.30
+NEL [49]
+✓
+✓
+65.85
+41.14
+73.61
+36.58
+69.14
+65.12
+58.57
+JAT [30]
+✓
+✓
+66.37
+40.91
+71.37
+41.66
+62.86
+59.30
+57.08
+MBCD [45]
+✓
+✓
+67.88
+40.50
+79.23
+48.77
+71.32
+62.62
+61.72
+GMP [29]
+✓
+✓
+66.74
+41.94
+69.21
+41.91
+63.54
+60.49
+57.30
+Oracle
+✓
+✓
+96.59
+85.78
+93.48
+85.78
+93.48
+96.59
+91.95
+ERM
+✓
+✓
+57.73
+40.35
+52.49
+39.61
+38.57
+49.34
+46.35
+RNA-Net [37]
+✓
+✓
+54.86
+38.05
+50.32
+44.21
+41.17
+49.67
+46.38
+SimMMDG [11]
+✓
+✓
+61.81
+40.07
+56.02
+41.73
+41.89
+50.00
+48.59
+MOOSA [8]
+✓
+✓
+59.38
+39.98
+58.54
+44.49
+40.88
+52.87
+49.36
+CMRF [12]
+✓
+✓
+58.06
+39.98
+58.69
+43.38
+43.76
+45.92
+48.30
+NEL [49]
+✓
+✓
+57.43
+34.98
+56.16
+36.76
+38.50
+44.44
+44.71
+JAT [30]
+✓
+✓
+56.80
+36.80
+50.73
+37.31
+38.55
+46.06
+44.38
+MBCD [45]
+✓
+✓
+60.15
+36.33
+58.80
+41.69
+50.03
+51.28
+49.71
+GMP [29]
+✓
+✓
+57.26
+37.88
+54.37
+38.61
+40.15
+48.17
+46.07
+Oracle
+✓
+✓
+90.91
+68.35
+81.52
+68.35
+81.52
+90.91
+80.26
+ERM
+✓
+✓
+✓
+68.10
+44.67
+70.44
+50.83
+63.30
+68.43
+60.96
+RNA-Net [37]
+✓
+✓
+✓
+64.35
+46.23
+67.27
+48.99
+61.93
+65.45
+59.04
+SimMMDG [11]
+✓
+✓
+✓
+66.45
+45.13
+73.90
+52.30
+70.44
+73.40
+63.60
+MOOSA [8]
+✓
+✓
+✓
+66.11
+47.98
+72.03
+52.67
+66.33
+72.74
+62.98
+CMRF [12]
+✓
+✓
+✓
+67.99
+49.54
+69.36
+55.70
+65.10
+65.12
+62.13
+NEL [49]
+✓
+✓
+✓
+65.92
+43.72
+70.22
+47.70
+65.54
+66.15
+59.88
+JAT [30]
+✓
+✓
+✓
+65.27
+45.58
+70.75
+45.77
+61.06
+64.09
+58.75
+MBCD [45]
+✓
+✓
+✓
+70.42
+44.45
+77.21
+49.63
+70.17
+69.28
+63.53
+GMP [29]
+✓
+✓
+✓
+63.42
+48.26
+71.18
+47.30
+63.97
+62.51
+59.44
+Oracle
+✓
+✓
+✓
+96.02
+86.24
+92.75
+86.24
+92.75
+96.02
+91.67
+Table 10: Multimodal single-source DG on HUST dataset with vibration and acoustic modalities.
+Source: D1
+Source: D2
+Source: D3
+Source: D4
+Method
+Target:
+D2
+D3
+D4
+D1
+D3
+D4
+D1
+D2
+D4
+D1
+D2
+D3
+Mean
+ERM
+45.08
+12.00
+4.92
+50.00
+58.92
+50.67
+21.42
+58.25
+80.17
+18.00
+37.83
+74.25
+42.63
+RNA-Net [37]
+56.08
+12.83
+1.75
+51.58
+52.08
+48.75
+27.00
+62.92
+80.92
+21.08
+40.83
+74.33
+44.18
+SimMMDG [11]
+51.25
+16.00
+14.67
+44.75
+68.83
+63.17
+24.50
+71.75
+81.83
+17.00
+48.00
+76.67
+48.20
+MOOSA [8]
+49.50
+18.58
+11.50
+55.92
+66.83
+58.00
+26.67
+63.17
+82.83
+14.67
+46.92
+75.25
+47.49
+CMRF [12]
+49.50
+17.58
+16.67
+51.42
+60.42
+46.33
+21.17
+51.25
+76.50
+17.25
+42.25
+78.83
+44.10
+NEL [49]
+57.39
+20.92
+17.86
+53.39
+56.94
+47.17
+24.86
+52.00
+75.89
+18.39
+32.36
+72.28
+44.12
+JAT [30]
+58.20
+16.39
+10.95
+44.19
+58.78
+57.70
+22.06
+58.42
+80.67
+18.17
+42.64
+76.36
+45.38
+MBCD [45]
+63.33
+23.19
+18.14
+38.25
+66.81
+53.94
+17.69
+66.58
+66.72
+15.25
+43.55
+70.11
+45.30
+GMP [29]
+58.67
+17.36
+14.19
+50.11
+63.78
+59.33
+17.00
+58.03
+82.92
+17.97
+39.05
+77.61
+46.34
+Oracle
+99.83
+100.00
+99.83
+99.83
+100.00
+99.83
+99.83
+99.83
+99.83
+99.83
+99.83
+100.00
+99.87
+Table 11: Multimodal single-source DG on MOSI, MOSEI, and SIMS datasets for sentiment analysis
+with video, audio, and text modalities.
+Method
+MOSEI →SIMS
+MOSI →SIMS
+MOSI →MOSEI
+SIMS →MOSI
+SIMS →MOSEI
+Mean
+MAE↓
+F1↑
+ACC2↑MAE↓
+F1↑
+ACC2↑MAE↓
+F1↑
+ACC2↑MAE↓
+F1↑
+ACC2↑MAE↓
+F1↑
+ACC2↑MAE↓
+F1↑
+ACC2↑
+ERM
+1.79
+67.92
+63.68
+1.81
+67.74
+62.80
+0.99
+67.55
+66.96
+1.46
+74.61
+60.03
+1.60
+66.39
+50.55
+1.53
+68.84
+60.80
+RNA-Net [37]
+1.81
+72.41
+66.30
+1.85
+66.69
+61.71
+0.93
+68.12
+68.10
+1.49
+73.49
+59.29
+1.43
+65.86
+50.51
+1.50
+69.31
+61.18
+SimMMDG [11]
+1.80
+75.94
+66.96
+1.89
+75.55
+68.05
+0.98
+68.86
+68.60
+1.46
+74.91
+59.88
+1.42
+66.65
+51.02
+1.51
+72.38
+62.90
+MOOSA [8]
+1.83
+75.93
+66.52
+1.81
+63.30
+60.61
+0.89
+67.33
+67.22
+1.59
+74.06
+60.18
+1.39
+66.69
+50.59
+1.50
+69.46
+61.02
+CMRF [12]
+1.84
+74.07
+65.65
+1.86
+70.91
+63.02
+0.94
+66.96
+66.96
+1.38
+74.87
+60.03
+0.94
+67.11
+50.92
+1.39
+70.78
+61.32
+NEL [49]
+1.79
+64.64
+63.09
+1.85
+64.78
+61.39
+1.03
+67.17
+66.87
+1.47
+73.87
+59.53
+1.42
+61.03
+50.51
+1.51
+66.30
+60.28
+JAT [30]
+1.88
+70.64
+64.99
+1.89
+69.11
+62.80
+1.00
+67.64
+67.43
+1.51
+74.83
+59.83
+1.39
+56.78
+46.95
+1.53
+67.80
+60.40
+MBCD [45]
+1.98
+51.28
+49.22
+1.82
+73.74
+66.07
+0.85
+65.74
+64.81
+1.53
+70.90
+58.06
+1.12
+53.03
+48.66
+1.46
+62.94
+57.36
+GMP [29]
+1.84
+65.18
+61.77
+1.82
+71.15
+64.47
+1.06
+66.08
+65.30
+1.56
+69.99
+57.86
+1.23
+57.01
+50.84
+1.50
+65.88
+60.05
+Oracle
+1.32
+76.80
+76.80
+1.32
+76.80
+76.80
+0.58
+73.89
+73.63
+0.97
+78.37
+78.47
+0.58
+73.89
+73.63
+0.95
+75.95
+75.87
+Table 12: Multimodal multi-source DG with corruptions on HAC dataset. Subscripts show the
+change relative to the clean Video+Audio setting.
+HAC dataset
+Corruption
+Method
+A, C →H
+H, C →A
+H, A →C
+Mean
+Wind
+on audio
+ERM
+77.43+1.52
+74.39−3.09
+52.67−0.73
+68.16−0.77
+RNA-Net [37]
+75.78+0.58
+73.51−3.97
+49.36−4.22
+66.22−2.53
+SimMMDG [11]
+79.96+1.37
+76.49−1.55
+56.25+0.46
+70.90+0.09
+MOOSA [8]
+77.65−1.73
+75.71−2.99
+54.78+0.00
+69.38−1.57
+CMRF [12]
+76.06−1.88
+71.63−6.63
+47.70−4.14
+65.13−4.22
+NEL [49]
+75.83−0.50
+73.96−2.46
+46.20−4.87
+65.33−2.61
+JAT [30]
+76.42−1.74
+74.27−3.72
+49.82−3.29
+66.84−2.91
+MBCD [45]
+77.93−0.19
+75.99−2.92
+51.62−1.87
+68.51−1.66
+GMP [29]
+76.48−0.88
+74.92−1.55
+48.69−3.64
+66.70−2.02
+Defocus
+on video
+ERM
+65.54−10.37
+73.07−4.41
+41.82−11.58
+60.14−8.79
+RNA-Net [37]
+61.93−13.27
+73.84−3.64
+44.67−8.91
+60.15−8.60
+SimMMDG [11]
+61.50−17.09
+68.54−9.50
+43.93−11.86
+57.99−12.82
+MOOSA [8]
+68.13−11.25
+70.09−8.61
+48.44−6.34
+62.22−8.73
+CMRF [12]
+62.29−15.65
+70.42−7.84
+45.59−6.25
+59.43−9.92
+NEL [49]
+60.74−15.59
+69.21−7.21
+40.29−10.78
+56.75−11.19
+JAT [30]
+61.35−16.81
+68.66−9.33
+42.75−10.36
+57.59−12.16
+MBCD [45]
+65.88−12.24
+72.65−6.26
+47.36−6.13
+61.96−8.21
+GMP [29]
+64.73−12.63
+70.95−5.52
+46.57−5.76
+60.75−7.97
+Table 13: Multimodal multi-source DG with missing modalities on HAC dataset. Subscripts show
+the change relative to the full Video+Audio setting.
+Modality
+HAC dataset
+Method
+Video
+Audio
+A, C →H
+H, C →A
+H, A →C
+Mean
+ERM
+✓
+✗
+78.88+2.97
+74.72−2.76
+47.70−5.70
+67.10−1.83
+RNA-Net [37]
+✓
+✗
+77.79+2.59
+75.28−2.20
+49.72−3.86
+67.60−1.15
+SimMMDG [11]
+✓
+✗
+80.82+2.23
+77.04−1.00
+53.58−2.21
+70.48−0.33
+MOOSA [8]
+✓
+✗
+78.73−0.65
+76.49−2.21
+53.49−1.29
+69.57−1.38
+CMRF [12]
+✓
+✗
+79.81+1.87
+71.41−6.85
+47.24−4.60
+66.15−3.20
+NEL [49]
+✓
+✗
+79.78+3.45
+73.14−3.28
+47.09−3.98
+66.67−1.27
+JAT [30]
+✓
+✗
+79.29+1.13
+74.32−3.67
+47.79−5.32
+67.13−2.62
+MBCD [45]
+✓
+✗
+80.18+2.06
+76.74−2.17
+52.62−0.87
+69.85−0.32
+GMP [29]
+✓
+✗
+78.17+0.81
+75.49−0.98
+51.06−1.27
+68.24−0.48
+ERM
+✗
+✓
+25.96−49.95
+37.42−40.06
+22.24−31.16
+28.54−40.39
+RNA-Net [37]
+✗
+✓
+27.90−47.30
+31.35−46.13
+18.29−35.29
+25.85−42.90
+SimMMDG [11]
+✗
+✓
+30.64−47.95
+27.59−50.45
+29.23−26.56
+29.15−41.66
+MOOSA [8]
+✗
+✓
+27.04−52.34
+39.07−39.63
+22.06−32.72
+29.39−41.56
+CMRF [12]
+✗
+✓
+32.01−45.93
+38.52−39.74
+28.03−23.81
+32.85−36.50
+NEL [49]
+✗
+✓
+22.58−53.75
+28.44−47.98
+21.01−30.06
+24.01−43.93
+JAT [30]
+✗
+✓
+27.51−50.65
+33.84−44.15
+21.65−31.46
+27.67−42.08
+MBCD [45]
+✗
+✓
+31.33−46.79
+37.96−40.95
+28.69−24.80
+32.66−37.51
+GMP [29]
+✗
+✓
+29.41−47.95
+34.20−42.27
+23.86−28.47
+29.16−39.56

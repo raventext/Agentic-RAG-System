@@ -1,0 +1,1121 @@
+The Structural Origin of Attention Sink:
+Variance Discrepancy, Super Neurons, and Dimension Disparity
+Siquan Li 1 Kaiqi Jiang 2 Jiacheng Sun 2 Tianyang Hu 1
+Abstract
+Despite the prevalence of the attention sink phe-
+nomenon in Large Language Models (LLMs),
+where initial tokens disproportionately monop-
+olize attention scores, its structural origins remain
+elusive. This work provides a mechanistic expla-
+nation for this phenomenon. First, we trace its
+root to the value aggregation process inherent in
+self-attention, which induces a systematic vari-
+ance discrepancy. We further demonstrate that
+this discrepancy is drastically amplified by the
+activation of super neurons within Feed-Forward
+Network (FFN) layers. Specifically, the channel-
+sparse down-projections trigger a dimension dis-
+parity of the first-token representation, necessi-
+tating the formation of attention sinks as a struc-
+tural anchor. Then, we validate this causal chain
+through two controlled interventions: (i) isolating
+the aggregation effect via attention mask modi-
+fications and (ii) amplifying the variance of tar-
+geted token representations. Both interventions
+can replicate attention sinks at arbitrary positions.
+Our mechanistic understanding offers a founda-
+tion for the systematic control of sink formation.
+Finally, as a proof of concept, we propose head-
+wise RMSNorm, an architectural modification that
+stabilizes value aggregation outputs during pre-
+training. Our experiments demonstrate that restor-
+ing statistical parity across positions significantly
+accelerates convergence.
+1. Introduction
+Attention sinks are a recurring feature of decoder-only trans-
+formers: across layers and inputs, a small set of tokens, most
+notably the initial token, can receive disproportionately large
+1The Chinese University of Hong Kong, Shenzhen 2Huawei
+Foundation Model Department. Correspondence to: Tianyang Hu
+<hutianyang@cuhk.edu.cn>.
+Proceedings of the 43 rd International Conference on Machine
+Learning, Seoul, South Korea. PMLR 306, 2026. Copyright 2026
+by the author(s).
+attention despite limited semantic relevance [25, 7, 3]. From
+a functional standpoint, this phenomenon is a double-edged
+sword: while it enables efficient KV cache compression
+strategies like streaming generation [10, 26] and mitigates
+over-smoothing [2], it also gives rise to pathological behav-
+iors that reflect deeper architectural issues, such as activation
+outliers [14, 21], representation collapse [13, 22], and opti-
+mization abnormalities [6]. Existing literature offers diverse
+hypotheses for its formation, including but not limited to
+the Softmax operator’s need for a "sink" for residual prob-
+ability mass [27], positional mechanisms [29], or spectral
+subspaces [4]. However, the fundamental causal chain that
+dictates why the initial token is consistently selected as the
+structural anchor remains to be elucidated.
+In this work, we bridge this gap by tracing the structural
+origin of attention sinks to the variance discrepancy (see de-
+tailed definition in Section 3.1) inherent to the value aggre-
+gation process of self-attention. Specifically, under causal
+masking, the initial token attends only to itself, while sub-
+sequent tokens aggregate information from an expanding
+context. Consequently, the initial token-exempt from this
+averaging-persists as a high-variance outlier. Through
+comprehensive investigation into the internal propagation
+of transformers, we find that these outliers are preserved
+by the output projection in the attention module that later
+activate super neurons within the FFN, triggering massive
+activations and a subsequent dimension disparity of token
+representations. Propagated through residual connections
+and normalization layers, these distortions ultimately domi-
+nate the query-key dot products, necessitating the formation
+of the attention sink. A schematic overview of this propaga-
+tion chain is illustrated in Figure 1.
+To validate the causal link from variance discrepancy to
+attention sink, we conduct two controlled interventions to
+mimic the variance property of the initial token: (i) mod-
+ifying the attention mask to isolate the aggregation effect,
+and (ii) amplifying the variance of arbitrary token repre-
+sentations. Both interventions can induce attention sink at
+arbitrary positions, establishing the causal effect of variance
+discrepancy on attention sink formation.
+To verify our mechanistic insight, we first test an existing
+variant: replacing Softmax with a Sigmoid activation. With-
+arXiv:2605.06611v1 [cs.LG] 7 May 2026
+
+The Structural Origin of Attention Sink
+Figure 1. Schematic Overview of the Attention Sink Mechanism. Value aggregation causes dimension-wise variance decay for
+subsequent tokens, while the first token acts as a high-variance outlier. This discrepancy is preserved by output projections, activating
+super neurons in FFNs. Subsequently, the channel-sparse down-projections induce dimension disparity, resulting in the attention sink.
+1
+3
+5
+7
+9
+11
+Layer index
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+Average Attention to 1st Token
+Attention Sink Mitigation
+Baseline(Original)
+Sigmoid
+Ours (Head-Norm)
+Figure 2. Mitigation of Attention Sinks. Comparison of the aver-
+aged attention to the first token across layers. The Baseline (red)
+exhibits attention sink from the 5th layer, whereas both Sigmoid
+attention (green) and our Head-wise RMSNorm (blue) method
+successfully suppress this artifact.
+out the sum-to-one constraint, the first token is no longer
+a high-variance outlier. As expected, attention sinks are
+significantly mitigated in the pretraining process (see Fig-
+ure 2). Building on this, we further introduce head-wise
+RMSNorm, a novel modification designed to stabilize value
+aggregation outputs. Pretraining experiments demonstrate
+that this targeted intervention not only suppresses attention
+sinks but also accelerates pretraining convergence.
+Our results suggest that the attention sink is not an inevitable
+byproduct of scaling, but a controllable architectural prop-
+erty, providing a new foundation for the design of more
+stable and interpretable transformers.
+2. Preliminary
+In this work, we focus on the transformer decoder archi-
+tecture, which serves as the backbone for modern LLMs.
+A standard decoder block consists of two primary sub-
+layers: a self-attention and an FFN, both employing pre-
+normalization and residual connections.
+Formally, let xl ∈RT ×d denote the input hidden states for
+the l-th layer, where T is the sequence length and d is the
+hidden dimension. The forward propagation within a single
+layer is defined as:
+hl = xl + Attention(Norm(xl)),
+xl+1 = hl + FFN(Norm(hl)).
+Self-Attention
+The self-attention mechanism [24] aggre-
+gates context by computing a convex combination of value
+vectors. Let Ai,j denote the normalized attention score be-
+tween token i and j, and Vj,k represent the value state at
+position j and dimension k. The value aggregation for the
+i-th token is expressed as:
+oi,k =
+i
+X
+j=0
+Ai,j · Vj,k,
+subject to
+i
+X
+j=0
+Ai,j = 1.
+(1)
+The aggregated states are subsequently projected by WO ∈
+Rd×d to form the layer output.
+Feed-Forward Network
+Llama-2 [23] employs the
+SwiGLU variant [20] for its FFN. It consists of three linear
+projections and a SiLU activation function. Given an input
+x ∈Rd, the output is computed as:
+FFN(x) = (SiLU(xWgate) ⊙xWup)Wdown,
+(2)
+where ⊙represents element-wise multiplication.
+The
+weights are parameterized as Wgate, Wup ∈Rd×df and
+Wdown ∈Rdf ×d, where df is the intermediate dimension.
+3. Structural Origins of Attention Sinks
+Prior research has established that attention sinks are seman-
+tically irrelevant, persisting even in sequences of random
+tokens [9]. In this work, we investigate the internal evolution
+of token representations and structural origins of attention
+sinks. Our primary analysis centers on Llama-2-7B [23].
+To ensure generality, we also validate our findings on other
+open-source LLMs in Appendix A.
+The Structural Origin of Attention Sink
+To understand the nature of attention sinks, we investigate
+where the attention sink emerges within the LLMs and what
+might be a trigger before it happens.
+Invariant layer-wise onset
+We track the attention patterns
+across all layers on WikiText-2. As shown in the blue curve
+of Figure 3, we observe a consistent pattern: the attention
+weight on the initial token remains low in the initial layers
+but exhibits a sudden spike around layer 2. This structural
+consistency suggests that the onset of the sink is a fixed
+property of the model’s depth and architecture, occurring as
+soon as internal statistics accumulate to a critical point.
+Figure 3. Layer-wise evolution of attention sink and represen-
+tation norms. We plot the attention score of the first token (left
+axis, blue) and its input representation l2-norm (right axis, red) for
+Llama-2. The synchronized spike indicates that the arrival of a
+high-norm representation triggers the attention sink.
+The precursor: massive representation norms
+To iden-
+tify what triggers this sudden spike, we analyze the hidden
+states entering each layer. We track the l2-norm of the rep-
+resentation for the first token. As shown in the red curve
+of Figure 3, we observe a distinct anomaly: the l2-norm of
+the representation for the first token increases sharply at the
+exact same layer where the attention sink emerges. This
+synchronization implies a direct link between the two phe-
+nomena, suggesting that the massive representation norm is
+a critical precursor to the attention sink.
+3.1. Value Aggregation Introduces Positional Variance
+Discrepancy
+Attention sink is position-specific. Given that FFNs, Layer-
+Norm [1], and residual connections [11] operate identically
+across positions, the root cause of the first-token anomaly
+implies a mechanism unique to the self-attention process.
+We focus on the attention mechanism, specifically its value
+aggregation process, as formulated in Eq. (1). The causal
+mask induces a structural difference: the initial token (i = 0)
+strictly attends to itself (a0,0 = 1), while subsequent tokens
+(i > 0) aggregate previous value vectors. As a result, the
+variance of the value vectors tends to decay as i increases,
+rendering the first token as an outlier [13].
+We validate this positional variance discrepancy in Llama-2-
+7B. Since the attention sink consistently emerges at layer 2,
+we investigate the dimension-wise variance of hidden states
+in Layer 1 immediately after value aggregation. Specifically,
+we compute the variance for each hidden dimension across
+the batch and report the average for each position. Cru-
+cially, to eliminate the bias of a fixed beginning-of-sentence
+(BOS) token-which would mathematically yield zero vari-
+ance-we utilize sequences of fully random tokens.
+As shown in Figure 4, there is a clear variance decay pat-
+tern: the average dimension-wise variance exhibits a sharp
+drop as the token position index increases. The first token
+retains a significantly higher variance across its dimensions
+compared to the rest of the sequence.
+Figure 4. Mean dimension-wise variance discrepancy. We
+plot the mean dimension-wise standard deviation of hidden states
+immediately after (Layer 1) value aggregation. Position 0 exhibits
+exceptionally high variance and subsequent tokens show a sharp
+variance decay.
+3.2. Causal Effect of Variance Discrepancy on Attention
+Sink
+Given that the first token is an outlier in terms of variance,
+we investigate its causal link to the observed attention sink.
+To this end, we devise two interventions aiming to introduce
+attention sinks at arbitrary locations by manipulating the
+variance discrepancy.
+Attention Mask Intervention
+Consider modifying the at-
+tention mask of the k-th token to block it from attending to
+any preceding positions (j < k). This forces the token to
+attend only to itself, effectively simulating the state of the
+initial token. Attention mechanism of subsequent tokens
+(t > k) is left unchanged. Through this intervention, we
+can mimic the variance behavior of the first token at any
+position and evaluate the attention pattern. Experimental
+results on Llama-2-7B are shown in Figure 5. When aggre-
+gation is blocked at index k = 10 (red line), it immediately
+becomes a new attention sink. This supports that the sink
+phenomenon is not tied to the absolute position 0, but a con-
+sequence of unaggregated high variance representations.
+The Structural Origin of Attention Sink
+Figure 5. Causal validation via mask intervention. We visualize
+the average attention score received by each token on Llama-2.
+The red line shows the result of blocking aggregation at index 10,
+which causes it to transform into a new attention sink.
+Direct Variance Amplification
+We can also mimic the
+initial-token variance behavior at any position k by directly
+amplifying the corresponding variance. First, we compute
+the global mean of the value vectors, denoted as µ(l), at
+each layer l using random tokens. This is averaged over
+both batch size and sequence length.
+Then, for an arbitrary token at index k, we amplified its
+aggregated output’s variance using a scalar λ > 0:
+o′(l)
+k
+= µ(l) + λ · (o(l)
+k −µ(l)).
+As shown in Figure 6, increasing λ under our mean-centered
+amplification consistently transforms the k-th token into a
+dominant attention sink.
+Figure 6. Inducing attention sinks via variance amplification.
+We apply a factor λ to amplify the variance of an arbitrary token
+(index 10). Increasing λ directly increases the attention score
+received by the token. A control experiment shows that merely
+scaling the representation norm fails to induce such a sink.
+To rule out the possibility that the induced sink is merely
+an artifact of an enlarged representation norm (which could
+trivially inflate the query-key dot product), we conduct a
+control experiment by directly scaling the output vector
+by the same factor: λ · o(l)
+k . Figure 6 shows that simply
+scaling the representation norm fails to reproduce the sink
+formation, demonstrating that the magnitude of variance is
+the critical factor triggering the attention sink.
+4. Mechanism Analysis: From Variance
+Discrepancy to Attention Sinks
+Having established that high variance caused by the lack
+of aggregation drives the attention sink, we now examine
+how this anomaly propagates through the transformer. We
+focus our analysis on Llama-2-7B to trace the internal chain
+reaction. Specifically, we identify a multi-stage propagation
+chain that transforms the initial variance discrepancy into
+the final attention sinks:
+1. Output projection preserves variance discrepancy
+(Sec. 4.1): The output projection (WO) structurally
+preserves the variance discrepancy, injecting it directly
+into the residual stream.
+2. Selectively activated by FFN super neurons
+(Sec. 4.2): Following the pre-FFN RMSNorm, the
+first token’s distinct representation selectively activates
+super neurons in the FFN, causing massive activa-
+tions that are then channeled through the sparse down-
+projection, resulting in extreme dimension disparities
+in the output.
+3. Locking via QK projection (Sec. 4.3): The mas-
+sive dimension disparity persists through the subse-
+quent pre-attention RMSNorm, effectively "locking"
+the Query-Key projection in the next layer, which com-
+pels the attention mechanism to sink to the first token.
+In the following subsections, we empirically verify each
+stage of this propagation chain.
+4.1. Output Projection Preserves Variance Discrepancy
+Since the representations carrying dimension-wise variance
+discrepancy are first processed by the output projection,
+a critical question arises: does the output projection WO
+suppress or preserve the variance discrepancy generated by
+the lack of aggregation? To answer this, we investigate the
+structural alignment between WO and the high-variance
+dimensions of the first token.
+Structural Alignment Analysis
+We hypothesize that WO
+is biased to amplify dimensions where the first token has
+high variance. Let σin ∈Rd be the dimension-wise stan-
+dard deviation vector of the first token before output pro-
+jection, and let wj ∈Rd denote the j-th column of WO
+(representing the weights for the j-th output neuron). To
+measure the ordinal association, we compute Kendall’s rank
+correlation coefficient (τ) [12] between the absolute weights
+and the input variance for each output neuron. As shown
+in Figure 7 (Left), the distribution of τj across all neurons
+is shifted significantly to the right, with a mean correlation
+of 0.32. The high degree of structural alignment implies
+The Structural Origin of Attention Sink
+that WO consistently assigns larger weights to dimensions
+where the first token exhibits higher variance.
+Figure 7. Structural alignment and outlier status preservation
+in WO (Layer 1). (Left) The distribution of rank correlations
+between WO neuron weights and Token 0 input variance. The
+positive shift (mean=0.32) indicates structural alignment. (Right)
+Even after passing through WO, the first token maintains signifi-
+cantly higher variance than subsequent tokens.
+Post-Projection Variance Decay
+To verify if this structural
+alignment effectively preserves the variance discrepancy, we
+further examine the statistical properties of the output of
+WO. Specifically, we compute the dimension-wise standard
+deviation of the hidden states immediately after the output
+projection, using random token inputs. As visualized in
+Figure 7 (right), the variance decay pattern persists: the first
+token retains an exceptionally high variance compared to
+subsequent tokens. This suggests that the output projection
+does not drown out the discrepancy; instead, it propagates
+the first token as a distinct outlier into the residual stream.
+4.2. Selective Activation of Super Neurons
+While WO preserves the discrepancy, it does not explain the
+extreme magnitude of the representation norms observed in
+Section 3. We hypothesize that the FFN in layer 1 serves as
+an amplifier to the initial high-variance outlier. To uncover
+this mechanism, we focus on the gated linear units (GLU)
+[20] architecture, specifically the SwiGLU variant employed
+by modern LLMs like Llama-2. The computation is defined
+in Eq. (2).
+Figure 8. Structural Identification of Super Neurons in Layer
+1 FFN. We visualize the l2 norms of the weight vectors for each
+hidden neuron in Wgate (Left) and Wup (Right). A distinct
+subset of neurons exhibits significantly larger norms.
+Super Neurons in Weight Matrices
+We first investigate
+the structural bias in Wgate and Wup. We calculate the l2
+norms of the weight vectors for each hidden neuron. As
+shown in Figure 8, specific neurons (e.g., index 7890) pos-
+sess exceptionally large norms. We term these super neurons
+due to their capacity to capture and amplify signals.
+To facilitate a proper structural analysis, we first clarify the
+geometric interpretation of the linear projections involved.
+Consider a weight matrix W. We interpret the j-th column
+as the weight vector characterizing the j-th neuron, while
+the i-th row represents how the i-th dimension of the input
+activation is mapped to the output space. Based on this
+formulation, our analysis adopts a dual perspective:
+• For the upstream layers (Wgate and Wup), we exam-
+ine their column vectors. These correspond to the super
+neurons that detect and react to the high-variance input
+of the first token.
+• For the downstream layer (Wdown), we analyze the
+row vectors indexed by the super neurons. These rows
+determine how the massive activations generated by
+super neurons are channelled and broadcasted into the
+residual stream.
+With this framework, we trace the propagation of the vari-
+ance discrepancy through multiple stages in the FFN.
+Figure 9. Selective activation of super neuron 7890. The Left
+Axis shows the cosine similarity with W(7890)
+gate . The Right Axis
+shows the raw activation via W(7890)
+up
+. The first token uniquely
+achieves both high alignment and massive activation, whereas
+subsequent tokens are effectively suppressed.
+Selective Activation
+We track the interaction between in-
+put tokens and super neuron (index 7890) and evaluate
+whether first token is being treated differently. We measure
+two metrics for each token position: (1) the cosine similar-
+ity between the normalized input token xnorm and the gate
+weight column vector w(7890)
+gate ; and (2) the raw activation
+projected by the up-projection column vector w(7890)
+up
+. As
+visualized in Figure 9, the first token exhibits high positive
+The Structural Origin of Attention Sink
+cosine similarity (opening the gate) and generates massive
+raw activation. In contrast, subsequent tokens show low
+alignment or negligible activation. This suggests that the
+super neuron is selectively triggered by the initial outlier
+while remaining suppressed for the rest of the sequence.
+Channeling via Sparse Weights
+Finally, we look into how
+this massive activation h(7890)
+mid
+propagates through the down-
+projection. We examine the distribution of weights in the
+row vector w(7890)
+down = Wdown[7890, :]. As shown in Fig-
+ure 10, the weight distribution is heavy-tailed. Most entries
+are near zero, but a few specific dimensions exhibit large
+magnitudes. This channels the massive activation exclu-
+sively into these outlier dimensions (e.g., dimension 2533).
+Figure 10. Sparse channeling in down-projection. The weight
+distribution corresponding to super neuron in Wdown is heavy-
+tailed. Massive activation is channeled solely into specific outlier
+dimensions.
+4.3. Dimension Disparity and Structural Locking in QK
+Projections
+In this section, we analyze the properties of the first to-
+ken’s FFN output, which is generated by massive selective
+activations of super neurons passing through sparse down-
+projections. We then investigate how it induces attention
+sinks in the subsequent self-attention layer.
+Dimension Disparity in the First-Token Representation
+The FFN output introduces significant dimension dispar-
+ity into the output. Specifically, the representation of the
+first token becomes dominated by specific outlier dimen-
+sions driven by super neuron activations. This disparity
+compresses the majority of the information into a low-
+dimensional subspace. To quantify this, we define the dom-
+inance ratio for the first token’s hidden state h0 ∈Rd. It
+calculates the ratio of the maximum absolute magnitude to
+the mean absolute magnitude:
+DomRatio(h0) = maxj |h0,j|
+d
+P
+k |h0,k|.
+A higher ratio indicates that the representation is dispropor-
+tionately concentrated in a few outlier dimensions, reflecting
+extreme dimension disparity.
+As shown in Figure 11, Llama-2 exhibits a sharp rise in the
+dominance ratio in the shallow layers.
+Figure 11. Dimension disparity analysis. We calculate the layer-
+wise Dominance Ratio (max /mean) of the first token on WikiText-
+2. The sharp rise in early layers suggests that the representation is
+dominated by a few massive outlier dimensions.
+Next, we reveal how this interacts with RMSNorm and the
+query/key projections in layer 2.
+RMSNorm as Directional Filter
+Let the first token input
+x0 be dominated by a massive value λ at dimension index
+c (e.g., index 2533), while other dimensions are negligible.
+When passing through RMSNorm, the normalization con-
+stant is determined almost entirely by λ. Consequently, the
+output vector converges to a scaled basis vector ec:
+RMSNorm(x0) ≈sgn(λ)
+√
+dγc · ec
+This implies the first token’s representation collapses into a
+fixed direction. We validate this empirically in layer 2. As
+shown in Table 1, the outlier dimension is orders of magni-
+tude larger than the mean of other dimensions, confirming
+directional collapse.
+Table 1. Analysis of the first token’s representation after RM-
+SNorm in layer 2. The outlier dimension (index 2533) dominates
+the vector.
+METRIC
+VALUE
+OUTLIER DIMENSION MAGNITUDE (|x2533|)
+1.2568
+DIMENSION MEAN ABS VALUE ( ¯
+|x|)
+0.0048
+DOMINANCE RATIO
+262.88×
+Propagation to Keys
+Consider the key projection in layer
+2. Since the normalized input is essentially ec, the resulting
+key vector k(h)
+for the first token in head h approximates
+the c-th row of the key projection matrix W(h)
+K :
+k(h)
+≈±
+√
+d · (W(h)
+K )c,:
+(3)
+The Structural Origin of Attention Sink
+Alignment across heads
+For an attention sink to form, the
+score ⟨q(h)
+t
+, k(h)
+0 ⟩must be consistently large. We analyze
+this using two metrics: (1) structural alignment (SVD),
+which measures the alignment | cos(u(h)
+1 , k(h)
+0 )| between
+the sink key and the principal direction of W(h)
+Q extracted
+via SVD; and (2) positive ratio, defined as the proportion
+of tokens where the dot product is positive. As shown
+in Figure 12, heads with high structural alignment (tall
+bars) exhibit a near-100% positive ratio. This indicates
+that specific heads are structurally predisposed to generate
+queries that align with the sink key, thereby ensuring large
+attention scores.
+Figure 12. Head-wise analysis in layer 2. The x-axis represents
+head indices. The bars (left axis) show structural alignment be-
+tween the sink key and the query matrix’s principal direction. The
+red line (right axis) shows the ratio of positive attention scores.
+High alignment correlates with high positivity.
+5. Practical Implication
+Our analysis identifies the structural origin of attention sink:
+the variance discrepancy during value aggregation activates
+super neurons. The resulting massive activations are chan-
+neled through sparse down-projections to create severe di-
+mension disparity, which effectively locks the subsequent
+QK projection and ultimately induces the attention sink.
+One reason for variance discrepancy is that standard
+Softmax function enforces a strict sum-to-one constraint
+(Eq. (1)). To address this, we can consider replacing Soft-
+max with an unnormalized Sigmoid activation [18]:
+ai,j = Sigmoid
+ 
+qikT
+j
+√dk
+!
+.
+With Sigmoid attention, the first token is no longer a high-
+variance outlier, potentially mitigating the formation of at-
+tention sinks. This effect is verified in Sec. 5.2.
+While replacing Softmax with an unnormalized Sigmoid ac-
+tivation partially mitigates the high-variance first-token out-
+lier, this approach is not ideal: the magnitude and variance of
+token representations now scale with sequence length, poten-
+tially causing training instability. Indeed, prior studies sug-
+gest that standard Softmax attention generally exhibits su-
+perior training stability and downstream performance com-
+pared with alternative unnormalized mechanisms [24, 5, 16].
+Consequently, we propose head-wise RMSNorm, aiming to
+retain the standard Softmax formulation and directly address
+the variance discrepancy.
+5.1. Head-wise RMSNorm
+Recent studies, e.g., DuoAttention [28], have highlighted
+the functional heterogeneity of attention heads. Motivated
+by this, we investigate variance discrepancy across different
+heads and observe a significant inconsistency. Specifically,
+we find that attention heads vary significantly in behavior:
+some heads are "low-entropy", focusing on few tokens ,
+while other head are "high-entropy", aggregating across a
+wide range of tokens.
+As shown in Figure 13, this leads to a statistical imbalance:
+low-entropy heads produce high-variance outputs, while
+high-entropy heads produce low-variance outputs. With-
+out intervention, low-entropy heads dominate the residual
+stream simply due to their magnitude. Therefore, a head-
+wise intervention is necessary to decouple signal magnitude
+from attention sparsity.
+Figure 13. Head imbalance and signal magnitude. Attention
+heads are sorted by entropy. Low-entropy heads produce high-
+variance outputs, while high-entropy heads produce low-variance
+outputs.
+To resolve both the positional variance discrepancy and
+this head imbalance, we propose head-wise RMSNorm, im-
+mediately after value aggregation and before the output
+projection WO. Specifically, for a head h at position t, we
+normalize the aggregated vector o(h)
+t
+:
+ˆo(h)
+t
+=
+o(h)
+t
+RMS(o(h)
+t
+)
+⊙λ,
+(4)
+where ⊙denotes element-wise multiplication. Here, λ ∈
+Rdk is a learnable scaling vector shared across all heads (dk
+The Structural Origin of Attention Sink
+is the head dimension), allowing the model to adaptively
+recalibrate the feature magnitude for each dimension.
+This operation ensures that: (1) position-wise consistent
+variance: the aggregated vectors have a standardized scale
+regardless of position or context length and, (2) head-wise
+consistent variance: both low-entropy and high-entropy
+heads contribute equally to the output projection WO, pre-
+venting any single head from acting as a structural outlier.
+5.2. Experimental Results
+Setup
+We conduct pre-training from scratch on Open-
+WebText [8] for 40,000 iterations (152M parameters, 20B
+tokens). We compare three architectures: (1) Baseline, the
+standard Llama-2 architecture using Softmax attention; (2)
+Sigmoid attention, which replaces Softmax with unnor-
+malized Sigmoid [18]; and (3) Ours (Head-Norm), which
+applies head-wise RMSNorm after value aggregation in stan-
+dard Softmax attention. All models use the same optimizer
+(AdamW) and hyperparameters. Details are in Appendix B.
+We compare three model variants to investigate the impact
+of eliminating the variance discrepancy. We evaluate the
+models across three key dimensions: (1) the presence of
+dimension disparity, (2) the existence of attention sinks, and
+(3) pre-training convergence speed. Regarding attention
+sinks, as discussed in Section 1, our method significantly
+mitigates the phenomenon even without eliminating the root
+cause of variance discrepancy at its source.
+Alleviation of Dimension Disparity and Manifold Col-
+lapse
+We analyze the dominance ratio of the first token’s
+hidden states to quantify the severity of dimension disparity.
+Figure 14 compares the layer-wise trajectory. The base-
+line (red) exhibits a sharp escalation in the dominance ratio
+starting from early layers, indicating that the first token’s
+representation is effectively hijacked by a single outlier di-
+mension. In contrast, both Sigmoid (green) and ours (blue)
+maintain a consistently low dominance ratio. This result pro-
+vides strong evidence that the extreme dimension disparity
+is a direct downstream consequence of the variance dis-
+crepancy. By eliminating this discrepancy, we successfully
+disrupt the formation of outliers and preserve a balanced
+feature distribution.
+Consequently, this dimension disparity leads to manifold
+collapse, where the representation is compressed into a low-
+dimensional subspace. To quantify this, we compute the
+effective rank [19]. Let pk = σk/ P
+j σj be the normalized
+singular values of the hidden state matrix H. The effective
+rank is defined as:
+EffRank(H) = exp
+ 
+−
+X
+k
+pk ln pk
+!
+(5)
+A lower rank indicates that information is concentrated in
+2
+6
+10
+Layer Index
+40
+80
+120
+Ratio (max/mean)
+Layer-wise First Token Dominance Ratio
+Baseline
+Sigmoid
+Ours (Head-Norm)
+Figure 14. Layer-wise dominance ratio of the first token. The
+baseline (red) shows a sharp rise, indicating severe dimension
+disparity where a single feature dominates the representation. Both
+Sigmoid attention (green) and our method (blue) suppress this
+dominance.
+fewer dimensions. As shown in Figure 15, the baseline
+exhibits a severe drop in effective rank. In contrast, our
+Head-Norm method maintains a consistently higher effec-
+tive rank across layers, indicating that resolving the variance
+discrepancy effectively alleviates manifold collapse and pre-
+serves the model’s representational capacity.
+2
+6
+10
+Layer Index
+200
+300
+400
+Effective Rank
+Layer-wise Effective Rank
+Baseline
+Sigmoid
+Ours (Head-Norm)
+Figure 15. Layer-wise effective rank of the hidden states. The
+baseline shows a distinct drop in effective rank, indicating manifold
+collapse caused by outlier dimensions. Our method maintains a
+higher effective rank, preserving representational capacity.
+Pre-training Convergence Speed
+We analyze the vali-
+dation loss trajectories during the pre-training to evaluate
+optimization efficiency and generalization. As shown in Fig-
+ure 17, our method (blue) demonstrates significantly faster
+convergence and achieves lower loss values compared to
+the baseline (red). In contrast, the unnormalized Sigmoid
+attention (green) exhibits slower convergence and worse
+validation performance than the Softmax baseline. This
+observation highlights that simply replacing Softmax is in-
+sufficient; eliminating the variance discrepancy is key to
+improving the conditioning of the optimization landscape,
+enabling the model to train more efficiently and generalize
+better.
+The Structural Origin of Attention Sink
+10000
+30000
+Iteration
+2.8
+3.0
+3.2
+3.4
+3.6
+Validation Loss
+Comparison of Validation Losses
+Baseline
+Sigmoid
+Ours (Head-Norm)
+Figure 16. Validation Loss
+Figure 17. Convergence speed analysis. Our method (blue) con-
+verges significantly faster and achieves lower loss on the validation
+sets compared to the baseline (red). The standard Sigmoid atten-
+tion (green) converges slower due to optimization instability.
+Multi-run Consistency
+Table 2 summarizes the results
+across four pre-training runs with different random seeds.
+Our HeadNorm method consistently outperforms the base-
+line across all runs, achieving lower training and validation
+loss, reduced dimension disparity, and higher effective rank.
+Table 2. Evaluation across multiple random seeds. Results are
+summarized over four distinct pre-training runs. Mean ± standard
+deviation are reported. "Layer-wise mean" indicates the value
+averaged across all transformer layers.
+Metric
+Baseline
+Ours (HeadNorm)
+Train Loss (↓)
+2.7483 ± 0.0118
+2.7073 ± 0.0095
+Validation Loss (↓)
+2.7812 ± 0.0109
+2.7421 ± 0.0066
+Effective Rank
+(layer-wise mean, ↑)
+343.71 ± 15.63
+445.96 ± 5.37
+Dimension Disparity
+(layer-wise mean, ↓)
+82.67 ± 8.09
+33.74 ± 2.73
+6. Discussion
+In this work, we provided a mechanistic explanation for the
+attention sink phenomenon. We identified the root cause as
+a variance discrepancy inherently embedded in the causal
+value aggregation process. Our analysis reveals that the ab-
+sence of aggregation for the initial token creates a persistent
+high-variance outlier. This outlier propagates through the
+network, preserves its magnitude via the output projection
+(WO), and selectively activates super neurons within the
+FFN. This triggers massive activations that induce severe
+dimension disparity. These geometric distortions ultimately
+dominate subsequent Query-Key projections, effectively
+"locking" the attention mechanism onto the first token.
+Connecting with Prior Explanations
+Prior works of-
+ten provide a functional perspective on these phenomena.
+For instance, StreamingLLM [27] attributes attention sinks
+to the Softmax sum-to-one constraint, suggesting that ini-
+tial tokens serve as a repository to store excess attention
+scores. Similarly, Bondarenko et al. [3] argue that mas-
+sive activations and attention sinks emerge to help attention
+heads effectively perform a "no-operation" (no-op). While
+these studies eloquently explain how sinks and outliers are
+functionally utilized by the model, our contribution is com-
+plementary and explores the upstream mechanism. We
+elucidate why the sink systematically anchors at position
+zero in causal decoders. Our causal chain-from variance
+discrepancy to QK locking-traces the origin of these func-
+tional artifacts directly back to the structural asymmetry
+of causal masking. Furthermore, recent findings by Yona
+et al. [30] reveal that FFN super-neuron amplification also
+drives massive activations when processing repeated tokens.
+Our framework provides a unified structural explanation for
+this observation: aggregating identical tokens fails to shrink
+the variance (unlike aggregating diverse tokens). Conse-
+quently, repeated tokens structurally mimic the variance
+behavior of our first-token outlier, triggering the exact same
+amplification pipeline.
+Mitigation and Structural Implications
+To address the
+variance discrepancy at its source, we proposed head-wise
+RMSNorm as a variance stabilizer to neutralize statistical
+outliers before they propagate into the residual stream. Our
+findings suggest that the empirical success of prior normal-
+ization methods may be partially attributed to their unin-
+tended mitigation of this underlying variance disparity. Our
+intervention shares structural similarities with recent works
+[17, 15], which utilize normalization to address the low-rank
+bottleneck or to stabilize optimization dynamics on a hy-
+persphere. While the resulting architectures appear similar,
+our underlying theoretical motivation-restoring variance
+balance-diverges significantly (detailed in Appendix D).
+Beyond addressing attention sinks, our work demonstrates
+that statistically grounded interventions can effectively miti-
+gate complex geometric anomalies like manifold collapse.
+While our mechanistic claims are supported by controlled
+experiments on small-scale models, validating these inter-
+ventions at a larger scale remains a necessary next step. We
+hope this foundation encourages the community to further
+investigate along this path to build inherently more stable
+and interpretable architectures.
+Limitations and future work
+Our empirical validation
+was conducted on 152M-parameter models. While atten-
+tion sinks are known to persist at larger scales, confirming
+the effectiveness of head-wise RMSNorm on models with
+billions of parameters (e.g., 7B) is a crucial next step. Ad-
+ditionally, future work should investigate how this method
+interacts with more complex architectures, such as Mixture-
+of-Experts, to understand its broader applicability and po-
+tential limitations in large-scale, heterogeneous settings.
+The Structural Origin of Attention Sink
+Impact Statement
+This work aims to advance the field of Machine Learning
+by providing mechanistic insights into attention phenomena
+and proposing architectural improvements. While there
+are many potential societal consequences associated with
+advances in ML, we do not identify any specific ethical or
+societal risks that warrant detailed discussion in this context.
+References
+[1] Ba, J. L., Kiros, J. R., and Hinton, G. E. Layer normal-
+ization. arXiv preprint arXiv:1607.06450, 2016.
+[2] Barbero, F., Arroyo, A., Gu, X., Perivolaropoulos,
+C., Bronstein, M., Veliˇckovi´c, P., and Pascanu, R.
+Why do llms attend to the first token? arXiv preprint
+arXiv:2504.02732, 2025.
+[3] Bondarenko, Y., Nagel, M., and Blankevoort, T. Quan-
+tizable transformers: Removing outliers by helping
+attention heads do nothing. Advances in Neural Infor-
+mation Processing Systems, 36:75067-75096, 2023.
+[4] Cancedda, N. Spectral filters, dark signals, and atten-
+tion sinks. arXiv preprint arXiv:2402.09221, 2024.
+[5] Catania, F., Spitale, M., and Garzotto, F. Conversa-
+tional agents in therapeutic interventions for neurode-
+velopmental disorders: a survey. ACM Computing
+Surveys, 55(10):1-34, 2023.
+[6] Chen, Y. and Yao, Q. Attention sinks induce gradient
+sinks. arXiv preprint arXiv:2603.17771, 2026.
+[7] Clark, K., Khandelwal, U., Levy, O., and Manning,
+C. D. What does bert look at? an analysis of bert’s
+attention. arXiv preprint arXiv:1906.04341, 2019.
+[8] Gokaslan, A., Cohen, V., Pavlick, E., and Tellex,
+S. Openwebtext corpus. 
+github.io/OpenWebTextCorpus, 2019.
+[9] Gu, X., Pang, T., Du, C., Liu, Q., Zhang, F., Du, C.,
+Wang, Y., and Lin, M. When attention sink emerges in
+language models: An empirical view. arXiv preprint
+arXiv:2410.10781, 2024.
+[10] Han, C., Wang, Q., Peng, H., Xiong, W., Chen, Y.,
+Ji, H., and Wang, S. Lm-infinite: Zero-shot extreme
+length generalization for large language models. arXiv
+preprint arXiv:2308.16137, 2023.
+[11] He, K., Zhang, X., Ren, S., and Sun, J. Deep residual
+learning for image recognition. In Proceedings of
+the IEEE conference on computer vision and pattern
+recognition, pp. 770-778, 2016.
+[12] KENDALL, M. G. A new measure of rank correla-
+tion. Biometrika, 30(1-2):81-93, 06 1938. ISSN 0006-
+3444. doi: 10.1093/biomet/30.1-2.81. URL https:
+//doi.org/10.1093/biomet/30.1-2.81.
+[13] Li, S., Tong, Y., Wang, H., and Hu, T. Transformers
+are born biased: Structural inductive biases at random
+initialization and their practical consequences. arXiv
+preprint arXiv:2602.05927, 2026.
+[14] Liu, R., Bai, H., Lin, H., Li, Y., Gao, H., Xu, Z., Hou,
+L., Yao, J., and Yuan, C. Intactkv: Improving large
+language model quantization by keeping pivot tokens
+intact. arXiv preprint arXiv:2403.01241, 2024.
+[15] Loshchilov, I., Hsieh, C.-P., Sun, S., and Ginsburg,
+B. ngpt: Normalized transformer with representa-
+tion learning on the hypersphere.
+arXiv preprint
+arXiv:2410.01131, 2024.
+[16] Qin, Z., Han, X., Sun, W., Li, D., Kong, L., Barnes, N.,
+and Zhong, Y. The devil in linear transformer. arXiv
+preprint arXiv:2210.10340, 2022.
+[17] Qiu, Z., Wang, Z., Zheng, B., Huang, Z., Wen, K.,
+Yang, S., Men, R., Yu, L., Huang, F., Huang, S.,
+et al.
+Gated attention for large language models:
+Non-linearity, sparsity, and attention-sink-free. arXiv
+preprint arXiv:2505.06708, 2025.
+[18] Ramapuram, J., Danieli, F., Dhekane, E., Weers, F.,
+Busbridge, D., Ablin, P., Likhomanenko, T., Digani,
+J., Gu, Z., Shidani, A., et al. Theory, analysis, and best
+practices for sigmoid self-attention. arXiv preprint
+arXiv:2409.04431, 2024.
+[19] Roy, O. and Vetterli, M. The effective rank: A measure
+of effective dimensionality. In 2007 15th European
+Signal Processing Conference, pp. 606-610, 2007.
+[20] Shazeer, N. Glu variants improve transformer. arXiv
+preprint arXiv:2002.05202, 2020.
+[21] Son, S., Park, W., Han, W., Kim, K., and Lee, J. Prefix-
+ing attention sinks can mitigate activation outliers for
+large language model quantization. In Proceedings of
+the 2024 Conference on Empirical Methods in Natural
+Language Processing, pp. 2242-2252, 2024.
+[22] Tong, Y., Wang, H., Li, S., Kawaguchi, K., and Hu,
+T. Seedprints: Fingerprints can even tell which seed
+your large language model was trained from. arXiv
+preprint arXiv:2509.26404, 2025.
+[23] Touvron, H., Martin, L., Stone, K., Albert, P., Alma-
+hairi, A., Babaei, Y., Bashlykov, N., Batra, S., Bhar-
+gava, P., Bhosale, S., et al. Llama 2: Open foun-
+dation and fine-tuned chat models. arXiv preprint
+arXiv:2307.09288, 2023.
+The Structural Origin of Attention Sink
+[24] Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J.,
+Jones, L., Gomez, A. N., Kaiser, Ł., and Polosukhin, I.
+Attention is all you need. Advances in neural informa-
+tion processing systems, 30, 2017.
+[25] Vig, J. and Belinkov, Y. Analyzing the structure of
+attention in a transformer language model.
+arXiv
+preprint arXiv:1906.04284, 2019.
+[26] Wan, Z., Wu, Z., Liu, C., Huang, J., Zhu, Z., Jin, P.,
+Wang, L., and Yuan, L. Look-m: Look-once optimiza-
+tion in kv cache for efficient multimodal long-context
+inference. arXiv preprint arXiv:2406.18139, 2024.
+[27] Xiao, G., Tian, Y., Chen, B., Han, S., and Lewis, M.
+Efficient streaming language models with attention
+sinks. arXiv preprint arXiv:2309.17453, 2023.
+[28] Xiao, G., Tang, J., Zuo, J., Guo, J., Yang, S., Tang,
+H., Fu, Y., and Han, S. Duoattention: Efficient long-
+context llm inference with retrieval and streaming
+heads. arXiv preprint arXiv:2410.10819, 2024.
+[29] Yan, R., Du, X., Deng, H., Zheng, L., Sun, Q., Hu, J.,
+Shao, Y., Jiang, P., Jiang, J., and Zhao, L. Unveiling
+and controlling anomalous attention distribution in
+transformers. arXiv preprint arXiv:2407.01601, 2024.
+[30] Yona, I., Shumailov, I., Hayes, J., Barbero, F., and
+Gandelsman, Y. Interpreting the repeated token phe-
+nomenon in large language models. arXiv preprint
+arXiv:2503.08908, 2025.
+The Structural Origin of Attention Sink
+A. Extended LLMs Analysis
+In this section, we provide additional empirical evidence supporting the mechanistic origin of attention sinks. To verify the
+universality of our findings beyond the standard Llama-2 architecture, we conducted identical experiments on Llama-3-8B,
+which utilizes Grouped Query Attention (GQA). We cover the invariant layer-wise onset, the precursor phenomenon of
+massive representation norms, causal mask interventions, and the direct impact of variance amplification.
+A.1. Invariant Layer-wise Onset and Massive Norms
+We first verify the universality of the attention sink onset and its correlation with representation norms on the GQA
+architecture. Figure 18 shows the same conclusion.
+Figure 18. Layer-wise evolution of attention sink and representation norms. We plot the attention score of the first token (left axis,
+blue) and its input representation l2-norm (right axis, red) for Llama-3. The synchronized spike indicates that the arrival of a high-norm
+representation triggers the attention sink.
+A.2. Attention Mask Intervention
+To validate that the variance discrepancy is the structural root cause of attention sinks, we intervene on the attention mask of
+Llama-3. Figure 19 shows the same conclusion.
+Figure 19. Inducing attention sinks via mask intervention on Llama-3. We intervene by applying a mask to an arbitrary intermediate
+token to prevent it from aggregating values (blocking its attention to prior tokens). This intervention effectively induces an attention sink
+on the targeted non-aggregating token.
+A.3. Direct Variance Amplification Results
+We quantitatively demonstrate the causal link between variance and attention scores. We manually amplify the variance of a
+random token (at index 10) by a factor λ and measure the resulting attention score it receives from subsequent tokens.
+Figure 20 shows the comparison between the baseline (natural variance, λ = 1) and the amplified state (λ = 30) on Llama-3.
+The Structural Origin of Attention Sink
+Figure 20. Inducing attention sinks via variance amplification. We apply a factor λ to amplify the variance of an arbitrary token (index
+10). Increasing λ directly increases the attention score received by the token.
+B. Experimental Setup Details
+To ensure reproducibility, we provide the detailed configurations used for the pre-training experiments.
+B.1. Model Architecture
+Our baseline models follow the standard Llama-2 architecture [23], featuring RMSNorm for pre-normalization, SwiGLU
+activation functions, and Rotary Positional Embeddings (RoPE). The specific architectural hyperparameters for the models
+used in our main comparisons are listed in Table 3.
+Table 3. Model Architecture Configurations.
+Hyperparameter
+Value
+Hidden Size (d)
+Intermediate Size (df)
+Number of Layers (L)
+Number of Heads (H)
+Head Dimension (dk)
+Vocabulary Size
+Normalization
+RMSNorm
+Activation Function
+SwiGLU
+Position Embedding
+RoPE
+B.2. Initialization and Optimization
+Models are initialized using a normal distribution with mean 0. For the majority of layers, including nn.Embedding and
+standard linear projections, we utilize a fixed standard deviation of σ = 0.02. However, to control variance growth along the
+residual path, the initialization scale is adjusted specifically for the output mapping layers. Accordingly, the weights for the
+self-attention output projection (WO) and the FFN downward projection (Wdown) are initialized with σ =
+0.02
+√
+2·L, where L is
+the number of layers.
+Crucially, for our Head-wise RMSNorm, we deviate from the standard practice of initializing affine parameters to ones.
+To prevent the attention output, which now has uniformly scaled variance across all tokens, from abruptly dominating the
+residual branch and destabilizing training, we initialize the affine parameters g to match the standard deviation of the first
+token’s representation after value aggregation. This strategy ensures that the output magnitude aligns with the natural,
+non-decayed scale of the initial token, maintaining stability across the residual connection.
+We employ the AdamW optimizer with β1 = 0.9, β2 = 0.95. The training utilizes a cosine learning rate schedule with a
+The Structural Origin of Attention Sink
+linear warmup phase. Detailed optimization hyperparameters are provided in Table 4.
+B.3. Infrastructure
+All experiments were conducted on a computing node equipped with 8× NVIDIA L40 GPUs using Distributed Data Parallel
+(DDP) strategy. The total training time was approximately 1.9 days.
+B.4. Dataset
+The models are pre-trained on the OpenWebText [8] dataset, an open-source reproduction of the WebText dataset. The data
+is tokenized using the standard GPT-2 tokenizer. Due to the total training volume target, we apply repeated sampling on the
+dataset during the training process.
+Table 4. Pre-training Hyperparameters.
+Hyperparameter
+Value
+Peak Learning Rate
+0.001
+Min Learning Rate
+0.0001
+Warmup Iterations
+2,000
+Max Iterations
+40,000
+Batch Size
+Block Size
+Grad Accumulation Iters
+Number of GPUs
+Weight Decay
+0.1
+Gradient Clipping
+1.0
+Precision
+bfloat16
+Optimizer
+AdamW
+C. Supplementary Empirical Results
+C.1. Consequence of Dimension Disparity: Manifold Collapse
+In Section 4.3, we demonstrate that the FFN output exhibits Dimension Disparity, where the first token is dominated by
+specific outlier dimensions. This dominance compresses the representation into a low-dimensional subspace and therefore
+exhibits Manifold Collapse. To quantify this, we compute the effective rank [19]. Let pk = σk/ P
+j σj be the normalized
+singular values of the hidden state matrix H. The effective rank is defined as:
+EffRank(H) = exp
+ 
+−
+X
+k
+pk ln pk
+!
+(6)
+A lower rank indicates that information is concentrated in fewer dimensions.
+C.1.1. UNIVERSALITY OF MANIFOLD COLLAPSE IN OPEN-SOURSE MODELS
+Here, we examine effective ranks of the output of Transformer blocks across layers in two widely adopted open-source
+models: Llama-2-7B and Llama-3-8B.
+Experimental Setup: We feed 20 randomly sampled sequences of length L = 1024 from the WikiText-2 dataset into both
+models and compute the effective rank of the hidden states output by each Transformer block. The results are averaged over
+the samples.
+Observations: As visualized in Figure 21, both Llama-2-7B and Llama-3-8B exhibit a striking similarity in their rank
+dynamics:
+• Initial Collapse: We plot the rank trajectory of Llama-2-7B (represented by the Blue Line) and Llama-3-8B (repre-
+sented by the Orange Line). Both models start with a relatively high rank at the initial Transformer blocks (Layer 0).
+The Structural Origin of Attention Sink
+However, immediately after the first few attention and FFN blocks (typically Layers 1-3), the effective rank suffers a
+sharp, almost vertical decline.
+• Correlation with Outliers: This collapse perfectly coincides with the amplification of outlier dimensions in the FFN
+(as discussed in Section 4.2) and leads to the emergence of the attention sink phenomenon. The massive outliers
+dominate the singular value spectrum, forcing the representation to contract into a low-dimensional subspace.
+Figure 21. Effective Rank Dynamics in Open-Source Models. We visualize the effective rank of hidden states across layers. The Blue
+Line represents Llama-2-7B, and the Orange Line represents Llama-3-8B. Both models exhibit a characteristic precipitous drop in
+rank within the first few layers (Shallow Layer Collapse), mirroring the behavior of our baseline. This validates that manifold collapse is a
+ubiquitous structural anomaly in standard Transformer architectures.
+The above results demonstrate that the "shallow-layer manifold collapse" is an intrinsic characteristic of the standard Llama
+architecture.
+D. More on Related works
+To contextualize our findings, we briefly review prior normalization approaches in transformer architectures. While
+these works did not explicitly target attention sinks, they provide insight into how structural interventions can stabilize
+representations and improve optimization dynamics.
+It’s worth noting that [17] introduced a similar normalization step within their Gated Attention mechanism. Their motivation
+stems from the low-rank bottleneck hypothesis: they argue that the composition of two linear projections (WOWV ) limits
+the model’s expressivity to a low-rank update. In their view, the normalization acts primarily as a non-linear activation to
+decouple these linear layers and restore representation rank. Similarly, [15] proposes normalizing all representation vectors
+onto a hypersphere (using cosine similarity instead of dot product). Their perspective is grounded in optimization dynamics,
+suggesting that constraining features to a unit norm stabilizes the optimization landscape and accelerates convergence.
+In contrast to these perspectives, our empirical analysis demonstrates a novel structural role of gating mechanisms in
+mitigating attention sinks. As shown in Figure 22, both head-wise and element-wise gate scores exhibit a consistent
+upward trend as the token position advances along the sequence. More importantly, compared to the standard baseline,
+this progressive increase in gate scores effectively eliminates the dimension-wise variance discrepancy (Figure 23). This
+provides strong evidence that the gating mechanism directly suppresses the uncontrolled variance amplification of super
+neurons, thereby resolving the dimension disparity typically observed in early layers. Crucially, this adaptive behavior
+implies an inherent tendency of the model to eliminate such variance discrepancies among token representations when
+provided with the necessary structural flexibility.
+The Structural Origin of Attention Sink
+Figure 22. Average gate score (head-wise and element-wise) ver-
+sus sequence position in Layer 1. The gating activation progres-
+sively increases along the sequence length.
+Figure 23. Comparison of dimension-wise variance between the
+baseline and gated models in Layer 1. The application of gating
+mechanisms successfully eliminates the severe variance discrep-
+ancy present in the baseline.

@@ -1,0 +1,1045 @@
+Patch-Effect Graph Kernels for LLM Interpretability
+Ruben Fernandez-Boullon
+ruben.fernandez.boullon@uvigo.gal
+David N. Olivieri
+olivieri@uvigo.gal
+Department of Computer Science, University of Vigo, Ourense 32004, Spain
+Abstract
+Mechanistic interpretability aims to reverse-engineer transformer computations by
+identifying causal circuits through activation patching. However, scaling these in-
+terventions across diverse prompts and task families produces high-dimensional,
+unstructured datasets that are difficult to compare systematically. We propose a
+framework that reframes mechanistic analysis as a graph machine-learning prob-
+lem by representing activation-patching profiles as patch-effect graphs over model
+components. We introduce three graph-construction methods-direct-influence
+via causal mediation, partial-correlation, and co-influence-and apply graph ker-
+nels to analyze the resulting structures. Evaluating this approach on GPT-2 Small
+using Indirect Object Identification (IOI) and related tasks, we find that patch-
+effect graphs preserve discriminative structural signals. Specifically, localized
+edge-slot features provide higher classification accuracy than global graph-shape
+descriptors.
+A screened paired-patching validation suggests that CI- and PC-
+selected candidate edges correspond to stronger activation-influence effects than
+random or low-rank candidates. Crucially, by evaluating these representations
+against rigorous prompt-only and raw patch-effect controls, we make the eviden-
+tial scope of the benchmark explicit: graph features compress structured patch-
+ing signal, while raw tensors and surface cues define strong baselines that any
+circuit-level claim should address. Ultimately, our framework provides a com-
+pression and evaluation pipeline for comparing patching-derived structures under
+controlled baselines, separating robust slice-discriminative evidence from stronger
+task-general causal-circuit claims.
+Introduction
+Transformer models [11, 15] distribute computation across layers, tokens, attention heads, and MLP
+sublayers. Mechanistic interpretability aims to reverse-engineer this computation by identifying
+the circuits-structured subgraphs of internal components-responsible for specific behaviours [3].
+The standard tool for causal discovery within such circuits is activation patching [16]: given a clean
+prompt and a corrupted prompt designed to break a target behaviour, one replaces the activation of
+a chosen internal node during the corrupted forward pass with the corresponding clean value and
+measures the change in a scalar observable (e.g. the logit of the target token). A large positive patch
+effect indicates that the node causally restores the target behaviour.
+A single patching experiment yields one scalar effect size. Repeating it across all nodes, all exam-
+ples in a prompt family, and multiple corruption types produces a high-dimensional interventional
+dataset that reflects how the chosen observable responds to interventions. Three fundamental diffi-
+culties prevent direct use of this raw tensor:
+• How do we compress patch-effect profiles into structured, comparable objects that respect
+the relational geometry of the network?
+Preprint.
+arXiv:2605.06480v1 [cs.AI] 7 May 2026
+
+• How do we measure similarity between circuits discovered under different tasks or corrup-
+tions?
+• Can a principled similarity geometry reveal when circuits are shared, distinct, or robust to
+noise?
+This paper proposes a pipeline that addresses all three difficulties simultaneously. The key insight
+is that each slice-a (task family, corruption type) pair-naturally defines one graph over a fixed
+node set V (layers × tokens × component types), where edge weights encode relationships between
+patch-effect profiles across examples. A collection of S such graphs {Gs}S
+s=1 is a graph dataset on
+which we can perform supervised learning. This reframes mechanistic analysis as a graph machine-
+learning problem: learn a similarity geometry across patching-derived graphs, not just within a
+single prompt.
+Figure 1 illustrates the end-to-end pipeline. The same frozen transformer and prompt families feed a
+patching engine that outputs effect tensors E(i)
+u per node per example. These tensors are aggregated
+into graphs (one per slice) via one of three construction methods. Each graph is embedded by a
+graph feature map ϕgraph, producing a vector xs ∈Rd. A kernel Kst = k(xs, xt) then defines a
+similarity geometry on which an SVM performs downstream classification.
+Frozen
+transformer f0
+Activation
+patching
+Effect ten-
+sors E(i)
+u
+Graph
+dataset {Gs}
+Graph
+embedding xs
+Kernel
+Kst
+SVM / clustering
+clean →corrupted
+per node, per example
+one per slice;
+DI, PC, or CI
+WL, spectral, graphlet
+linear or RBF
+Figure 1: End-to-end pipeline from activation patching to kernel-based circuit classification. A
+frozen transformer and controlled prompt families feed a patching engine; effect tensors are ag-
+gregated into one graph per slice; graphs are embedded and compared via a kernel; downstream
+classification and clustering happen across graphs, not within a single prompt.
+We make three principal contributions.
+1. We introduce interpretability graphs: graph representations built from activation-patching
+profiles, where each slice of the interventional dataset maps to one graph with a fixed
+node set and slice-specific weighted edges. Learning happens across bootstrap graphs, not
+within a single prompt.
+2. We define three edge-construction methods-direct influence, partial correlation, and co-
+influence-and empirically compare the two scalable approximations, CI and PC, under
+a common IOI protocol. We additionally validate DI through a screened paired-patching
+study on CI/PC-selected edges, leaving exhaustive DI scaling as the natural next stage.
+3. By comparing graph representations against raw patch-effect, prompt-only surface-cue, and
+learned graph-encoder (GCN+SVM) baselines, we stress-test current mechanistic evalua-
+tion standards. We show how prompt-only controls reveal surface shortcuts in the historical
+IOI comparison, how raw patch-effect tensors provide a strong calibration point for graph-
+compression claims, and how localised edge-slot identity transfers across model sizes (GPT-
+2 small and DistilGPT-2) while subtree-based compressions are model-size dependent.
+2
+Related Work
+The mechanistic interpretability programme has identified circuit-level mechanisms in transformer
+models, including induction heads [9], indirect object identification [16], and greater-than circuits
+[5]. Our work extends this programme by providing a systematic, kernel-based framework for com-
+paring circuits across tasks and corruptions rather than characterising each circuit independently.
+Activation patching [16] and its variants-path patching [4], attribution patching [8], and causal me-
+diation analysis [10]-have become standard tools for causal analysis in interpretability. A single-
+node patch yields a scalar effect Eu; paired sequential patching of two nodes u then v yields a
+joint effect Eu,v whose excess over Eu measures the causal mediation of u’s restoration by v.
+Our direct-influence graph is designed to use this mediation signal as the edge weight, making it
+the causal target construction; we empirically study scalable CI/PC constructions and validate DI
+through screened paired patching.
+Graph kernels provide a principled way to define similarity between graphs without explicit graph
+isomorphism testing [7]. The Weisfeiler-Lehman (WL) subtree kernel [14] is a strong baseline that
+compresses each graph into a histogram of local subtree patterns. Spectral kernels use eigenvalue
+decompositions of the graph Laplacian [6]. Graphlet kernels count occurrences of small subgraph
+motifs [13]. Our work applies these kernels to interpretability graphs, where node labels carry
+mechanistic meaning (layer, token, component type).
+Scaling interpretability methods to larger models is a persistent challenge [1, 2]. Our pipeline ad-
+dresses scalability through top-k edge sparsification and fixed-dimension graph embeddings (WL,
+spectral, graphlet) that do not grow quadratically with model size.
+Methodology
+3.1
+Formal Setup
+Let f0 be a frozen transformer with L layers, T token positions, H attention heads per layer, and
+vocabulary V . For a prompt x = (x1, . . . , xT ), write ℓ(x) ∈R|V | for the final logit vector. We
+choose the observable O(x) = ℓy⋆(x), the logit of the target token y⋆at a designated position.
+Let K = {res, att, mlp}. Define the node set as a disjoint union:
+V = Vres ˙∪Vmlp ˙∪Vatt,
+(1)
+where Vres = {(ℓ, t, res) : 0 ≤ℓ< L, 1 ≤t ≤T} and analogously for MLP and attention. The
+node set V is fixed across all slices; only edge weights vary.
+A slice s is a (task family, corruption type) pair. For each slice s, we sample N paired examples
+{(xcln
+i , xcrp
+i
+, y⋆
+i )}N
+i=1, where xcrp
+i
+is designed to break the target behaviour. The historical IOI com-
+parison is not fully surface-balanced; we therefore make this confound explicit and evaluate it with
+a prompt-only surface-cue control.
+3.2
+Activation Patching
+For each example i and node u ∈V:
+E(i)
+u
+= O
+  ˜ff0(xcrp
+i
+; u)
+
+−O(f0(xcrp
+i
+)),
+(2)
+where ˜ff0(xcrp
+i
+; u) denotes the forward pass on xcrp
+i
+with node u patched to its clean-run value. A
+large positive E(i)
+u indicates causal restoration of the target behaviour.
+For an ordered pair (u, v) with u ≺v:
+E(i)
+u,v = O
+  ˜ff0(xcrp
+i
+; u, v)
+
+−O(f0(xcrp
+i
+)),
+(3)
+where both u and v are simultaneously patched. This enables the direct-influence edge construction
+below.
+3.3
+Graph Construction
+Each slice s yields one directed weighted graph Gs = (V, Es, ws) over the fixed node set. We
+compare three edge-construction methods.
+(A) Direct-Influence Graph (Primary)
+The direct-influence (DI) edge weight measures causal mediation: does restoring v additionally
+change the effect of restoring u?
+wDI
+s (u →v) = Ei∈Zs
+
+E(i)
+u,v −E(i)
+u
+
+,
+u ≺v.
+(4)
+A large positive weight means v mediates part of u’s causal effect on the observable. This requires
+O(|V|2) forward passes per prompt and is the primary target construction. Section 5.2 therefore
+evaluates DI through a cost-aware screened candidate validation in which CI/PC-ranked edges are
+re-evaluated with paired patching.
+(B) Partial-Correlation Graph
+The partial-correlation (PC) edge weight removes shared upstream causes:
+wPC
+s
+(u →v) = −
+Σ−1
+uv
+p
+Σ−1
+uuΣ−1
+vv
+,
+u ≺v,
+(5)
+where Σ = Cov
+ {E(i)
+· }i∈Zs
+
+, estimated as a ridge-regularised covariance matrix before pseudo-
+inversion. Cost: O(|V|3) offline, no additional forward passes. This construction is implemented
+and evaluated in Section A.2.4.
+(C) Co-Influence Graph
+The co-influence (CI) edge weight is the Pearson correlation of patch-effect profiles across examples:
+wCI
+s (u →v) = corr
+ {E(i)
+u }i∈Zs, {E(i)
+v }i∈Zs
+
+.
+(6)
+This is the cheapest construction (O(|V|) additional forward passes per prompt). It captures co-
+variation rather than mediation, making it a scalable correlational graph construction and the primary
+construction used in the representation study.
+Why three constructions? The comparison DI vs. PC vs. CI tests whether causal mediation is
+essential. If DI > CI, genuine causal mediation edges are more informative than raw correlation. If
+DI ≈CI, the cheap co-influence construction is adequate and paired patching can be skipped. Both
+outcomes are informative.
+We enforce u ≺v (by layer, then token index), preventing spurious backward edges and ensuring
+graphs respect the temporal information flow of the transformer.
+For each node u, retain only the top-k outgoing edges by absolute weight:
+Es =
+[
+u∈V
+
+(u, v) : v ∈TopKk
+ {|ws(u →·)|}
+	
+.
+(7)
+Negative weights are retained (sign carries mechanistic information). Top-k sparsification fixes
+graph size across slices and stabilises downstream kernel computations. Default k = 5.
+3.4
+Graph Embedding
+We embed each graph Gs into a vector xs = ϕgraph(Gs) ∈Rd using one of five graph feature maps:
+The WL algorithm [14] computes a histogram of local subtree patterns up to depth HWL. Initial
+labels encode (ℓ, t, type). Subsequent labels hash the current label together with the sorted multiset
+of signed directed neighbour labels. Dimension grows with the number of distinct subtree patterns
+observed (typically ∼103-104 for GPT-2).
+Since all graphs share the same node set, each possible edge slot (u, v) maps to a fixed coordinate.
+Three variants: weighted (w(u →v)), binary (1[(u, v) ∈E]), and signed (sign(w(u →v))).
+Dimension: N(N −1) = 14,280 for GPT-2 with residual-stream-only nodes (N = 120).
+Compute the normalised graph Laplacian eigenvalues and eigenvector statistics. Compact fixed-
+dimension vector (d = 96) capturing global graph shape.
+Count directed 3-node subgraph motifs. Fixed-dimension vector (d = 38) capturing local graph
+motifs.
+Map each edge slot to a fixed coordinate via hash modulo d, accumulating signed weights. Fixed
+dimension d = 1,024, eliminating the quadratic growth of full fixed-layout.
+3.5
+Kernel Methods
+Given embeddings {xs}S
+s=1, we compute a kernel matrix K ∈RS×S and train an SVM for down-
+stream classification.
+Klin
+st = x⊤
+s xt. Works well when the feature space is already well-structured for linear separation;
+computationally cheap.
+KRBF
+st
+= exp(−γ∥xs −xt∥2), with γ set by median heuristic or cross-validation. Implicitly maps
+features into an infinite-dimensional Hilbert space; can capture non-linear boundaries.
+Both kernels are applied on top of the same graph embeddings, so differences in downstream accu-
+racy are attributable to the kernel geometry, not to data processing choices.
+Experimental Setup
+4.1
+Model
+We use GPT-2 small [11] as our primary model: L = 12 layers, H = 12 attention heads, dmodel =
+768, frozen weights. All experiments are forward passes with hook-based interventions at residual-
+stream positions (type = res). The resulting node set has |Vres| = L × T nodes, where T is the
+prompt length. We additionally apply the same CI-graph protocol to DistilGPT-2 [12] (L = 6, same
+width, frozen weights) as a cross-model replication, reported in Section 5.3.
+4.2
+Pilot Scope: IOI Task Family
+Current experiments cover the Indirect Object Identification (IOI) task [16]: the model must
+predict the indirect object in sentences such as "Alice gave Bob a book. Bob thanked ___." We
+evaluate three corruption types:
+• name_swap: replace one name with a distractor, breaking the name-binding signal.
+• abba: swap both names, redirecting the prediction to the other name.
+• second_subject_swap: replace the subject of the second sentence while matching
+abba’s target/distractor name counts.
+Each binary comparison yields S = 2 slices. The IOI circuit is implemented primarily by name-
+binding and duplicate-token heads at layers 7-10 in GPT-2 [16], making it a useful controlled testbed
+for patch-effect measurement and slice-level graph comparison.
+The main benchmark uses the historical pair name_swap vs. abba. We also report a surface-balanced
+pair, abba vs. second_subject_swap, where both corruptions contain the target name twice and
+the distractor name once. These binary comparisons are intended as controlled slice-discrimination
+tests; task-general evaluation requires broader multi-family suites.
+To test whether the protocol transfers beyond binary IOI, we additionally run a preliminary S = 4
+evaluation with four slices: ioi:abba, ioi:second_subject_swap, induction:token_swap,
+and induction_late:token_swap.
+The two induction-template slices are synthetic repeated-
+token prompts designed to activate different copy positions. This pilot provides an initial multi-slice
+stress test and motivates scaling to broader task families.
+4.3
+Evaluation Protocol
+We generate N = 100 paired examples per corruption per seed. Each slice produces 32 bootstrap
+graphs by resampling 75% of examples with replacement; 32 additional bootstrap graphs form the
+test set from disjoint examples. We use seeds {7, 42, 123} and report mean ± population standard
+deviation across seeds. Classification uses a linear or RBF SVM on training bootstrap graphs; we
+report accuracy on the example-disjoint test set. Because the two classes are bootstrap resamples
+of only two underlying IOI slices, these accuracies measure slice-discriminative signal within the
+current benchmark, not generalisation across independent circuit families.
+For the preliminary S = 4 evaluation, we run a staged grid N ∈{20, 50, 100} with the same
+example-disjoint split but only 8 bootstrap graphs per slice to keep the experiment cheap. The
+chance baseline is therefore 0.25. These results are reported separately from the main IOI tables.
+We apply edge shuffle (randomly reassign edge targets, preserving the weight multiset) and weight
+shuffle (permute weights across edges while preserving positions) to the fixed-layout weighted base-
+line. These controls test whether the signal depends on edge-slot assignments rather than marginal
+graph statistics.
+We also evaluate a raw patch-effect classifier and a prompt-only surface-cue classifier. The raw
+baseline calibrates how much discriminative signal is already present before graph compression.
+The surface-cue baseline tests whether name_swap and abba are separable from prompt text alone.
+Results
+5.1
+E1: Patch-Effect Tensor Validation
+Confirm that patch-effect tensors {E(i)
+u }u,i carry structured, non-random signal before graph con-
+struction.
+We compute mean patch effects ¯Eu = Ei[E(i)
+u ] for each node u over N = 8 representative examples
+per corruption and visualise them as heatmaps over the layer-token grid. The full N = 100 examples
+per corruption are used in the classification experiments of Section 5.3.
+Slice
+Grid (L × T)
+Scale | ¯Eu|99 (logit)
+Examples
+IOI: name_swap
+12 × 11
+3.23
+IOI: abba
+12 × 11
+5.48
+IOI: second_subject_swap
+12 × 10
+1.25
+Table 1: Patch-effect heatmap statistics for the IOI pilot (GPT-2 small, residual-stream nodes, N = 8
+examples per slice used for visualisation). The scale column is the robust symmetric colour limit
+used by each heatmap. Signal concentrates in layers 5-10, consistent with the known IOI circuit
+[16].
+Figure 2 shows the mean patch-effect heatmaps for the historical IOI corruptions and the
+surface-balanced control.
+The slices show structured signal with different spatial signatures:
+name_swap concentrates positive effects at early token positions and at the last two tokens; abba
+shifts high-magnitude signal toward middle token positions and shows a distinct negative band;
+second_subject_swap is lower-amplitude but still structured. These heatmaps establish struc-
+tured slice signal; later controls separate this signal from prompt-surface effects.
+Heatmaps show structured bands concentrated in specific layers and token positions, consistent with
+the known IOI circuit. Random nodes produce near-zero effects on average.
+We run a small paired-node causal evaluation on GPT-2 (seed 42, N = 10 paired prompts, 10
+candidate edges). All 10 candidate edges survive FDR correction (BH method, α = 0.05), with
+top edges concentrated in the last-token residual stream at layers 9-11 (e.g. ℓ= 9, t = Tlast and
+ℓ= 11, t = Tlast), consistent with known IOI save-slot positions. This provides targeted edge-level
+causal validation for the screened candidates.
+(a) name_swap
+(b) abba
+(c) 2nd-subj
+Figure 2: Mean patch-effect heatmaps for GPT-2 small residual-stream nodes (N = 8 selected ex-
+amples per slice). Colour encodes the mean patch effect in logit units (red: positive; blue: negative).
+The added second_subject_swap panel shows the surface-balanced IOI control used later in the
+classification benchmarks.
+5.2
+E2: Graph Construction Comparison
+CI and PC graph construction are implemented and evaluated under the same GPT-2 IOI protocol
+in Section A.2.4. DI is the computationally expensive causal target construction, requiring paired-
+node patching at O(|V|2) passes per prompt. We therefore evaluate it through screened candidate
+validation: CI/PC propose candidate edges, and paired patching re-evaluates those edges on held-out
+prompts.
+Appendix Table 10 reports a GPT-2 screened-DI pilot on the surface-balanced IOI pair (abba
+vs. second_subject_swap). We generate N = 100 examples per slice, use a stratified discov-
+ery/evaluation split with 50 examples in each pool, rank residual-stream candidate edges on the dis-
+covery pool, and evaluate 50 held-out edges per group with paired patching. The level-A activation-
+influence score I(u →v) is larger for CI- and PC-screened candidates (0.373 and 0.305) than for
+random or low-rank candidates (0.122 and 0.102). Mediation M and necessity are more variable,
+so the pilot supports screened causal activity while reserving exhaustive DI graph benchmarking for
+the scaling study.
+The current graph-construction comparison therefore isolates two questions: whether removing lin-
+ear shared-cause structure via PC improves classifiability over cheap CI, and whether CI/PC-ranked
+candidates survive paired-patching validation better than simple null screens. Exhaustive DI-vs-
+correlational graph benchmarking is the direct follow-up once paired-patching cost is scaled.
+5.3
+E3: Representation Baselines (CI Graphs, IOI Binary)
+Establish representation baselines on co-influence (CI) graphs and compare them against non-graph
+controls.
+GPT-2 small, IOI task, S = 2 slices (name_swap vs. abba), N = 100 examples per slice, k = 5,
+residual-stream nodes (|V| = 120), seeds {7, 42, 123}.
+WL subtree features reach 0.912, and localised edge-slot features reach 1.000. A learned 2-layer
+GCN encoder (hidden dim 32, trained end-to-end with the SVM target) reaches only 0.609 in the
+linear-kernel setting and 0.583 in the RBF setting, indicating that with S = 2 slices and 32 bootstrap
+graphs per class the learned encoder underperforms hand-crafted localised features. Null controls
+(edge shuffle: 0.505, weight shuffle: 0.519) show that fixed-layout performance depends on preserv-
+ing edge-slot assignments, not just marginal edge or weight statistics. The prompt-only baseline also
+reaches 1.000, motivating the surface-balanced control below to separate graph signal from prompt
+artefacts.
+For WL features, the linear kernel (0.912) outperforms RBF (0.615). We treat this as a benchmark
+observation: interpreting kernel spectrum or alignment requires a larger multi-slice dataset than the
+main S = 2 comparison or the preliminary S = 4 pilot.
+In the historical name_swap vs. abba benchmark, the gap between fixed-layout signed (1.000) and
+spectral (0.500) suggests that localised node/edge identity matters more than global graph shape.
+As shown next, this conclusion is benchmark-dependent: in the surface-balanced comparison, even
+compact global descriptors become perfectly classifiable.
+The original name_swap vs. abba comparison is confounded by prompt-level name counts. We
+therefore add second_subject_swap, whose corrupted prompts match abba’s target/distractor
+Representation
+Kernel
+Acc. (mean)
+Std
+Dim.
+Non-graph controls
+Prompt surface cues
+Linear
+1.0000
+0.0000
+Raw patch-effect tensor
+Linear
+1.0000
+0.0000
+Top-k node identity
+Linear
+0.9917
+0.0118
+sparse
+Global shape descriptors
+Spectral
+Linear
+0.5000
+0.0000
+Graphlet
+Linear
+0.7604
+0.1239
+Subtree pattern features
+WL subtree
+Linear
+0.9115
+0.0321
+∼18,500
+WL subtree
+RBF
+0.6146
+0.1620
+∼18,500
+Localised edge-slot features
+Fixed layout weighted
+Linear
+0.9688
+0.0338
+14,280
+Fixed layout binary
+Linear
+0.9896
+0.0147
+14,280
+Fixed layout signed
+Linear
+1.0000
+0.0000
+14,280
+Hashed sign
+Linear
+0.9948
+0.0074
+1,024
+Hashed weighted
+Linear
+0.9635
+0.0295
+1,024
+Coarse count
+Linear
+0.7552
+0.1278
+∼107
+Learned graph encoder
+GNN encoder + SVM
+Linear
+0.6094
+0.1230
+GNN encoder + SVM
+RBF
+0.5833
+0.0868
+Null controls (fixed layout weighted)
+Edge shuffle
+-
+0.5052
+0.0074
+-
+Weight shuffle
+-
+0.5191
+0.0346
+-
+Chance baseline
+-
+0.5000
+-
+-
+Table 2: Representation results on IOI with GPT-2 small (N = 100, k = 5, CI graphs, seeds
+{7, 42, 123}, binary classification: name_swap vs. abba). Localised graph representations sub-
+stantially exceed chance and edge/weight shuffling controls are near chance; prompt-only and raw
+patch-effect controls define strong comparison points. The current benchmark therefore establishes
+compression of slice-discriminative patching signal under explicit controls. Data compiled from our
+benchmark evaluation run.
+counts. In this control, prompt-only surface cues fall close to chance, while graph and raw patch-
+effect representations remain highly classifiable.
+Benchmark
+Dir.
+Surface
+Raw
+WL
+Fixed
+sign
+Edge
+shuffle
+name/abba
+yes
+1.000 ± 0.000
+1.000 ± 0.000
+0.912 ± 0.032
+1.000 ± 0.000
+0.505 ± 0.007
+abba/2nd-subj
+yes
+0.550 ± 0.089
+1.000 ± 0.000
+1.000 ± 0.000
+1.000 ± 0.000
+0.500 ± 0.000
+abba/2nd-subj
+no
+0.550 ± 0.089
+1.000 ± 0.000
+1.000 ± 0.000
+1.000 ± 0.000
+0.500 ± 0.000
+Table 3: Surface-balanced and direction-control results on GPT-2 IOI (N = 100, k = 5, CI graphs,
+seeds {7, 42, 123}). The surface-balanced benchmark removes the simple target/distractor count
+confound: the prompt-only baseline drops near chance, but graph and raw patch-effect classifiers
+remain perfect. Disabling the direction constraint does not change the main accuracies in this bench-
+mark.
+Table 4 reports the same CI-graph protocol applied to DistilGPT-2 (6 layers, 768-dim, |V| = 66
+residual nodes) under the historical name_swap vs. abba pair. Localised edge-slot features (fixed
+sign, hashed sign, fixed binary, coarse count) and the raw patch-effect tensor remain near saturation
+in DistilGPT-2; WL subtree features drop from 0.912 to 0.688, indicating that subtree-level graph
+compression carries less signal in the smaller model. The GNN encoder baseline replicates at 0.609
+across both models. The combined picture is that localised edge-slot identity transfers across model
+sizes, while shape and subtree compressions are model-size dependent.
+Table 5 reports two S = 4 multi-slice suites at N = 100: an IOI/induction suite and a task-diverse
+suite that swaps ioi:second_subject_swap for greater_than:year_swap, spanning three task
+Representation
+Kernel
+GPT-2 small
+DistilGPT-2
+Raw patch-effect tensor
+Linear
+1.000 ± 0.000
+1.000 ± 0.000
+WL subtree
+Linear
+0.912 ± 0.032
+0.688 ± 0.130
+Spectral
+Linear
+0.500 ± 0.000
+0.552 ± 0.015
+Graphlet
+Linear
+0.760 ± 0.124
+0.672 ± 0.133
+Fixed layout binary
+Linear
+0.990 ± 0.015
+0.984 ± 0.013
+Fixed layout signed
+Linear
+1.000 ± 0.000
+1.000 ± 0.000
+Hashed sign
+Linear
+0.995 ± 0.007
+1.000 ± 0.000
+Coarse count
+Linear
+0.755 ± 0.128
+0.911 ± 0.053
+GNN encoder + SVM
+Linear
+0.609 ± 0.123
+0.609 ± 0.109
+Edge shuffle (fixed wgt.)
+-
+0.505 ± 0.007
+0.495 ± 0.004
+Weight shuffle (fixed wgt.)
+-
+0.519 ± 0.035
+0.523 ± 0.008
+Table 4: Cross-model representation comparison on IOI name_swap vs. abba (CI graphs, N = 100,
+k = 5, residual-stream nodes, seeds {7, 42, 123}). DistilGPT-2 has |V| = 66 vs. |V| = 120 for
+GPT-2 small. Localised edge-slot features and the raw patch-effect baseline transfer with negligible
+drop; WL subtree compression drops ∼22 points. The GNN encoder is a 2-layer GCN with hidden
+dim 32 trained end-to-end with the SVM target; it underperforms hand-crafted localised features in
+both models with the current S = 2 slice budget.
+families. Localised edge-slot features reach 0.729-0.750 in both suites versus chance 0.25 and edge
+shuffle near 0.25; raw patch effects sit at 0.758 in both. The surface-cue baseline jumps from 0.500 to
+0.763 when crossing task families, so multi-task accuracies must be read alongside surface controls.
+Suite (S = 4, N = 100)
+Surface
+Raw
+WL
+Fixed
+sign
+Fixed
+weighted
+Edge
+shuffle
+Weight
+shuffle
+IOI/Ind
+0.500 ± 0.037 0.758 ± 0.021 0.708 ± 0.015 0.750 ± 0.000 0.750 ± 0.000 0.257 ± 0.034 0.549 ± 0.123
+IOI/GT/Ind
+0.763 ± 0.031 0.758 ± 0.031 0.594 ± 0.077 0.729 ± 0.015 0.750 ± 0.000 0.250 ± 0.000 0.472 ± 0.013
+Table 5:
+Multi-slice evaluations on GPT-2 with CI graphs (k
+=
+5, 8 bootstrap graphs
+per slice, seeds {7, 42, 123}, chance = 0.25).
+Top row (IOI/Ind): ioi:{abba,2nd-subj},
+induction{,-late}:token-swap.
+Bottom row (IOI/GT/Ind) replaces ioi:2nd-subj with
+greater_than:year-swap, covering three task families. Localised edge-slot features stay above
+edge-shuffle nulls in both suites; the higher surface-cue baseline in the diverse suite reflects vocabu-
+lary differences across task families.
+Appendix Figure 4 shows the accuracy-dimensionality Pareto frontier (dominated by localised edge-
+slot features) and a PCA projection of WL embeddings; see Appendix A.1 and A.2.
+Limitations
+The experiments are a controlled pilot, not a task-general benchmark. Binary IOI covers two slices,
+the S = 4 IOI/induction and IOI/GT/induction suites stress-test three task families, and full DI
+graph construction is left as a scaling target (O(|V|2) paired patches per prompt). Next: larger
+surface-balanced suites and full DI benchmarking.
+Conclusion
+We convert activation-patching interventions into patch-effect graphs classified by graph kernels,
+treating edge definition, representation, and similarity geometry as separable design axes. On GPT-2
+small, localised CI-graph features achieve perfect IOI accuracy, including under a surface-balanced
+control where the prompt-only baseline collapses; S = 4 IOI/induction and IOI/GT/induction suites
+plus a screened paired-patching study extend the protocol beyond binary IOI and validate CI/PC-
+ranked edges. Cross-model replication on DistilGPT-2 transfers localised edge-slot features with
+negligible drop, while WL subtree compression is model-size dependent. Strong raw and learned-
+encoder baselines impose a calibration principle: circuit-level claims must be evaluated against
+raw-tensor, surface-cue, and learned-encoder controls. Next: scaling full DI graphs and adopting
+surface-balanced, multi-slice, multi-task suites.
+References
+[1] Trenton Bricken, Adly Templeton, Joshua Batson, Brian Chen, Adam Jermyn, Tom Conerly, Nick Turner,
+Cem Anil, Carson Denison, Amanda Askell, et al. Towards monosemanticity: Decomposing language
+models with dictionary learning. Transformer Circuits Thread, 2023.
+[2] Arthur Conmy, Augustine N Mavor-Parker, Aengus Lynch, Stefan Heimersheim, and Adria Garriga-
+Alonso. Towards automated circuit discovery for mechanistic interpretability. In Advances in Neural
+Information Processing Systems, 2023.
+[3] Nelson Elhage, Neel Nanda, Catherine Olsson, Tom Henighan, Nicholas Joseph, Ben Mann, Amanda
+Askell, Yuntao Bai, Anna Chen, Tom Conerly, et al. A mathematical framework for transformer circuits.
+Transformer Circuits Thread, 2021.
+[4] Nicholas Goldowsky-Dill, Chris MacLeod, Buck Shlegeris, and Nate Bhatt. Localizing model behavior
+with path patching. arXiv preprint arXiv:2304.05969, 2023.
+[5] Michael Hanna, Ollie Liu, and Alexandre Variengien. How does GPT-2 compute greater-than?: Interpret-
+ing mathematical abilities in a pre-trained language model. In Advances in Neural Information Processing
+Systems, 2023.
+[6] Risi Imre Kondor and John Lafferty. Diffusion kernels on graphs and other discrete input spaces. In
+International Conference on Machine Learning, 2002.
+[7] Nils M Kriege, Fredrik D Johansson, and Christopher Morris.
+A survey on graph kernels.
+Applied
+Network Science, 5(1):1-42, 2020.
+[8] Neel Nanda. Attribution patching: activation patching at industrial scale. Alignment Forum, 2023. URL
+
+[9] Catherine Olsson, Nelson Elhage, Neel Nanda, Nicholas Joseph, Nova DasSarma, Tom Henighan, Ben
+Mann, Amanda Askell, Yuntao Bai, Anna Chen, et al. In-context learning and induction heads. Trans-
+former Circuits Thread, 2022.
+[10] Judea Pearl. Causality: Models, Reasoning, and Inference. Cambridge University Press, 2009.
+[11] Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, and Ilya Sutskever. Language
+models are unsupervised multitask learners. OpenAI Blog, 1(8):9, 2019.
+[12] Victor Sanh, Lysandre Debut, Julien Chaumond, and Thomas Wolf. DistilBERT, a distilled version of
+BERT: smaller, faster, cheaper and lighter. arXiv preprint arXiv:1910.01108, 2019.
+[13] Nino Shervashidze, SVN Vishwanathan, Tobias Petri, Kurt Mehlhorn, and Karsten M Borgwardt. Effi-
+cient graphlet kernels for large graph comparison. In Artificial Intelligence and Statistics, pages 488-495,
+2009.
+[14] Nino Shervashidze, Pascal Schweitzer, Erik Jan Van Leeuwen, Kurt Mehlhorn, and Karsten M Borgwardt.
+Weisfeiler-Lehman graph kernels. Journal of Machine Learning Research, 12:2539-2561, 2011.
+[15] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz
+Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Information Processing
+Systems, volume 30, 2017.
+[16] Kevin Wang, Alexandre Variengien, Arthur Conmy, Buck Shlegeris, and Jacob Steinhardt. Interpretability
+in the wild: a circuit for indirect object identification in GPT-2 small. In International Conference on
+Learning Representations, 2023.
+A
+Additional Material
+A.1
+Additional Discussion
+A.1.1
+Summary of Evidence for Each Hypothesis
+Hyp.
+Claim
+Status
+Evidence
+H1
+Patch-effect graphs carry
+classifiable signal
+Supported in
+controlled setting
+Surface-balanced WL/fixed sign: 1.000; four-slice N = 100
+WL/fixed sign: 0.708/0.750 vs. surface cues 0.500; raw
+patch effects remain strong
+H2
+Kernel geometry shifts
+effective similarity space
+Requires larger S
+Current S = 2 and S = 4 runs establish protocol viability;
+spectrum/alignment analysis needs broader slice coverage
+H3
+Edge construction
+changes graph
+representations
+Screened-DI
+validated
+CI and PC differ under WL; PC remains strong with fixed
+edge-slot signs; screened DI validates selected candidates
+Table 6: Hypothesis status after IOI pilot experiments and the preliminary four-slice evaluation.
+Current evidence supports controlled compression of classifiable patching signal, including under
+a surface-balanced corruption pair; broader multi-family suites are the next step for task-general
+circuit fingerprinting.
+A.1.2
+What the Pilot Results Mean for Graph Construction
+CI graphs are strongly classifiable in both IOI binary benchmarks: WL+linear achieves 0.912
+on name_swap vs. abba and 1.000 on the surface-balanced comparison. PC behaves differently:
+fixed edge-slot signs remain highly predictive, while WL+linear drops to 0.552 on the historical
+benchmark and recovers to 0.917 on the surface-balanced benchmark. This indicates that the edge-
+construction rule materially changes graph topology as seen by WL features, with the preferred
+construction depending on representation and benchmark. The screened DI validation shows that
+CI/PC-ranked candidates have stronger destination activation influence than random or low-rank can-
+didates under paired patching, giving targeted evidence that the ranked edges correspond to causally
+active locations.
+A.1.3
+What the Pilot Results Mean for Kernel Choice
+At S = 2 slices, the linear kernel outperforms RBF for WL features. This is a useful benchmark
+observation, while full kernel-spectrum or alignment analysis requires more underlying slices. The
+preliminary four-slice evaluation shows that the classifier protocol can run beyond binary IOI and
+that graph features remain classifiable, motivating a larger multi-slice dataset for kernel-geometry
+analysis.
+A.1.4
+The Surprising Efficacy of Raw Patch-Effect Representations
+A key diagnostic finding is that raw patch-effect vectors are highly competitive with graph baselines.
+The surface-balanced IOI control reduces the simple prompt-count confound, and the preliminary
+four-slice evaluation shows graph signal beyond a single binary IOI comparison. This positions
+graph construction as structured compression and edge-level auditability over a strong raw-tensor
+baseline.
+A.1.5
+Scalability
+The primary scalability bottleneck is paired patching for DI graphs: O(|V|2) forward passes per
+prompt. For GPT-2 with |V| = 120 residual nodes, this is
+ 120
+
+= 7,140 ordered pairs per prompt,
+feasible for N = 100 prompts but requiring careful activation caching. For larger models, attribution
+patching [8] can serve as a cheap screening step to identify candidate pairs before expensive paired
+patching.
+Graph embeddings (WL, spectral, graphlet) are fixed-dimension and do not grow quadratically with
+model size. Hashed fixed-layout features use a fixed d = 1,024 coordinates regardless of |V|, making
+them particularly suitable for larger-model extensions.
+Figure 3: Feature dimensionality as the analyzed node set grows (N = L × T × C). Fixed-layout
+features grow as N(N −1) (quadratic); raw patch-effect vectors grow linearly. Hashed fixed-layout,
+coarse count, spectral, and graphlet features remain bounded regardless of model size, making them
+the scalable alternatives for larger transformers.
+A.2
+Additional Experimental Details
+A.2.1
+Embedding Visualisations
+Figure 4 reports the compression-sweep visualisations used to contextualise the appendix results.
+A.2.2
+Prompt Budget
+Table 7 shows results at N = 500 examples per slice from a single-seed scalability run. Localised
+representations saturate (1.000), and spectral features improve substantially. Because a prompt-only
+surface-cue classifier reaches 1.000 in the current N = 100 historical control, the N = 500 run is
+best read as a prompt-budget and compression check rather than a mechanistic-depth claim.
+Representation
+N = 100
+N = 500
+WL linear
+0.9115
+1.0000
+Fixed layout signed
+1.0000
+1.0000
+Hashed sign
+0.9948
+1.0000
+Coarse count
+0.7552
+0.9740
+Spectral linear
+0.5000
+0.9115
+Graphlet linear
+0.7604
+0.9948
+Table 7: Effect of prompt budget (N examples per slice) on classification accuracy (IOI, GPT-2,
+CI graphs). The N = 100 column reports the current three-seed CI run; the N = 500 column is
+a single-seed scalability run and should be read as descriptive. Localised representations are near-
+saturated at N = 100; shape descriptors improve at N = 500, consistent with additional prompt
+budget improving graph-compression stability.
+A.2.3
+E4: Robustness Ablations
+Table 7 characterises accuracy as a function of N ∈{100, 500} examples per slice. Localised
+representations are already near-saturated at N = 100; shape descriptors are the most sensitive to
+sample size.
+The main protocol uses 32 bootstrap graphs per slice with 75% resampling. To check that the surface-
+balanced result is not an artefact of that exact choice, we reran the CI surface-balanced comparison
+with only 8 bootstrap graphs per slice and resampling fractions of 50% and 100%. Table 8 shows
+(a) Accuracy-dimensionality trade-off (Pareto frontier)
+(b) PCA of WL graph embeddings
+Figure 4: Left: accuracy vs. log10 feature dimension for graph representations on GPT-2 (circles)
+and DistilGPT-2 (squares) from the compression sweep. The Pareto frontier is dominated by lo-
+calised edge-slot features; global shape descriptors lie well below it. Right: 2D PCA projection of
+WL subtree embeddings for the 2 × 32 bootstrap graphs (32 per slice); colours indicate corruption
+type (abba vs. name_swap). This visualisation is intended as qualitative support for the classifier
+results.
+that WL and fixed-sign accuracy remain saturated, while edge shuffling remains at chance. This is a
+useful sensitivity check, not a replacement for a full bootstrap hyperparameter sweep.
+Graphs/slice
+Sample frac.
+WL
+Fixed sign
+Edge shuffle
+0.75
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+0.5000 ± 0.0000
+0.50
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+0.5000 ± 0.0000
+1.00
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+0.5000 ± 0.0000
+Table 8: Fast bootstrap sensitivity check on the surface-balanced GPT-2 IOI comparison (abba vs.
+second_subject_swap, N = 100, k = 5, CI graphs, seeds {7, 42, 123}). Main accuracies do not
+depend on the exact 32-graph/75% bootstrap choice in this saturated benchmark.
+The main results use the direction constraint (u ≺v by layer then token). In the surface-balanced IOI
+control, disabling the direction constraint leaves WL+linear, fixed sign, raw patch-effect, spectral,
+and graphlet accuracies at 1.0000 (Table 3). Thus the current surface-balanced classification result is
+not dependent on the direction constraint, although direction may matter in less saturated multi-slice
+benchmarks.
+Edge shuffle and weight shuffle both reduce fixed-layout weighted accuracy to near chance (Table 2),
+confirming the signal depends on preserving edge-slot identity rather than marginal edge or weight
+statistics.
+Prompt-only surface cues reach 1.0000±0.0000 on name_swap vs. abba, but only 0.5500±0.0890
+on the surface-balanced abba vs. second_subject_swap comparison. Raw patch-effect vectors
+remain at 1.0000 ± 0.0000 in both settings. This separates two issues: the original benchmark has a
+surface-count shortcut, and graph construction currently matches strong raw-tensor baselines while
+adding structured compression and edge-level auditability.
+A.2.4
+E5: Graph Construction Ablation
+Test whether the edge-construction rule changes downstream classifiability. The current fast ablation
+compares CI against PC, while screened DI provides targeted causal validation.
+PC is now implemented and evaluated on both the historical and surface-balanced IOI comparisons.
+Exhaustive DI graph classification is treated as a scaling target because it requires paired-node patch-
+ing at full graph scale.
+Benchmark
+Construction
+WL+linear
+Acc.
+Fixed sign
+Acc.
+Surface
+cue
+Cost
+name/abba
+Co-influence (CI)
+0.912 ± 0.032
+1.000 ± 0.000
+1.000 ± 0.000
+O(|V|) fwd.
+name/abba
+Partial corr. (PC)
+0.552 ± 0.058
+0.990 ± 0.015
+1.000 ± 0.000
+O(|V|3) off.
+abba/2nd-subj
+Co-influence (CI)
+1.000 ± 0.000
+1.000 ± 0.000
+0.550 ± 0.089
+O(|V|) fwd.
+abba/2nd-subj
+Partial corr. (PC)
+0.917 ± 0.118
+1.000 ± 0.000
+0.550 ± 0.089
+O(|V|3) off.
+Any
+Direct influence (DI)
+screened only
+screened only
+-
+O(|V|2) fwd.
+Table 9: Graph construction ablation on IOI with GPT-2 (N = 100, k = 5, seeds {7, 42, 123}). PC
+preserves strong fixed edge-slot performance in both benchmarks. WL+linear is near chance for PC
+on the historical surface-confounded benchmark, but improves on the surface-balanced benchmark;
+therefore the robust claim is construction sensitivity, not a universal CI>PC ordering. DI is evaluated
+through the screened paired-patching validation in Table 10.
+Candidate screen
+Edges
+I mean±std
+I FDR
+M mean±std
+Nec. mean±std
+Top CI
+0.373 ± 0.059
+50/50
+0.018 ± 0.027
+0.068 ± 0.146
+Top PC
+0.305 ± 0.187
+45/50
+0.053 ± 0.178
+−0.213 ± 0.375
+Random
+0.122 ± 0.253
+29/50
+0.073 ± 0.716
+0.052 ± 0.303
+Low-rank CI
+0.102 ± 0.153
+33/50
+0.112 ± 0.454
+0.000 ± 0.000
+Table 10: Screened direct-influence candidate validation on GPT-2 small residual-stream nodes.
+Candidate edges are selected on a discovery split from CI, PC, random, or low-rank CI screens
+and evaluated on held-out prompts with paired patching. I is activation influence at the destination
+node, M = R({u, v}) −R({v}) is output-level mediation, and FDR counts use BH correction at
+α = 0.05.
+A.2.5
+E6: Kernel Geometry Analysis
+Eigenvalue spectrum, kernel alignment (CKA), and kernel-PCA projections require a meaningful
+kernel matrix K ∈RS×S over multiple underlying slices. The main IOI benchmarks have S = 2
+slices, and the new S = 4 IOI/induction preliminary multi-slice evaluation is useful for checking
+classifiability. We therefore treat H2 as a larger-suite analysis target rather than over-interpreting the
+present small kernel matrices.
+A valid kernel-geometry analysis needs additional task/corruption families, surface-balanced slice
+definitions, and enough slices to make the spectrum and alignment of K interpretable.
+A.2.6
+Metric and Control Glossary
+Table 11 summarises the quantities used across the experiments. Its purpose is only to make the
+evaluation protocol auditable; formal definitions for the graph constructions are in Section 3.3.
+Quantity
+Role
+Interpretation
+Eu
+Node patch effect
+Logit restoration from patching node u in the corrupted run; the raw signal before
+graph construction.
+CI / PC / DI
+Edge construction
+CI uses patch-effect correlation; PC removes linear shared-cause structure; DI is the
+paired-patching causal target.
+WL / fixed / spectral / graphlet
+Graph representation
+Alternative compressions of each slice graph, ranging from local edge-slot identity
+to global graph-shape descriptors.
+Prompt-only / raw tensor
+Non-graph controls
+Tests whether classification can be solved from surface text or from unstructured
+patch effects without graph construction.
+Edge / weight shuffle
+Null controls
+Tests whether fixed-layout performance depends on preserving edge identity rather
+than marginal edge or weight statistics.
+Bootstrap accuracy
+Reported outcome
+Accuracy on example-disjoint bootstrap graphs; it measures slice-level generalisa-
+tion within the reported protocol.
+Table 11: Compact glossary of the metrics, representations, and controls used in the experimental
+tables.
+A.2.7
+Prompt Data and Splits
+All reported data are synthetic prompts generated from fixed templates and seeds. The main IOI
+runs use N = 100 paired examples per slice and seeds {7, 42, 123}; the prompt-budget check adds
+a single-seed N = 500 run. Training and test graphs are built from disjoint example pools, and
+bootstrap graphs resample within the relevant pool only. The surface-balanced comparison, abba vs.
+second_subject_swap, is included because it matches the target/distractor name-count structure
+that makes the historical name_swap vs. abba benchmark surface-separable.
+A.2.8
+Threats to Causal Interpretation
+The experiments are designed to separate representation quality from stronger claims about causal
+discovery. The binary IOI setting has only two underlying slices, so we report bootstrap accuracy as
+slice-discriminative evidence and add the four-slice pilot to check transfer beyond IOI. Raw patch-
+effect vectors remain a strong baseline; this is informative because the graph pipeline is intended
+to compress and organise patching signal while making the value of additional structure auditable.
+Finally, screened DI validates that CI/PC-selected locations are causally active under paired patch-
+ing, while a full DI graph benchmark remains the natural next step for testing causal-mediation
+superiority directly.
+A.3
+Reproducibility and Responsible Release
+The experiments use synthetic prompt templates and existing GPT-2 weights; no private data source
+is required and no fixed data bundle is released. Prompt pairs and patch-effect artifacts are generated
+on demand for each run from the provided templates, seeds, and scripts. A public repository and
+supplementary archive are planned for release with the implementation, experiment scripts, gener-
+ated figure artifacts, and prompt-generation code. The planned repository license for the released
+code and generated artifacts is MIT.
+The work is foundational mechanistic interpretability research. Potential positive impact comes from
+improving tools for auditing internal model computations and comparing circuit-level behaviour
+across controlled tasks. Potential negative impact is indirect: better interpretability tools can also
+help capable actors diagnose and adapt model behaviours, including behaviours that might be unde-
+sirable in deployed systems. The paper does not release new model weights or scraped data, and the
+experiments use synthetic prompts and existing GPT-2 weights, limiting direct deployment risk.
+GPT-2 small is credited via Radford et al. [11]; the IOI task and circuit reference are credited via
+Wang et al. [16]. The implementation relies on standard open-source Python scientific and ML
+packages. The released project code and generated artifacts are planned under the MIT License.
+The paper does not redistribute GPT-2 weights in the manuscript source; users should obtain them
+through their standard provider and comply with the corresponding provider terms and model license.
+Synthetic prompts generated by this work do not contain personal or private data.

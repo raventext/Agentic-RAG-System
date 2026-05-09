@@ -1,0 +1,4347 @@
+Consistent Geometric Deep Learning
+via Hilbert Bundles and Cellular Sheaves
+Kartik Tandon1,∗,†
+Julian Gould2,∗
+Tanishq Bhatia3
+Francesca Dominici4
+Alejandro Ribeiro1
+Claudio Battiloro4,∗,†
+1University of Pennsylvania
+2Sakana AI
+3Northeastern University
+4Harvard University
+∗Equal contribution
+†Corresponding authors: ktandon@sas.upenn.edu, cbattiloro@hsph.harvard.edu
+Abstract
+Modern deep learning architectures increasingly contend with sophisticated signals
+that are natively infinite-dimensional, such as time series, probability distributions,
+or operators, and are defined over irregular domains. Yet, a unified learning theory
+for these settings has been lacking. To start addressing this gap, we introduce a
+novel convolutional learning framework for possibly infinite-dimensional signals
+supported on a manifold. Namely, we use the connection Laplacian associated
+with a Hilbert bundle as a convolutional operator, and we derive filters and neural
+networks, dubbed as HilbNets. We make HilbNets and, more generally, the con-
+volution operation, implementable via a two-stage sampling procedure. First, we
+show that sampling the manifold induces a Hilbert Cellular Sheaf, a generalized
+graph structure with Hilbert feature spaces and edge-wise coupling rules, and we
+prove that its sheaf Laplacian converges in probability to the underlying connection
+Laplacian as the sampling density increases. Notably, this result is a generalization
+to the infinite-dimensional bundle setting of the Belkin & Niyogi [14] convergence
+result for the graph Laplacian to the manifold Laplacian, a theoretical cornerstone
+of geometric learning methods. Second, we discretize the signals and prove that
+the discretized (implementable) HilbNets converge to the underlying continuous
+architectures and are transferable across different samplings of the same bundle,
+providing consistency for learning. Finally, we validate our framework on synthetic
+and real-world tasks. Overall, our results broaden the scope of geometric learning
+as a whole by lifting classical Laplacian-based frameworks to settings where the
+signal at each point lives in its own Hilbert space.
+Introduction
+Over the past few years, advances in deep learning have delivered state-of-the-art performance
+across many areas, driven by increasingly expressive architectures and corresponding gains in both
+theory and practice. A major contributor to this success, though not the only one, has been the
+rise of Convolutional Neural Networks (CNNs) [63]. CNNs have shown outstanding results in
+settings ranging from image recognition [60] to speech processing [1]. At their core, CNNs rely
+on filters leveraging the regular (often metric) organization of common signal types, such as spatial
+grids. In contrast, many modern datasets live on irregular, non-Euclidean domains, including social
+networks for detection and recommendation [2] or point clouds for shape segmentation [107], to
+name only a few. Such structured data can be represented by richer mathematical objects, among
+which networks and manifolds are prominent. Motivated by this, the intuition behind CNNs has been
+generalized to graph convolutional neural networks (GCNs) [86, 40, 59] and extended to many other
+settings, e.g. simplicial complexes [9, 16, 6], cell complexes [43, 17, 77], order lattices [84], and
+manifolds [101, 34, 87, 10, 27]. Nevertheless, existing works do not address convolutional filtering
+of infinite-dimensional signals on manifolds, despite such data being ubiquitous in practice, from
+time series and spatiotemporal fields arising in sensing, robotics, and climate science to distributional
+and measure-valued representations common in modern learning systems [54].
+Preprint.
+arXiv:2605.06395v1 [cs.LG] 7 May 2026
+
+Figure 1: Overview of the HilbNets framework. A HilbNet is a convolutional neural network
+processing infinite-dimensional signals supported on M (e.g., time-series or distributions over
+curved domains). The convolutional operator is the connection Laplacian ∆∇. To make HilbNets
+implementable, we first sample n points Xn from M to obtain a Hilbert Cellular Sheaf Fn with
+associated Hilbert Sheaf Laplacian ∆Fn. We then take d samples of the signals to get vectors
+sn,d ∈Rnd living on and a network sheaf FXn,d, i.e., a generalized matrix-weighted graph, with
+associated network Sheaf Laplacian ∆Fn,d ∈Rnd×nd. Discretized HilbNets are then Sheaf Neural
+Networks that take as inputs sn,d and ∆Fn,d. We prove that Discretized HilbNets converge to the
+underlying HilbNet as the number of manifold and signal samples goes to infinity.
+To address this gap, we adopt a bundle viewpoint. Informally, a bundle E over a base manifold
+M is a consistent assignment to each point x ∈M of a space Ex, called a fiber. A section is
+a map that picks an element S(x) ∈Ex at every point. In other words, signals supported on
+manifolds can be seen as sections, e.g., scalar manifold signals correspond to Ex ≃R [101], or
+tangent bundle signals correspond to Ex ≃TxM [10]. In this work, we develop a convolutional
+learning framework operating over Hilbert bundles, i.e., bundles whose fibers are (possibly) infinite-
+dimensional Hilbert spaces. We design a bundle-theoretic convolutional learning framework and, to
+make it implementable, we draw the first rigorous connection between Hilbert bundles and Hilbert
+Cellular Sheaves, generalized graph structures whose nodes and edges carry infinite-dimensional
+signals along with consistency rules.
+Related Works. The connection between continuous domains, such as manifolds and bundles, and
+discrete structures, such as graphs and cellular sheaves, first emerged in pioneering investigations
+on the so-called manifold hypothesis. This hypothesis posits that, although data may live in a
+high-dimensional ambient space, they are effectively generated by sampling from one or several
+low-dimensional Riemannian manifolds [38]. The manifold hypothesis underpins several modern
+spectral graph methods, e.g., nonlinear dimensionality-reduction, clustering, interpretability, and
+learning algorithms that exploit latent geometric structures. The renowned work of Belkin and Niyogi
+[14] proved that, assuming access to a finite point cloud sampled from the underlying manifold, it is
+possible to build a weighted undirected graph whose Laplacian converges to the Laplace-Beltrami
+operator of the underlying manifold in probability as the number of samples goes to infinity.
+The work in [14], and related results, e.g., [92, 93], have been used, directly or indirectly, to design
+learning systems over manifolds and networks [103, 67, 20, 74, 10, 56]. Despite the diversity of
+such systems, these models all assume finite-dimensional fibers and therefore do not directly address
+learning with infinite-dimensional manifold signals. The main technical reason behind this gap is the
+lack of an extension of the convergence result in [14] to bundles with infinite-dimensional fibers.
+A line of related works of interest comes from cellular sheaf theory. Cellular sheaves are combinatorial
+instances of sheaves introduced in [90] and later rediscovered in [29]. In [18, 50, 7, 39, 37, 78], neural
+networks operating on finite-dimensional cellular sheaves over graphs, referred to as network sheaves,
+are presented, generalizing graph neural networks by, intuitively, replacing scalar edge weights with
+learned or structured matrix weights. Recently, the works in [11, 10] showed that neural networks for
+tangent bundle signals can be implemented as certain sheaf neural networks operating on network
+sheaves built from manifold samples. For an extended treatment of related work, see Appendix A.
+Contribution. In this work, we first define a convolution operation over a Hilbert bundle through its
+associated connection Laplacian. This convolution extends Laplacian-based convolutions on tangent
+bundles [10], manifolds [103], and graphs [91, 41], as well as standard time convolutions. Using the
+Borel functional calculus, we then define Hilbert bundle convolutional filters for infinite-dimensional
+manifold signals. These filters are general and expressive, and can be instantiated through suitable
+spectral responses. We then introduce HilbNets, deep convolutional architectures whose layers stack
+Hilbert bundle filters and pointwise nonlinearities. HilbNets are continuous models and are therefore
+not directly implementable. To address this, we provide a principled discretization of the manifold
+domain by sampling points and showing that the induced structure is a Hilbert cellular sheaf over
+an undirected graph. The corresponding sheaf Laplacian combines scalar edge weights, obtained
+from the sampled base manifold, with parallel transport maps associated with the bundle geometry
+or learned from data. We prove that this sheaf Laplacian converges in probability to the connection
+Laplacian as the sampling density increases, yielding the first extension of the classical convergence
+result of [14] to the infinite-dimensional bundle setting. We then discretize the signals themselves to
+obtain an implementable architecture, show that discretized HilbNets are novel instances of network
+sheaf neural networks, and prove that they converge to the corresponding continuous architectures
+as both the manifold and signal sampling densities increase. Moreover, we show that discretized
+HilbNets are transferable across different samplings of the same underlying bundle, providing
+resolution consistency guarantees for learning. Finally, we validate HilbNets on a synthetic transport
+recovery task and on real-world traffic forecasting tasks, comparing them against baselines with
+different inductive biases in order to isolate the benefits of the bundle formulation. The potential
+impact of this work extends well beyond the definition of the HilbNet architecture. See Appendix B
+for a detailed discussion of broader impact and future directions, and Fig. 1 for an overview.
+Preliminaries
+Signals on Manifolds. Given a manifold M, a vector-valued signal is a square-integrable function
+S ∈L2(M, Rn). Certain vector-valued signals on M may possess the richer structure of a vector
+field, i.e., they are sections of the tangent bundle TM of M and thus elements of L2(M, TM).
+More generally, we may consider signals that are L2-sections of an arbitrary bundle E. A bundle
+is called trivial when, for a generic fiber V , it can be written as a product E = M × V. In this
+setting, L2(M, Rn) may be understood as the space of sections of the trivial bundle E = M × Rn.
+Figure 2: Visualization of the effect of the
+choice of underlying connection for generat-
+ing heat flows of vector fields on the sphere
+S2. Left: Generated by considering the stan-
+dard Levi-Civita connection on TS2, and cor-
+responding Laplacian ∆∇. Right: Generated
+by allowing a more general connection ∇that
+allows for torsion anisotropy and considering
+the corresponding connection Laplacian ∆∇.
+Consider now the case where the signal is ‘infinite-
+dimensional’, for instance, representing a time series
+recorded at each point x ∈M. While this is usually
+considered as a function S : M × R →Rn, it may
+instead be more richly understood as a section of a
+Hilbert bundle, i.e., a bundle whose fibers are Hilbert
+spaces. As we will see, Hilbert bundles provide a
+principled and versatile approach to incorporating
+structural properties of infinite-dimensional data.
+Example 1. In physics, Hilbert bundles often arise
+naturally when considering global geometric proper-
+ties of quantum mechanical systems [4].
+Example 2. In information geometry, the key objects
+of study are manifolds M given by the underlying
+parameters of some family of data distributions. This
+manifold is then equipped with a Riemannian struc-
+ture by either the Otto-Wasserstein or Fisher-Rao
+metric, the latter of which locally recovers KL diver-
+gence. The proper analogue of the tangent bundle in this setting is a Hilbert bundle [72].
+Convolution, Heat Equation, and Connection Laplacian. Geometric signal processing and deep
+learning [66, 21] traditionally aim to develop convolutional filters and neural networks designed to
+respect the underlying geometry of the signals of interest. The relevant convolutional operators can
+usually be realized as a connection Laplacian ∆∇: L2(M, E) →L2(M, E) operator realized from
+a connection ∇. For instance, for the tangent bundle over the circle TS1, the eigenfunctions of ∆∇,
+with ∇the Levi-Civita connection, recover the usual Fourier basis. Similarly, the eigenfunctions of
+∆∇for the tangent bundle of the sphere TS2 recover spherical harmonics. Thus, convolutions with
+the connection Laplacian may be understood as generalized Fourier transforms in the spectral domain.
+In the spatial domain, it can be seen as performing a geometry-aware ‘local averaging’ of a signal
+over fibers. Formally, the connection Laplacian is the generator of the heat equation in L2(M, E),
+∂U(x, t)
+∂t
+= −∆∇U(x, t),
+(1)
+where U(x, t) is the distribution of heat at Ex for x ∈M at time t ∈R+. A subtlety of note is
+that for non-Euclidean spaces, there is typically no canonical identification between fibers Ex and
+Ey. Intuitively, the connection ∇precisely encodes a globally coherent notion of transport between
+fibers. That is, inducing parallel transport maps Pγ : Eγ(0) →Eγ(1) for a path γ ⊂M, allowing us
+to compare elements across fibers along this path. More formally, the connection is used to define a
+first-order ODE whose solution is given by parallel transport (see Appendix G.1.3). The connection
+Laplacian is then the self-adjoint operator ∆∇:= ∇∗∇, now more clearly understandable as a ‘local
+weighted average’ over fibers with ‘weights’ corresponding to our choice of parallel transport. A
+more rigorous introduction to the relevant mathematical background is provided in Appendix G.
+Example 3. As seen in Fig. 2, the choice of connection can be used to emphasize aspects of the
+geometry that may be relevant for a particular task. For instance, most PDE-based approaches to
+color-image regularization can be realized as heat equations for a suitable choice of connection [8].
+Hilbert Bundle Filters and Neural Networks
+In this section, we develop a convolutional learning framework for infinite-dimensional data, such as
+time series or probability distributions, indexed by a manifold M. Core objects are Hilbert bundles.
+Hilbert Bundles. Given a closed Riemannian manifold M, a Hilbert bundle E over M is a bundle
+whose potentially infinite-dimensional fibers are separable Hilbert spaces over R. The assumption
+of real, instead of complex, Hilbert spaces is not essential to our analysis, and is made only for
+the sake of exposition. As mentioned in Section 2, a Hilbert Bundle signal is then an L2-section
+S : M →E. Integration of sections in this setting should be understood in the Bochner integral
+sense, a generalized notion of integration for functions whose values lie in a Hilbert space rather
+than in Rn. In finite dimensions, it reduces to the standard Lebesgue integral. Given fibers Hx and
+Hy of the Hilbert bundle E, we consider unitary parallel transport operators Px→y : Hx →Hy. As
+before, a globally compatible collection of such transport operators determines a connection ∇, with
+the subtlety that derivatives of sections must now be understood in the Fréchet sense. Intuitively,
+Fréchet differentiability is the infinite-dimensional analogue of ordinary differentiability: it asks
+that a section admit a best linear approximation under small perturbations, but where the linear
+approximation acts between Hilbert spaces. We therefore refer to this construction as a Fréchet
+connection, which recovers the usual notion of connection and covariant derivative when restricted to
+finite-dimensional bundles. As before, we obtain a self-adjoint operator ∆∇:= ∇∗∇on L2(M, E).
+Unlike the finite-dimensional case, however, this operator need not be compact and thus need not
+possess a discrete spectrum. As such, care must be taken when adapting classical arguments that
+involve spectral properties of the Laplacian to the Hilbert-bundle setting. Formal definitions of Hilbert
+bundles and Fréchet connections are provided in Appendix G. For a triple (M, E, ∇), where ∇is a
+choice of Fréchet connection on the Hilbert bundle E over the manifold M, we now wish to construct
+a general notion of a ‘filtering’ operation using the connection Laplacian ∆∇. In finite-dimensional
+or compact settings, filters are often defined by applying a function directly to the eigenvalues of the
+Laplacian. In our setting, the appropriate analogue of eigenvalue-by-eigenvalue filtering is furnished
+by the Borel functional calculus, which allows us to apply a filter to a self-adjoint operator by instead
+integrating over its spectral measure. See Appendix G.4 for details.
+Definition 1 (Hilbert bundle convolutional filter). A convolutional filter is specified by a bounded
+compactly supported Borel function g ∈L∞
+c (R). The filtering of a signal S ∈L2(M, E) is then its
+convolution ⋆∆∇with g defined as g ⋆∆∇S := g(∆∇)S, where g(∆∇) : L2(M, E) →L2(M, E)
+is the bounded linear operator obtained by applying g to ∆∇through the Borel functional calculus.
+In this sense, g is the learnable frequency response, as in spectral graph neural filters [41], except we
+now use the spectral measure of the connection Laplacian acting on Hilbert bundle-valued signals.
+Definition 2 (Hilbert bundle convolutional neural network). Let (M, E, ∇) be a Hilbert bundle. A
+Hilbert bundle convolutional neural network, or HilbNet, is specified by a filter bank W = {gℓ
+u,q}ℓ,u,q
+with gℓ
+u,q ∈L∞
+c (R), and a Lipschitz continuous nonlinear activation σ : R →R. Given input signals
+S1, ..., SF0 ∈L2(M, E), the L-layer network output is obtained by the recursion
+Sℓ+1
+u
+= σ
+ Fℓ
+X
+q=1
+gℓ
+u,q(∆∇)Sℓ
+q
+!
+,
+ℓ= 0, . . . , L −1,
+S0
+q = Sq,
+(2)
+where σ is applied pointwise in each fiber.
+We concisely denote a HilbNet with Ω(E, ∆∇, W, σ). Similarly to the finite-dimensional case,
+a nonlinear activation σ : R →R with σ(0) = 0 extends to an operator on the L2 section by
+simply picking a basis and then applying σ to each coordinate with respect to the chosen basis. It is
+straightforward to check that, for each ℓ∈{0, . . . , L}, the layer signal Sℓremains an L2 section.
+Discretized HilbNets via Cellular Sheaves
+HilbNets are continuous architectures that cannot be implemented directly in practice. Moreover, we
+typically do not have access to the true bundle and connection structure, but only to a point cloud
+or graph sampled from the underlying manifold M, together with samples of the signal at each
+point or node. In this section, we first analyze the Hilbert cellular sheaf induced by spatial, i.e.,
+manifold-level, sampling. We then further discretize the fibers, i.e., the signal domain itself, obtaining
+a finite rank network sheaf. This two-stage sampling is the basis of our consistency theory presented
+in Section 5. It allows us to prove that the fully discrete (thus, implementable) Laplacian and HilbNet
+converge to their infinite-dimensional counterparts, and hence that learning is consistent across scales.
+Manifold Sampling. A generalized viewpoint to the theory of bundles is given by the language of
+sheaves, mathematical structures initially introduced by Jean Leray while a prisoner of war [65].
+The functoriality of sheaves lends them particularly well to the type of principled discretization
+of geometric structures that we are interested in. In particular, we consider a Hilbert-space valued
+version of cellular sheaves on graphs, as introduced in [44]. Intuitively, they can be understood as
+generalized graph structures with signals valued in Hilbert spaces along with edge-wise coupling
+rules. For a more thorough introduction to cellular sheaves, see Appendix G.5.
+In this work, our primary interest is in Hilbert sheaves that represent discretizations of the structure
+of a Hilbert bundle over a manifold. In particular, we desire a spatial discretization such that we
+can recover an appropriate discrete analogueof the Hilbert bundle’s connection Laplacian. Formally,
+given an iid random sample Xn ⊂M from the uniform distribution (see Def. 23), we have the
+following.
+Definition 3 (Hilbert Cellular Sheaf from a Hilbert Bundle). For a given Hilbert bundle (M, E, ∇)
+with sampled points Xn = {x1, . . . , xn} ⊂M, fix a geodesic γij between xi and xj, for all i < j.
+Further, let mγij denote the midpoint of this geodesic. Consider the graph Gn = (Xn, E) with an
+undirected edge eij between xi and xj, for each i < j. The associated Hilbert cellular sheaf Ft
+n on
+Gn with bandwidth parameter t is given by the following assignments:
+• The Hilbert space Ft
+n(xi) := Exi for each xi ∈Xn, referred to as the node stalk over xi ∈Xn.
+• The Hilbert space Ft
+n(eij) := Emγij for each eij ∈E, referred to as the edge stalk over ei,j ∈E.
+• For each edge eij ∈E with bounding vertices xi, xj, a pair of bounded linear restriction maps
+(Ft
+n)xi≤eij :=
+q
+kt
+ij Pxi→mγij : Ft
+n(xi) →Ft
+n(eij),
+(Ft
+n)xj≤eij :=
+q
+kt
+ij Pxj→mγij : Ft
+n(xj) →Ft
+n(eij),
+(3)
+where kt
+ij = e−dM(xi,xj)2/4t, with dM the geodesic distance on M, and Pxi→mγij denotes the
+unitary parallel transport map on E between xi and mγij.
+For the sake of exposition, the choice of sample and corresponding geodesic paths will often be
+suppressed, so our parallel transports will be denoted as Pxi→mij. Also, note that for n < m and
+Xn ⊂Xm, we assume each additional point is again sampled iid from the uniform distribution on M.
+For the categorically-minded reader, we remark that our sheaf is constructed such that refining our
+sample then leads to a subfunctor Ft
+n ⊂Ft
+m. For the Hilbert sheaf Ft
+n on the graph Gn = (Xn, E),
+a signal is an element of the Hilbert space
+C0(Ft
+n; Gn) :=
+M
+xi∈Xn
+Ft
+n(xi).
+(4)
+Example 4. If Ft
+n encodes univariate spatiotemporal data, each node stalk can be chosen as
+Ft
+n(xi) = L2(R). Then C0(Ft
+n; Gn) = L
+xi∈Xn L2(R), so a signal assigns a full time series to
+every node, recovering the usual notion of a node-time graph signal.
+Example 5. In one dimension, a probability distribution µ ∈P2(R) can be represented by its
+quantile function Qµ ∈L2([0, 1]), and the Wasserstein distance becomes the L2 distance between
+quantiles [99]. Thus, by choosing node stalks Ft
+n(xi) = L2([0, 1]), a signal assigns a full probability
+distribution to each graph node, recovering the distributional graph-signal setting of [57, 112].
+Finally, analogous to the construction of the connection Laplacian ∆∇, we may construct the Hilbert
+sheaf Laplacian. Further details, such as self-adjointness, are discussed in Appendix G.5.
+Definition 4 (Hilbert Sheaf Laplacian). Let Ft
+n be the Hilbert sheaf on the graph Gn = (Xn, E)
+induced by Def, 3. Fix an orientation for each edge e ∈E. The Hilbert sheaf Laplacian is the
+bounded linear operator
+∆Ftn : C0(Ft
+n; Gn) →C0(Ft
+n; Gn)
+(5)
+defined, for a signal S ∈C0(Ft
+n; Gn) and at a node xi ∈Xn, by
+(∆FtnS)xi =
+X
+e∈E:
+e={xi,xj}
+(Ft
+n)∗
+xi≤e
+ (Ft
+n)xi≤eSxi −(Ft
+n)xj≤eSxj
+
+,
+(6)
+where xj denotes the other endpoint of e, and (Ft
+n)∗
+xi≤e is the adjoint of the restriction map (Ft
+n)xi≤e.
+Intuitively, ∆Ftn measures how much a signal fails to be locally consistent across edges: before
+comparing Sxi and Sxj, both values are mapped into the common edge stalk Ft
+n(e) by the restriction
+maps. Thus, it is a broad generalization of a graph Laplacian, with restriction maps replacing scalar
+edge weights. The Hilbert sheaf Laplacian ∆Ftn is a self-adjoint bounded linear operator. Once the
+manifold is sampled and the induced sheaf Laplacian is computed, space-discretized HilbNets, which
+are still not implementable due to the infinite-dimensional signals, are simply given by Def, 2 with
+the connection Laplacian of E replaced by the sheaf Laplacian of Ft
+n, i.e., by Ω(Ft
+n, ∆Ftn, W, σ).
+Signal Sampling. Hilbert cellular sheaves are the structures that arise when we sample our base
+manifold but faithfully record the potentially infinite-dimensional signal in each fiber. In practice, we
+typically only have access to a sampled or compressed version of the signal as well. For instance, when
+considering a timeseries S ∈L2(R), we may use the orthogonal Fourier basis {eikθ}k∈Z = L2(R)
+and then record a compressed representation with respect to this basis i.e. [⟨S, e−idθ⟩, . . . , ⟨S, eidθ⟩]
+for some d. We can consider fiber-wise orthogonal projections with respect to any chosen basis in the
+Hilbert bundle setting as a principled approach to discretizing Hilbert bundle signals.
+Proposition 1. Let (M, E, ∇) be a Hilbert bundle, with generic Hilbert-space fiber H. Fix an
+orthogonal basis B = {e1, e2, ...} of H and let Hd := span(e1, e2, ..., ed). Then there exists a
+smooth map of bundles
+Πd : E →Ed
+(7)
+where Ed is a d-dimensional vector bundle with generic fiber Hd and at each x ∈M, Πd|Ex : Ex →
+Ed,x recovers the usual orthogonal projection map. See Appendix H.4 for details.
+Applying Proposition 1 to (M, E, ∇), we obtain (M, Ed, ∇d), to which we may apply the spatial
+discretization of Def.3 to construct the cellular sheaf Ft
+n,d with d-dimensional stalks. We refer to
+Ft
+n,d as a network sheaf. The signals on this sheaf are then sampled Hilbert bundle signals, i.e., we
+can discretize S ∈L2(M, E) as a nd-dimensional vector sn,d := ΠdS ∈C0(Ft
+n,d; Gn) ⊆Rnd,
+stacking the d-dimensional orthogonal projections over the n sampled locations, with respect to the
+chosen basis B. In this case, the restriction maps can be written as matrices, thus the sheaf Laplacian
+becomes a block matrix ∆Ft
+n,d ∈Rnd×nd whose (i, j)-block maps the discretized stalk over xj to
+the discretized stalk over xi and is given by
+(∆Ft
+n,d)ij =
+
+
+
+
+
+
+
+
+
+X
+r: eir∈E
+kt
+irId,
+i = j,
+−P (d,eij)
+xj→xi,
+i ̸= j and eij ∈E,
+0,
+otherwise,
+(8)
+where P (d,eij)
+xj→xi := kt
+ij
+
+P (d)
+xi→mij
+∗
+P (d)
+xj→mij, and P (d)
+xj→mij denotes the restriction of the parallel
+transport map from Exj to Emij to the corresponding d-dimensional subbundles in the image of Πd.
+We may thus use this Laplacian to build an implementable sheaf convolutional architecture as follows.
+Definition 5 ((n, d)-Hilbert bundle convolutional neural network). Let (M, E, ∇) be a Hilbert
+bundle, with generic Hilbert-space fiber H and corresponding basis B. A (n, d)-Hilbert bundle
+convolutional neural network, or (n, d)-HilbNet, is specified by a filter bank W = {gℓ
+u,q}ℓ,u,q with
+gℓ
+u,q ∈L∞
+c (R), a Lipschitz continuous nonlinear activation σ : R →R, the choice of a d-dimensional
+subbasis of B and sample Xn ⊂M. Given input sampled signals sn,d,1, ..., sn,d,F0 ∈C0(Ft
+n,d; Gn),
+the L-layer network output is obtained by the recursion
+sℓ+1
+n,d,u = σ
+ Fℓ
+X
+q=1
+gℓ
+u,q(∆Ft
+n,d)sℓ
+n,d,q
+!
+,
+ℓ= 0, . . . , L −1,
+s0
+n,d,q = sn,d,q.
+(9)
+Discretized HilbNets are fully implementable and can be compactly written using Def. 2 with the
+connection Laplacian of E replaced by the sheaf Laplacian of Ft
+n,d, i.e., by Ω(Ft
+n,d, ∆Ft
+n,d, W, σ).
+Example 6. In the case that we consider our filter bank W to consist of order K polynomials, the
+(n, d)-HilbNet can be written as a novel variant of sheaf neural networks [50, 10] given by
+Sℓ+1
+n,d = σ
+ K−1
+X
+k=0
+(∆Ft
+n,d)kSℓ
+n,dWℓ,k
+!
+∈Rnd.
+(10)
+where the matrices Sℓ
+n,d ∈Rnd×Fℓ, and {Wℓ,k}k, with Wℓ,k ∈RFℓ×Fℓ+1 collect the sampled
+signals and the learnable filter weights at each layer, respectively.
+Theoretical Convergence Guarantees
+Our main result may be understood as a far-reaching generalization of the convergence result of
+Belkin & Niyogi [14]. Consider a random sample Xn ⊂M and the corresponding geometric graph
+Gn = (Xn, E). It is established in [14] that as sampling density increases, the weighted graph
+Laplacian converges to the manifold Laplace-Beltrami operator in probability. We analogously show
+that the Hilbert sheaf Laplacian ∆Fn over Gn converges to ∆∇, thus recovering the results of [14] as
+the special case E = M × R. Our proof, presented in Appendix H, is inspired by the strategy of [14]
+but with the necessary non-trivial modifications to accommodate the simultaneous generalization to
+cellular sheaves instead of graphs and to infinite-dimensional Hilbert-spaces. In order to state our
+results, we require the following intermediary operator.
+Definition 6. (Point-Cloud Extension of Sheaf Laplacian) Let (M, E, ∇) be a Hilbert bundle and
+consider a sample Xn ⊂M. Then the corresponding Hilbert sheaf Laplacian ∆Ftn may be extended
+to the point-cloud Laplacian ˆ∆Ftn, an operator on L2(M, E) via
+( ˆ∆FtnS)(x) = 1
+n
+X
+j
+e−dM(x,xj)2/4t S(x) −Pxj→xS(xj)
+
+(11)
+As such, we are able to consider the sheaf-level and bundle-level Laplacians as operators on the same
+space through this extension. In this setting, we then have the following convergence result.
+Theorem 1. (Convergence of Hilbert Sheaf Laplacian) Let M be a m-dimensional closed Rieman-
+nian manifold. Further, let (M, E, ∇) be a Hilbert bundle and associated connection Laplacian ∆∇.
+Fix a section S ∈C3(M, E). Consider a random sample Xn = {x1, x2, · · · , xn} ⊂M. Let Ft
+n be
+the induced Hilbert cellular sheaf with bandwidth t. Then we have, for any x ∈M,
+lim
+n→∞
+tn (4πtn)
+m
+ˆ∆Ftn
+n S(x) =
+vol(M)∆∇S(x)
+in probability,
+(A)
+with bandwidth tn = n−
+m+2+α , α > 0. Further, if S ∈C4(M, E), we have
+lim
+n→∞EX
+
+
+tn (4πtn)
+m
+ˆ∆Ftn
+n S(x) −
+vol(M)∆∇S(x)
+L2
+
+= 0
+in L2-norm.
+(B)
+Our framework may be seen as concurrently generalizing the convergence results for the weighted
+graph Laplacian of [14] as well as the graph connection Laplacian of [93] to allow for arbitrary
+bundles, with potentially infinite-dimensional fibers, equipped with an arbitrary choice of connection.
+Such convergence results have previously served as the basis of transferability and robustness results in
+geometric deep learning [102, 104, 67], as well as to justify the development of numerous Laplacian-
+based manifold learning techniques [13, 28, 108, 97, 85]. We may likewise develop generalizations
+of these results for implementable sheaf Laplacians by discretizing in the signal-domain.
+Finite Rank Convergence. Consider a signal S that has been sampled to sn,d as per Proposition 1.
+We then have the following theoretical guarantee, which formalizes the intuitive notion that the fully
+discretized sheaf Laplacian converges to true connection Laplacian as we take an increasingly refined
+sample of both the underlying manifold and the signal.
+Theorem 2 (Finite-Rank Approximation). Consider the setting of Theorem 1 with a section S ∈
+C4(M, E). Then there exists a sequence of finite rank approximating sheaves Ftn
+n,dn such that
+lim
+n→∞EX
+"
+tn(4πtn)m/2 ˆ∆Ftn
+n,dnsn,dn −
+vol(M)∆∇S
+L2
+#
+= 0
+in L2-norm,
+(12)
+with bandwidth tn = n−
+m+2+α , α > 0.
+While this result, as described in Appendix B, can pave the way for new developments of Laplacian-
+based manifold learning, we here restrict our focus to its consequences for (n, d)-HilbNets.
+Corollary 2.1 (Convergence in Architecture). Under the hypotheses of Theorem 2, let {dn}n be the
+required sequence. Fix a fiber-wise nonlinearity σ that is Cσ-Lipschitz in the corresponding fiber
+norms and choice of filter bank W. Then, the output of the discrete (n, d)-HilbNet converges to the
+output of the continuous HilbNet architecture in the sense that
+Ω(Ftn
+n,dn, ˆ∆Ftn
+n,dn, W, σ) →Ω(E, ∆∇, W, σ)
+in mean squared error,
+(13)
+as the sampling density n, dn →∞.
+Corollary 2.2. (Transferability) Let {Xn}∞
+n=1 and {Yn}∞
+n=1 be independent sequences of random
+samples of M. Let {dn}∞
+n=1 be a sequence such that the conclusion of Theorem 2 holds for both
+samplings. For any fiber-wise nonlinearity σ that is Cσ-Lipschitz in the corresponding fiber norms
+and any filter bank K, we then have that,
+lim
+n→∞EX,Y
+Ω(Ftn
+Xn,dn, ˆ∆Ftn
+Xn,dn, W, σ) −Ω(Ftn
+Yn,dn, ˆ∆Ftn
+Yn,dn, W, σ)
+L2
+
+= 0
+in L2 norm.
+(14)
+Further, one may derive a sample-independent quantitative bound for the L2 disagreement
+∥Ω(Ftn
+Xn,dn, ˆ∆Ftn
+Xn,dn, W, σ) −Ω(Ftn
+Yn,dn, ˆ∆Ftn
+Yn,dn, W, σ)∥L2. See Appendix H for details.
+By these results, we may understand the (n, d)-HilbNets as the principled discretization of continuous
+HilbNets. These may also be understood as robustness results for (n, d)-HilbNets, as they establish
+that the architecture is scale-consistent and is stable against resampling of the base manifold. Notably,
+by the generality of HilbNets, most existing geometric convolutional architectures can be understood
+as instances of HilbNets for a particular choice of bundle and connection. As such, our results
+may also be seen as extending the transferability guarantees of [102, 104, 67] to a larger class of
+architectures and data modalities. See Appendix C for further discussion.
+Free O(m)
+Circulant
+Frozen identity (GCN)
+n
+Empirical
+Theory
+Empirical
+Theory
+Empirical
+Theory
+(1.42±0.21)×10−7
+(1.79±0.28)×10−2
+1.84×10−2
+(2.31±0.27)×10−2
+2.30×10−2
+(1.23±0.23)×10−7
+(1.16±0.14)×10−2
+1.18×10−2
+(1.46±0.18)×10−2
+1.46×10−2
+(1.82±0.77)×10−7
+(1.02±0.14)×10−2
+1.03×10−2
+(1.29±0.17)×10−2
+1.29×10−2
+(1.63±0.19)×10−7
+(8.85±0.71)×10−3
+8.93×10−3
+(1.11±0.09)×10−2
+1.11×10−2
+(1.59±0.28)×10−7
+(7.74±0.13)×10−3
+7.79×10−3
+(9.67±0.14)×10−3
+9.67×10−3
+Table 1: Synthetic transport recovery. Empirical: best edge-MSE achieved by each variant. Theory:
+analytical squared Frobenius projection distance of P LC
+xi→mij onto the variant’s hypothesis class.
+Experimental Results
+A key practical advantage of the (n, d)-HilbNets architecture in comparison to existing approaches
+for processing graph signals is our use of parallel transport, which in practice can be known or learned.
+For instance, these transport operators allow us to incorporate principled signal-level geometric priors
+in concert with the spatial priors of existing spatiotemporal GCNs. This is well-aligned with the
+thesis of geometric deep learning that the principled incorporation of geometric priors improves
+performance, particularly in the low-data or small-model regimes. For further discussion on strategies
+for either hand-crafting or learning parallel transport operators, see Appendix D. Here, we first validate
+our setup for a synthetic dataset realized from discretizing a known Hilbert bundle in information
+geometry, and then consider performance on real-world spatiotemporal graph benchmarks based
+upon traffic forecasting. In all the experiments, we use the polynomial (n, d)-HilbNet from (10) and
+learned transport maps.
+Synthetic Experiments. We first consider a task where, for a known Hilbert bundle and connection,
+we train a discretized HilbNet to predict the true parallel transport operators. Following [72], the
+base manifold is M = Sym++(p) equipped with the Otto-Wasserstein metric, each Σ ∈M
+parameterizing a density N(0, Σ). The ambient fiber HΣ = L2(ρΣ; Rp) is genuinely infinite-
+dimensional; the computational fiber is the Otto-velocity image of covariance perturbations, a
+sub-bundle whose fibers are already finite-dimensional with d = p(p + 1)/2, and on which the
+Levi-Civita transports P LC
+xi→mij admit a closed-form. We sample n points, build a kNN graph Gn
+Model
+Params
+Horizon 3
+Horizon 6
+Horizon 12
+MAE
+RMSE
+MAPE
+MAE
+RMSE
+MAPE
+MAE
+RMSE
+MAPE
+FC-LSTM [69]
+∼150K
+3.44
+6.30
+9.6
+3.77
+7.23
+10.9
+4.37
+8.69
+13.2
+STAEformer [71]
+∼4.7M
+2.65
+5.11
+6.85
+2.97
+6.00
+8.13
+3.34
+7.02
+9.70
+MLP fiber baseline
+5,212
+3.131±0.004
+6.074±0.007
+8.271±0.021
+3.775±0.005
+7.496±0.013
+10.626±0.046
+4.690±0.011
+9.184±0.014
+14.341±0.097
+Spatiotemporal graph baseline
+8,908
+3.453±0.080
+6.709±0.220
+9.241±0.279
+4.160±0.117
+8.158±0.184
+11.916±0.491
+5.277±0.093
+10.102±0.128
+16.006±0.662
+HilbNet, frozen identity (GCN)
+5,756
+3.092±0.007
+5.920±0.013
+8.218±0.065
+3.713±0.010
+7.312±0.020
+10.520±0.061
+4.608±0.034
+8.991±0.043
+14.166±0.240
+HilbNet, circulant
+11,656
+2.939±0.021
+5.630±0.061
+7.908±0.067
+3.409±0.032
+6.765±0.092
+9.844±0.125
+4.059±0.049
+8.149±0.114
+12.471±0.195
+HilbNet, free O(T)
+119,036
+2.923±0.013
+5.586±0.048
+7.808±0.083
+3.372±0.023
+6.732±0.066
+9.507±0.096
+3.938±0.030
+8.042±0.101
+11.642±0.136
+Model
+Params
+Horizon 3
+Horizon 6
+Horizon 12
+MAE
+RMSE
+MAPE
+MAE
+RMSE
+MAPE
+MAE
+RMSE
+MAPE
+FC-LSTM [69]
+∼150K
+2.05
+4.19
+4.8
+2.20
+4.55
+5.2
+2.37
+4.96
+5.7
+STAEformer [71]
+∼4.7M
+1.31
+2.78
+2.76
+1.62
+3.68
+3.62
+1.88
+4.34
+4.41
+MLP fiber baseline
+5,212
+1.459±0.003
+3.145±0.017
+3.026±0.020
+1.942±0.004
+4.378±0.017
+4.385±0.045
+2.513±0.004
+5.658±0.015
+6.209±0.038
+Spatiotemporal graph baseline
+8,908
+1.400±0.002
+2.980±0.016
+2.924±0.003
+1.850±0.002
+4.162±0.009
+4.222±0.009
+2.388±0.004
+5.395±0.023
+5.924±0.032
+HilbNet, frozen identity (GCN)
+5,756
+1.439±0.003
+3.077±0.022
+2.985±0.007
+1.901±0.006
+4.264±0.021
+4.319±0.015
+2.446±0.007
+5.495±0.019
+6.020±0.032
+HilbNet, circulant
+15,366
+1.413±0.002
+2.971±0.018
+2.982±0.015
+1.806±0.003
+3.950±0.015
+4.162±0.037
+2.211±0.014
+4.866±0.048
+5.386±0.047
+HilbNet, free O(T)
+190,268
+1.417±0.002
+2.969±0.015
+3.058±0.013
+1.793±0.005
+3.958±0.026
+4.127±0.037
+2.181±0.003
+4.873±0.019
+5.214±0.045
+Table 2: METR-LA (top) and PEMS (bottom) traffic forecasting results. Bottom block of each table:
+our experiments (mean ± standard deviation over five seeds). Top block of each table: external
+baselines reported as in the cited papers. MAPE is in percent. Lower is better for all metrics.
+(k=8) under W2, and assemble the network sheaf Ft
+n,d and its Laplacian ∆Ft
+n,d ∈Rnd×nd from
+Def, 3. We consider three transport parametrizations from Appendix D ( averaged over 3 seeds): free
+O(d) (Householder), circulant, and frozen identity (a usual GCN [59]), to recover the Levi-Civita
+transports in Cholesky-rescaled coordinates. As the reader can notice in Table 4, the free class
+recovers P LC
+xi→mij to numerical precision ≈1.6 · 10−7, while each restricted class converges to its
+analytical Frobenius-projection plateau to within 1%. This confirms that the transport hypothesis
+class constrains the per-edge restriction maps of ∆Ft
+n,d in a quantitatively predictable way. More
+experiments and details are in Appendix F.1
+Traffic Forecasting. We evaluate HilbNets on real-world spatiotemporal traffic-speed forecasting,
+where each node of a road-network graph carries a time-series fiber with d = T observed time steps.
+This is a natural instance of the Hilbert-bundle framework: the base graph encodes spatial proximity
+among sensors, while the edgewise transports P eij
+j→i from Appendix D control how temporal fibers
+are aligned before filtering. We test on two standard benchmarks, METR-LA [69] and PEMS-
+BAY [69], predicting future speeds at horizons 3, 6, and 12. We compare the same three HilbNet
+transport classes, frozen identity (a GCN), circulant, and free O(T), against a fiber-only MLP and a
+spatiotemporal graph baseline obtained by stacking GCN layers with one-dimensional convolutional
+layers processing the temporal dimension, all sharing the same polynomial sheaf filter order, readout,
+and forecasting loss. Full experimental details are given in Appendix F.2. Table 2 reports MAE,
+RMSE, and MAPE (mean ± std over five seeds). On both datasets, learning non-trivial transports
+consistently improves over frozen identity at all horizons, confirming that the sheaf structure helps
+beyond the usual graph structure. The free O(T) class achieves the best overall accuracy, but the
+circulant variant is competitive while using roughly one tenth of the transport parameters, supporting
+the use of structured, physically motivated transport priors for spatiotemporal data. This confirms
+that geometric inductive biases can lead to better performance in low-data regimes or comparable
+performance in normal regimes with substantially fewer parameters.
+Conclusions
+We introduced a novel convolutional learning framework for infinite-dimensional signals over a
+manifold using Hilbert bundles, a setting that concurrently unifies and generalizes existing approaches.
+It allows us to consider arbitrary connection Laplacians, a more general class of filters via the Borel
+calculus, and thus applications of the resulting filters to potentially infinite-dimensional signals. We
+defined HilbNets as stacks of Hilbert bundle filters and pointwise non-linearity. We consequently
+introduced a practically implementable (n,d)-HilbNet via the theory of Hilbert cellular sheaves, and
+proved that this discretized architecture converges to the continuous architecture in the limit. Notably,
+our convergence in architecture is derived from a novel extension of the Laplacian convergence
+result of [14] to the setting of Hilbert sheaves and Hilbert bundles, and we believe this result
+will be of independent interest to the broader machine learning community. Lastly, we verified
+the benefits of integrating domain-specific geometric priors through experiments with discretized
+HilbNets on synthetic and real-world data. Overall, we envision the prospective impact of our
+contributions as two-fold: the HilbNet framework allows for the principled development of domain-
+specific architectures through appropriate choices of connection, filter bank, and manifold- and
+signal-alignment measures, while our Hilbert Laplacian convergence theorem lays the theoretical
+groundwork for the development of Laplacian-based manifold-theoretic techniques in the setting of
+infinite-dimensional signals, spanning from mechanistic interpretability to self-supervised learning
+methods. A more detailed discussion on broader impact and limitations is presented in Appendix B.
+References
+[1] Ossama Abdel-Hamid et al. Applying convolutional neural networks concepts to hybrid
+nn-hmm model for speech recognition. In 2012 International Conference on Acoustics, Speech
+and Signal Processing (ICASSP), 2012. doi: 10.1109/ICASSP.2012.6288864.
+[2] Manasvi Aggarwal and M Narasimha Murty. Machine Learning in Social Networks: Embed-
+ding Nodes, Edges, Communities, and Graphs. Springer Nature, 2020.
+[3] Antonio Ambrosetti and Giovanni Prodi.
+A Primer of Nonlinear Analysis.
+Cambridge
+Studies in Advanced Mathematics. Cambridge University Press, Cambridge, UK, 1995. ISBN
+9780521454057.
+[4] Scott Axelrod, Steve della Pietra, and Edward Witten. Geometric quantization of chern-
+simons gauge theory. Journal of Differential Geometry, 33(3):787-902, May 1991. doi:
+10.4310/jdg/1214446565.
+[5] Jacob Bamberger, Federico Barbero, Xiaowen Dong, and Michael M. Bronstein. Bundle
+neural network for message diffusion on graphs. In The Thirteenth International Conference
+on Learning Representations, 2025. URL 
+scI9307PLG.
+[6] S. Barbarossa and S. Sardellitti. Topological signal processing over simplicial complexes.
+IEEE Trans. on Signal Processing, 68:2992-3007, 2020.
+[7] Federico Barbero et al. Sheaf neural networks with connection laplacians, 2022. URL
+
+[8] Thomas Batard.
+Heat equations on vector bundles-application to color image regu-
+larization.
+Journal of Mathematical Imaging and Vision, 41(1-2):59-85, 2011.
+doi:
+10.1007/s10851-011-0265-3.
+[9] Claudio Battiloro, Lucia Testa, Lorenzo Giusti, Stefania Sardellitti, Paolo Di Lorenzo, and
+Sergio Barbarossa. Generalized simplicial attention neural networks. IEEE Transactions on
+Signal and Information Processing over Networks, 10:833-850, 2024.
+[10] Claudio Battiloro, Zhiyang Wang, Hans Riess, Paolo Di Lorenzo, and Alejandro Ribeiro.
+Tangent bundle convolutional learning: from manifolds to cellular sheaves and back. IEEE
+Transactions on Signal Processing, 2024.
+[11] Claudio Battiloro et al. Tangent bundle filters and neural networks: From manifolds to cellular
+sheaves and back. In ICASSP 2023-2023 IEEE International Conference on Acoustics, Speech
+and Signal Processing (ICASSP), pp. 1-5. IEEE, 2023.
+[12] M. Faisal Beg, Michael I. Miller, Alain Trouvé, and Laurent Younes. Computing large
+deformation metric mappings via geodesic flows of diffeomorphisms. International Journal of
+Computer Vision, 61(2):139-157, 2005. doi: 10.1023/B:VISI.0000043755.93987.aa.
+[13] Mikhail Belkin and Partha Niyogi. Laplacian eigenmaps and spectral techniques for embedding
+and clustering. Advances in neural information processing systems, 14, 2001.
+[14] Mikhail Belkin and Partha Niyogi. Towards a theoretical foundation for laplacian-based
+manifold methods.
+Journal of Computer and System Sciences, 74(8):1289-1308, 2008.
+ISSN 0022-0000. doi:  URL 
+sciencedirect.com/science/article/pii/S0022000007001274. Learning
+Theory 2005.
+[15] Nicole Berline, Ezra Getzler, and Michèle Vergne. Heat Kernels and Dirac Operators. Springer
+Berlin, Heidelberg, 1992. doi: 10.1007/978-3-642-58088-8.
+[16] C. Bodnar et al. Weisfeiler and Lehman go topological: Message passing simplicial networks.
+In ICLR 2021 Workshop on Geometrical and Topological Representation Learning, 2021.
+[17] C. Bodnar et al. Weisfeiler and lehman go cellular: Cw networks. In Advances in Neural
+Information Processing Systems, volume 34, pp. 2625-2640. Curran Associates, Inc., 2021.
+[18] Cristian Bodnar et al. Neural sheaf diffusion: A topological perspective on heterophily and
+oversmoothing in gnns, 2022.
+[19] Boris Bonev, Thorsten Kurth, Christian Hundt, Jaideep Pathak, Maximilian Baust, Karthik
+Kashinath, and Anima Anandkumar. Spherical fourier neural operators: Learning stable
+dynamics on the sphere. In International conference on machine learning, pp. 2806-2823.
+PMLR, 2023.
+[20] Viacheslav Borovitskiy, Alexander Terenin, Peter Mostowsky, and Marc Peter Deisenroth.
+Matérn gaussian processes on Riemannian manifolds. In Advances in Neural Information
+Processing Systems, volume 33, 2020.
+URL 
+cc/paper/2020/hash/92bf5e6240737e0326ea59846a83e076-Abstract.
+html.
+[21] Michael M Bronstein, Joan Bruna, Taco Cohen, and Petar Veliˇckovi´c. Geometric deep learning:
+Grids, groups, graphs, geodesics, and gauges. arXiv preprint arXiv:2104.13478, 2021.
+[22] Michael M Bronstein et al. Geometric deep learning: going beyond euclidean data. IEEE
+Signal Processing Magazine, 34(4):18-42, 2017.
+[23] J. Brüning and M. Lesch. Hilbert complexes. Journal of Functional Analysis, 108:88-132,
+1992.
+[24] Alessia Caponera and Domenico Marinucci. Asymptotics for spherical functional autoregres-
+sions. The Annals of Statistics, 49(1):346-369, 2021. doi: 10.1214/20-AOS1959.
+[25] Élie Cartan. Differential Calculus. Princeton University Press, Princeton, NJ, 1967.
+[26] Gengxiang Chen, Xu Liu, Qinglu Meng, Lu Chen, Changqing Liu, and Yingguang Li. Learning
+neural operators on riemannian manifolds. National Science Open, 3(6):20240001, 2024.
+[27] Taco S Cohen, Mario Geiger, and Maurice Weiler. A general theory of equivariant cnns on
+homogeneous spaces. Advances in neural information processing systems, 32, 2019.
+[28] Ronald R. Coifman and Stéphane Lafon. Diffusion maps. Applied and Computational
+Harmonic Analysis, 21(1):5-30, 2006. doi: 10.1016/j.acha.2006.04.006. URL https:
+//doi.org/10.1016/j.acha.2006.04.006.
+[29] Justin Michael Curry. Sheaves, cosheaves and applications. University of Pennsylvania, 2014.
+[30] Gabriele D’Acunto and Claudio Battiloro. The relativity of causal knowledge. In The 41st
+Conference on Uncertainty in Artificial Intelligence, 2025. URL 
+net/forum?id=aS8mPNs5u5.
+[31] Xiongtao Dai and Hans-Georg Müller. Principal component analysis for functional data on
+Riemannian manifolds and spheres. The Annals of Statistics, 46(6B):3309-3338, 2018. doi:
+10.1214/17-AOS1660. URL 
+[32] Rumen Dangovski, Li Jing, Charlotte Loh, Seungwook Han, Akash Srivastava, Brian Che-
+ung, Pulkit Agrawal, and Marin Soljaˇci´c. Equivariant contrastive learning. arXiv preprint
+arXiv:2111.00899, 2021.
+[33] Valentin De Bortoli, Emile Mathieu, Michael Hutchinson, James Thornton, Yee Whye Teh,
+and Arnaud Doucet. Riemannian score-based generative modelling. Advances in neural
+information processing systems, 35:2406-2422, 2022.
+[34] Pim De Haan et al. Gauge equivariant mesh cnns: Anisotropic convolutions on geometric
+graphs. arXiv preprint arXiv:2003.05425, 2020.
+[35] Leonardo Di Nino, Gabriele D’Acunto, Sergio Barbarossa, and Paolo Di Lorenzo. Learning
+the structure of connection graphs. arXiv preprint arXiv:2510.11245, 2025.
+[36] Manfredo P. do Carmo. Riemannian Geometry. Mathematics: Theory & Applications.
+Birkhäuser, Boston, 1992. ISBN 978-0817634902.
+[37] Iulia Duta, Giulia Cassarà, Fabrizio Silvestri, and Pietro Liò. Sheaf hypergraph networks.
+Advances in Neural Information Processing Systems, 36:12087-12099, 2023.
+[38] Charles Fefferman, Sanjoy Mitter, and Hariharan Narayanan. Testing the manifold hypothesis.
+Journal of the American Mathematical Society, 29(4):983-1049, 2016.
+[39] Stefano Fiorini, Hakan Aktas, Iulia Duta, Stefano Coniglio, Pietro Morerio, Alessio Del Bue,
+and Pietro Liò. Sheaves reloaded: A directional awakening. arXiv preprint arXiv:2506.02842,
+2025.
+[40] Fernando Gama et al. Convolutional neural network architectures for signals supported on
+graphs. IEEE Transactions on Signal Processing, 67(4):1034-1049, 2018.
+[41] Fernando Gama et al. Graphs, convolutions, and neural networks: From graph filters to
+graph neural networks. IEEE Signal Processing Magazine, 37:128-138, 11 2020. doi:
+10.1109/MSP.2020.3016143.
+[42] Robert Ghrist and Hans Riess. Cellular sheaves of lattices and the tarski laplacian. Homology,
+Homotopy and Applications, 24(1):325-345, 2022.
+[43] Lorenzo Giusti, Claudio Battiloro, et al. Cell attention networks. In 2023 International Joint
+Conference on Neural Networks (IJCNN), pp. 1-8. IEEE, 2023.
+[44] Julian J. Gould. Cellular Sheaves of Hilbert Spaces. PhD thesis, University of Pennsylvania,
+2025.
+[45] Francesco Grassi, Andreas Loukas, Nathanaël Perraudin, and Benjamin Ricaud. A time-
+vertex signal processing framework: Scalable processing and meaningful representations for
+time-series on graphs. IEEE Transactions on Signal Processing, 66(3):817-829, 2017.
+[46] Alexander Grigor’yan. Heat Kernel and Analysis on Manifolds, volume 47 of AMS/IP Studies
+in Advanced Mathematics. American Mathematical Society, Providence, RI, 2009.
+[47] Enrico Grimaldi, Mario Edoardo Pandolfo, Gabriele D’Acunto, Sergio Barbarossa, and Paolo
+Di Lorenzo. Learning network sheaves for ai-native semantic communication. arXiv preprint
+arXiv:2512.03248, 2025.
+[48] Alexandre Grothendieck. A general theory of fibre spaces with structure sheaf. Number 4.
+University of Kansas, Department of Mathematics, 1955.
+[49] Tyler Hanks, Hans Riess, Samuel Cohen, Trevor Gross, Matthew Hale, and James Fairbanks.
+Distributed multi-agent coordination over cellular sheaves. arXiv preprint arXiv:2504.02049,
+2025.
+[50] Jakob Hansen and Thomas Gebhart. Sheaf neural networks, 2020. URL 
+org/abs/2012.06333.
+[51] Jakob Hansen and Robert Ghrist. Toward a spectral theory of cellular sheaves. Journal of Ap-
+plied and Computational Topology, 3(4):315-358, Dec 2019. ISSN 2367-1734. doi: 10.1007/
+s41468-019-00038-7. URL 
+[52] Jakob Hansen and Robert Ghrist. Learning sheaf laplacians from smooth signals. In ICASSP
+2019 - 2019 IEEE International Conference on Acoustics, Speech and Signal Processing
+(ICASSP), pp. 5446-5450, 2019. doi: 10.1109/ICASSP.2019.8683709.
+[53] Jakob Hansen and Robert Ghrist. Opinion dynamics on discourse sheaves. SIAM Journal on
+Applied Mathematics, 81(5):2033-2060, 2021. doi: 10.1137/20M1341088.
+[54] Edward J Hu, Moksh Jain, Eric Elmoznino, Younesse Kaddar, Guillaume Lajoie, Yoshua
+Bengio, and Nikolay Malkin. Amortizing intractable inference in large language models.
+In The Twelfth International Conference on Learning Representations, 2024. URL https:
+//openreview.net/forum?id=Ouj6p4ca60.
+[55] Hai Huang, Yann LeCun, and Randall Balestriero. Semantic tube prediction: Beating llm data
+efficiency with jepa, 2026. URL 
+[56] Michael Hutchinson, Alexander Terenin, Viacheslav Borovitskiy, So Takao, Yee Teh, and Marc
+Deisenroth. Vector-valued gaussian processes on riemannian manifolds via gauge independent
+projected kernels. Advances in Neural Information Processing Systems, 34:17160-17169,
+2021.
+[57] Feng Ji, Yanan Zhao, See Hian Lee, Kai Zhao, Wee Peng Tay, W. P. Tay, and Jielong Yang.
+Graph distributional signals for regularization in graph neural networks. IEEE Transactions
+on Signal and Information Processing over Networks, 11:670-682, Jul 2025. doi: 10.1109/
+tsipn.2025.3587400.
+[58] Anran Jiao, Qile Yan, Jhn Harlim, and Lu Lu. Solving forward and inverse pde problems on
+unknown manifolds via physics-informed neural operators. arXiv preprint arXiv:2407.05477,
+2024.
+[59] T. N. Kipf and M. Welling. Semi-Supervised Classification with Graph Convolutional Net-
+works. In Proc. of the 5th International Conference on Learning Representations (ICLR), 2017.
+URL 
+[60] Alex Krizhevsky, Ilya Sutskever, and Geoffrey E Hinton. Imagenet classification with deep
+convolutional neural networks. In Advances in Neural Information Processing Systems,
+volume 25, 2012.
+[61] Nicolaas H. Kuiper. The homotopy type of the unitary group of hilbert space. Topology, 3(1):
+19-30, 1965. doi: 10.1016/0040-9383(65)90067-4.
+[62] Serge Lang. Differential and Riemannian Manifolds, volume 160 of Graduate Texts in
+Mathematics. Springer, New York, NY, 3 edition, 1995. ISBN 978-0-387-94338-1. doi:
+10.1007/978-1-4612-4182-9.
+[63] Yann LeCun et al. Gradient-based learning applied to document recognition. Proc. of the
+IEEE, 86(11):2278-2324, 1998.
+[64] Michel Ledoux and Michel Talagrand. Probability in Banach Spaces: Isoperimetry and
+Processes, volume 23 of Ergebnisse der Mathematik und ihrer Grenzgebiete (3). Springer-
+Verlag, Berlin, 1991.
+[65] Jean Leray. L’anneau d’homologie d’une représentation. Comptes Rendus Hebdomadaires des
+Séances de l’Académie des Sciences, 222:1366-1368, 1946.
+[66] Geert Leus, Antonio G Marques, José MF Moura, Antonio Ortega, and David I Shuman.
+Graph signal processing: History, development, impact, and outlook. IEEE Signal Processing
+Magazine, 40(4):49-60, 2023.
+[67] Ron Levie, Wei Huang, et al. Transferability of spectral graph convolutional neural networks.
+Journal of Machine Learning Research, 22(272):1-59, 2021.
+[68] Daiyuan Li, Shreya Arya, and Robert Ghrist. Learning from frustration: Torsor cnns on graphs.
+In Proceedings of the Workshop on Symmetry and Geometry in Neural Representations at
+NeurIPS 2025, 2025. URL  Workshop paper.
+[69] Yaguang Li, Rose Yu, Cyrus Shahabi, and Yan Liu. Diffusion convolutional recurrent neural
+network: Data-driven traffic forecasting. In International Conference on Learning Representa-
+tions (ICLR), 2018. URL 
+[70] Eardi Lila, John AD Aston, and Laura M Sangalli. Smooth principal component analysis over
+two-dimensional manifolds with an application to neuroimaging. 2016.
+[71] Hangchen Liu, Zheng Dong, Renhe Jiang, Jiewen Deng, Jinliang Deng, Quanjun Chen, and
+Xuan Song. Spatio-temporal adaptive embedding makes vanilla transformer SOTA for traffic
+forecasting. In Proceedings of the 32nd ACM International Conference on Information and
+Knowledge Management (CIKM), 2023. doi: 10.1145/3583780.3615160.
+[72] Luigi Malagò, Luigi Montrucchio, and Giovanni Pistone.
+Wasserstein riemannian ge-
+ometry of gaussian densities.
+Information Geometry, 1(2):137-179, 12 2018.
+ISSN
+2511-249X. doi: 10.1007/s41884-018-0014-4. URL 
+s41884-018-0014-4.
+[73] Ivan Marisca, Jacob Bamberger, Cesare Alippi, and Michael M. Bronstein. Over-squashing
+in spatiotemporal graph neural networks. In The Thirty-ninth Annual Conference on Neural
+Information Processing Systems, 2026. URL 
+CVp0WCw4a1.
+[74] Peter Mostowsky, Vincent Dutordoir, Iskander Azangulov, Noémie Jaquier, Michael John
+Hutchinson, Aditya Ravuri, Leonel Rozo, Alexander Terenin, and Viacheslav Borovitskiy.
+The GeometricKernels package: Heat and matérn kernels for geometric learning on manifolds,
+meshes, and graphs. arXiv:2407.08086, 2024. URL 
+08086.
+[75] Christoph Müller and Christoph Wockel. Equivalences of smooth and continuous principal
+bundles with infinite-dimensional structure group. advg, 9(4):605-626, Sept 2009. ISSN
+1615-715X. doi: 10.1515/advgeom.2009.032. URL 
+ADVGEOM.2009.032.
+[76] Liviu I. Nicolaescu. Lectures on the Geometry of Manifolds. World Scientific, Singapore, 2
+edition, 2007. ISBN 9789812708533.
+[77] Mathilde Papillon, Guillermo Bernardez, Claudio Battiloro, and Nina Miolane. Topotune:
+A framework for generalized combinatorial complex neural networks, 2025. URL https:
+//openreview.net/forum?id=2MqyCIxLSi.
+[78] Yuhan Peng, Junwen Dong, Yuzhi Zeng, Hao Li, Ce Ju, Huitao Feng, Diaaeldin Taha, Anna
+Wienhard, and Kelin Xia. Sheaf neural networks on spd manifolds: Second-order geometric
+representation learning. arXiv preprint arXiv:2604.20308, 2026.
+[79] Peter Petersen. Riemannian Geometry, volume 171 of Graduate Texts in Mathematics. Springer,
+New York, 2 edition, 2006. ISBN 978-0-387-29403-2. doi: 10.1007/978-0-387-29403-2.
+[80] I. F. Pinelis. Inequalities for distributions of sums of independent random vectors and their
+application to estimating a density. Theory of Probability & Its Applications, 35(3):605-607,
+1991. doi: 10.1137/1135088.
+[81] Javier Porras-Valenzuela, Zhiyang Wang, and Alejandro Ribeiro. Size transferability of graph
+transformers with convolutional positional encodings, 2026. URL 
+abs/2602.15239.
+[82] Michael
+Reed
+and
+Barry
+Simon.
+Functional
+analysis,
+volume
+of
+Meth-
+ods
+of
+Modern
+Mathematical
+Physics.
+Academic
+Press,
+New
+York,
+1972.
+ISBN 0125850018 9780125850018.
+URL 
+functional-analysis/oclc/60433917&referer=brief_results.
+[83] Hans Riess and Robert Ghrist. Diffusion of information on networked lattices by gossip. In
+2022 IEEE 61st Conference on Decision and Control (CDC), pp. 5946-5952. IEEE, 2022.
+[84] Hans Matthew Riess and Jakob Hansen. Multidimensional persistence module classification
+via lattice-theoretic convolutions. In NeurIPS Workshop: TDA & Beyond, 2020.
+[85] Raif M. Rustamov. Laplace-beltrami eigenfunctions for deformation invariant shape repre-
+sentation. In Alexander Belyaev and Michael Garland (eds.), Proceedings of the Symposium
+on Geometry Processing (SGP), pp. 225-233. The Eurographics Association, 2007. ISBN
+978-3-905673-46-3. doi: 10.2312/SGP/SGP07/225-233.
+[86] F. Scarselli et al. The graph neural network model. IEEE Trans. on neural networks, 20(1):
+61-80, 2008.
+[87] Stefan C Schonsheck et al. Parallel transport convolution: A new tool for convolutional neural
+networks on manifolds. arXiv preprint arXiv:1805.07857, 2018.
+[88] Jean-Pierre Serre. Faisceaux algébriques cohérents. Annals of Mathematics, pp. 197-278,
+1955.
+[89] Lingxuan Shao, Zhenhua Lin, and Fang Yao. Intrinsic riemannian functional data analysis for
+sparse longitudinal observations. The Annals of Statistics, 50(3):1696-1721, 2022.
+[90] Allen Dudley Shepard. A cellular description of the derived category of a stratified space.
+Brown University, 1985.
+[91] D. I Shuman et al. The emerging field of signal processing on graphs: Extending high-
+dimensional data analysis to networks and other irregular domains. IEEE signal processing
+magazine, 30(3):83-98, 2013.
+[92] A. Singer and H.-T. Wu. Vector diffusion maps and the connection laplacian. Communications
+on Pure and Applied Mathematics, 65(8):1067-1144, 2012. doi: 
+21395.
+[93] Amit Singer and Hau-Tieng Wu. Spectral convergence of the connection laplacian from
+random samples. Information and Inference: A Journal of the IMA, 6(1):58-123, 2017. doi:
+10.1093/imaiai/iaw016. URL 
+[94] Federica Spoto, Alessia Caponera, and Pierpaolo Brutti. Change point detection for functional
+autoregressive processes on the sphere. arXiv preprint arXiv:2512.03255, 2025.
+[95] Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu. Roformer:
+Enhanced transformer with rotary position embedding. Neurocomputing, 568:127063, 2024.
+[96] Shantanu Thakoor, Corentin Tallec, Mohammad Gheshlaghi Azar, Mehdi Azabou, Eva L Dyer,
+Remi Munos, Petar Veliˇckovi´c, and Michal Valko. Large-scale representation learning on
+graphs via bootstrapping. In International Conference on Learning Representations, 2022.
+URL 
+[97] B. Vallet and B. Lévy. Spectral geometry processing with manifold harmonics. Computer
+Graphics Forum, 27(2):251-260, 2008. ISSN 1467-8659. doi: 10.1111/j.1467-8659.2008.
+01122.x.
+[98] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and
+I. Polosukhin. Attention is all you need. In Conference on Neural Information Processing
+Systems (NeurIPS), pp. 6000-6010, 2017. URL 
+7181-attention-is-all-you-need.
+[99] Cédric Villani. Topics in Optimal Transportation, volume 58 of Graduate Studies in Mathe-
+matics. American Mathematical Society, Providence, RI, 2003. ISBN 978-0821833124.
+[100] Ulrike Von Luxburg, Mikhail Belkin, and Olivier Bousquet. Consistency of spectral clustering.
+The Annals of Statistics, pp. 555-586, 2008.
+[101] Zhiyang Wang, Luana Ruiz, and Alejandro Ribeiro. Stability of neural networks on riemannian
+manifolds. In 2021 29th European Signal Processing Conference (EUSIPCO), pp. 1845-1849.
+IEEE, 2021.
+[102] Zhiyang Wang, Luana Ruiz, and Alejandro Ribeiro. Stability of manifold neural networks to
+deformations. arXiv preprint arXiv:2106.03725, 2021.
+[103] Zhiyang Wang, Luana Ruiz, and Alejandro Ribeiro.
+Convolutional neural networks on
+manifolds: From graphs and back. arXiv:2210.00376, 2022.
+[104] Zhiyang Wang, Luana Ruiz, and Alejandro Ribeiro. Geometric graph filters and neural
+networks: Limit properties and discriminability trade-offs. IEEE Transactions on Signal
+Processing, 72:2244-2259, 2024. doi: 10.1109/TSP.2024.3392360.
+[105] Maurice Weiler, Patrick Forré, Erik Verlinde, and Max Welling. Equivariant and Coor-
+dinate Independent Convolutional Networks: A Gauge Field Theory of Neural Networks.
+Progress in Data Science, Vol. 1. World Scientific Publishing Company, 2026.
+ISBN
+9789819806621. Monograph on equivariant and gauge-theoretic neural network architectures
+and their coordinate-independent generalizations.
+[106] Hao Wu, Kangyu Weng, Shuyi Zhou, Xiaomeng Huang, and Wei Xiong. Neural manifold
+operators for learning the evolution of physical dynamics. In Proceedings of the 30th ACM
+SIGKDD Conference on Knowledge Discovery and Data Mining, pp. 3356-3366, 2024.
+[107] Yuxing Xie, Jiaojiao Tian, and Xiao Xiang Zhu. Linking points with labels in 3d: A review of
+point cloud semantic segmentation. IEEE Geoscience and Remote Sensing Magazine, 8(4):
+38-59, 2020.
+[108] Zhenyu Yang, Shuo Huang, Han Feng, and Ding-Xuan Zhou. Spherical analysis of learning
+nonlinear functionals. arXiv preprint arXiv:2410.01047, 2024.
+[109] Yuning You, Tianlong Chen, Yongduo Sui, Ting Chen, Zhangyang Wang, and Yang Shen.
+Graph contrastive learning with augmentations. Advances in neural information processing
+systems, 33:5812-5823, 2020.
+[110] Jaemyung Yu, Jaehyun Choi, Dong-Jae Lee, HyeongGwon Hong, and Junmo Kim. Self-
+supervised transformation learning for equivariant representations. Advances in Neural Infor-
+mation Processing Systems, 37:83068-83090, 2024.
+[111] Olga Zaghen, Floor Eijkelboom, Alison Pouplin, and Erik J Bekkers. Towards variational
+flow matching on general geometries. In ICLR 2025 Workshop on Deep Generative Model in
+Machine Learning: Theory, Principle and Efficacy, 2025. URL 
+net/forum?id=44OUHUZjls.
+[112] Yanan Zhao, Feng Ji, Xingchao Jian, and Wee Peng Tay. Graph distribution-valued signals: A
+wasserstein space perspective, 2026. URL 
+Appendix Contents
+A
+Extended Related Works . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+B
+Broader Impact, Future Directions and Limitations . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+C
+Existing Convolutional Architectures as Actualizations of HilbNets . . . . . . . . . . . . . .
+C.1
+Universality of HilbNets . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+C.1.1
+CNNs, GNNs, and Sheaf NNs . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+C.1.2
+Equivariant CNNs and GNNs . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+C.1.3
+Spatio-Temporal GNNs . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+D
+Practical Implementations of Parallel Transport . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+E
+Parallel Transport Parametrizations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+E.1
+From Bundle Transports to Network-Sheaf Restrictions . . . . . . . . . . . . . . . . . . . . . . . .
+E.2
+Transport Hypothesis Classes . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+E.3
+Parameter Counts . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+F
+Additional Experimental Details . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+F.1
+Synthetic Experiments: The Statistical Bundle over Centered Gaussians . . . . . . . . . .
+F.1.1
+The Bundle . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+F.1.2
+Levi-Civita Connection and Closed-Form Parallel Transport . . . . . . . . . . . . . . . .
+F.1.3
+Cholesky Rescaling . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+F.1.4
+Sample Construction . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+F.1.5
+Spectral Stability under Sampling Density Increase . . . . . . . . . . . . . . . . . . . . . . . . .
+F.1.6
+Hyperparameters . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+F.2
+Traffic Forecasting: Experimental Details . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+F.2.1
+Datasets . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+F.2.2
+Task Formulation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+F.2.3
+Model Variants and Baselines . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+F.2.4
+Detailed Results . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+F.2.5
+Hyperparameters . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+G
+Mathematical Background . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+G.1
+Hilbert Bundles . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+G.2
+Connection Laplacian . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+G.3
+Heat Flow on a Hilbert Bundle . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+G.4
+Borel Functional Calculus . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+G.5
+Cellular Sheaves and Sheaf Laplacians . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+G.6
+Empirical Laplacians . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+H
+Proofs of Results . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+H.1
+Auxiliary Lemmas for Theorem 1 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+H.2
+Key Lemmas for Theorem 1 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+H.3
+Proof of Theorem 1 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+H.4
+Key Lemmas for Theorem 2 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+H.5
+Proof of Theorem 2 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+H.6
+Key Lemmas for Corollary 1 (Convergence in Architecture) . . . . . . . . . . . . . . . . . . . .
+H.7
+Proof of Corollary 1 (Convergence in Architecture) . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+H.8
+Proof of Corollary 2 (Transferability) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+A
+Extended Related Works
+The connection between (possibly) continuous domains (manifolds and bundles) and discrete structure
+(graphs and cellular sheaves) first emerged in pioneering investigations on the so-called manifold
+hypothesis. This hypothesis posits that, although data may live in a high-dimensional ambient
+space, they are effectively generated by sampling from one or several low-dimensional (Riemannian)
+manifolds [22]. The manifold hypothesis underpins several modern spectral graph methods, i.e.,
+nonlinear dimensionality-reduction/clustering/(deep) learning techniques that exploit latent geometric
+structures. The renowned work [14] from Belkin & Niyogi proved that, assuming access to a finite
+point cloud (the signals) sampled from the underlying manifold, it is possible to build a weighted
+undirected graph whose Laplacian converges to the Laplace-Beltrami operator of the underlying
+manifold in probability as the number of samples goes to infinity.
+The work in [14] and related results, such as [92, 93], have been used (directly or indirectly) to design
+principled learning systems over manifolds. A consistent fraction of this literature focused on scalar
+manifold signals, thus the case in which one or more scalar values are attached to each point of a
+manifold. Notable examples are manifold convolutional neural networks [103, 67], kernel methods
+and Gaussian processes on manifolds [20, 74], as well as a growing literature of generative manifold
+models [111, 33]. In a complementary direction, operator-learning methods on manifolds extend
+neural operators beyond Euclidean domains; these methods handle an infinite-dimensional object
+globally, but they still assign a finite vector to each point of a manifold. Most of the works in this class
+are instances of neural manifold operators [26, 19, 106, 58], which aim at resolution-independent
+learning of PDE solution operators. Some works explored vector-valued manifold signals, i.e.,
+multivariate real-valued functions supported on manifolds; in this case, one or more finite vectors are
+attached to each point of a manifold. Examples are tangent bundle convolutional neural networks [10]
+and vector-field Gaussian processes on manifolds built via gauge-independent projected kernels [56].
+Moreover, especially in the statistics community, functional observations with manifold structure,
+i.e., manifold-valued functions supported on the real line, have been long studied [70, 31, 89], and
+recent works have started analyzing autoregressive processes on the sphere [24, 94]. Finally, learning
+systems acting on discrete bundles, i.e., bundles whose base space is a finite set/discrete manifold,
+have been recently investigated [5]. Despite their diversity, all the models cited in this paragraph
+use finite-dimensional fibers and implicitly assume the Levi-Civita connection. As such, they do not
+allow for the arbitrary connections or the potentially infinite-dimensional signals considered. One of
+the main reasons behind this gap is the lack of a rigorous generalization of the [14]’s convergence
+result in these settings, which is our main contribution.
+Pioneering works on sheaf theory can be found in [65, 88, 48]. Cellular sheaves are combinatorial
+instances of sheaves that have been introduced in [90] and later rediscovered in [29]. In [90, 29], these
+sheaves were first defined over regular cell complexes, hence the term "cellular" sheaves. However,
+as in this work, cellular sheaves are often defined over tamer objects, here graphs. In [52, 35], the
+authors studied the problem of learning vector cellular sheaves, i.e., cellular sheaves over undirected
+graphs with finite-dimensional node signals. The works in [53, 51, 42, 83] introduced a novel class
+of diffusion dynamics on vector cellular sheaves. In [18, 50, 7, 39, 37, 78, 11, 10], neural networks
+operating on vector cellular sheaves over (undirected, directed, hyper) graphs with finite-dimensional
+signals are presented, generalizing graph neural networks. We again note however, that all these works
+implicitly or explicitly restrict to consider either the Levi-Civita or flat connections. Additionally, the
+work in [18] exploited vector cellular sheaf theory to show that the underlying geometry of the graph
+gives rise to oversmoothing behavior of GCNs. Also, (vector and general) cellular sheaves recently
+appeared in causal theory [30], control [49], and telecommunications [47]. Finally, the works in
+[11, 10] showed that neural networks for tangent bundle signals can be implemented as certain sheaf
+neural networks operating on vector cellular sheaves from manifold samples.
+B
+Broader Impact, Future Directions and Limitations
+The potential impact of this work extends well beyond the effectiveness of the HilbNet architecture.
+Our convergence result unifies and extends the graph- and vector-diffusion convergence theories
+of [14, 93], thereby enabling novel geometric learning systems for genuinely infinite-dimensional
+manifold-supported and equipped with arbitrary connections. HilbNets are just a first (principled,
+transferable) instance of such systems, but our result opens several new avenues.
+Clustering and Dimensionality Reduction. Classical Laplacian-based methods for clustering
+[100] and nonlinear dimensionality reduction [13, 28] all rely, either explicitly or implicitly, on the
+convergence of the graph Laplacian to the Laplace-Beltrami operator. Our Theorem 1 provides the
+analogous foundation in the Hilbert bundle setting, immediately suggesting sheaf-spectral generaliza-
+tions of these techniques. For instance, one may define Hilbert sheaf eigenmaps by computing the
+leading eigensections of ∆Ftn and using them as coordinates, yielding embeddings that are aware not
+only of the base manifold geometry but also of the fiber-wise coupling encoded by the connection.
+This is particularly promising for data such as spatiotemporal fields or distributional signals, where
+standard spectral methods discard the internal structure of each observation. Similarly, sheaf-spectral
+clustering would partition data by jointly considering geometric proximity on M and coherence
+of the infinite-dimensional signals across fibers, a strictly richer criterion than what scalar graph
+Laplacians can capture. The finite-rank convergence guarantee of Theorem 2 ensures that such
+methods can be implemented with truncated signals while remaining provably consistent with the
+underlying continuous geometry.
+Structured Self-Supervised Learning. Self-supervised learning (SSL) has largely been built around
+objectives that encourage invariance or equivariance with respect to augmentations of the base domain
+[109, 96, 32, 110]. Our framework suggests a more structured family of SSL methods. Because
+the Hilbert sheaf Laplacian encodes both spatial geometry and fiber-wise transport, one can design
+contrastive or non-contrastive objectives that encourage learned representations to be sections of an
+appropriate bundle, i.e., to satisfy local consistency constraints dictated by the restriction maps. Such
+objectives would yield representations that are not merely invariant to domain augmentations but are
+geometrically coherent across fibers, a property that is especially desirable when downstream tasks
+depend on the relational structure between signals at different manifold points, as in multi-sensor
+forecasting or multi-agent coordination.
+Generalizability Theory and Mechanistic Interpretability for Transformers. Another promising
+direction concerns the connection between our framework and transformer architectures [98]. In a
+standard transformer, each token is equipped with a positional encoding, either fixed (e.g., sinusoidal)
+or learned, that situates it in a continuous geometric space [95]. These positional encodings can be
+viewed as sampled points on a base manifold M, with the encoding scheme implicitly defining the
+metric structure of the domain. The residual-stream representation at each position, or, in the infinite-
+width or infinite-context limit, the full distribution over possible activations, then lives in a Hilbert
+space fibered over this base point, so that the collection of representations across positions constitutes
+a section of a Hilbert bundle over M. The attention mechanism then defines a data-dependent
+transport between these fibers. In this view, a self-attention layer is an instance of a single-step
+diffusion under a learned sheaf Laplacian whose base graph is determined by the sampled positional
+encodings. This may in some sense be viewed as a more precise incarnation of the recently introduced
+geodesic hypothesis [55], where the autoregressive output of transformers is modeled by a stochastic
+diffusion PDE in Euclidean space, rather than the proposed manifold-theoretic treatment. Making this
+correspondence precise would allow one to import the convergence and transferability machinery of
+Theorems 1-2 into the transformer setting. We note that there exists a recent line of work that attempts
+to adapt Laplacian-based GNN generalization and stability results to transformers [81], but due to
+their fundamental reliance on the convegrence result of [14], must work in a somewhat simplified
+setting. In conjunction with our convergence result, the generality of the Hilbert sheaf Laplacian
+is potentially well-suited for establishing extensions of these generalization theorems for a broader
+class of transformers. On the interpretability side, decomposing attention into a positional-affinity
+component and a fiber-transport component offers a principled lens through which to study what
+information each head moves and how it is transformed in transit. One could, for example, measure
+the holonomy of the learned connection around closed loops of attention to detect whether a head
+implements a nontrivial geometric transformation. While formalizing these connections requires
+treatment of the data-dependence of the connection and the interplay between positional and content-
+based attention, the mathematical infrastructure developed in this work provides a strong starting
+point.
+Limitations. Our theoretical guarantees rest on some assumptions that may not hold exactly in
+practice, as is usually the case. The convergence results (Theorems 1-2) require the base manifold
+M to be closed (compact without boundary), sections to be C3 or C4 smooth, and samples to be
+drawn i.i.d. from the uniform distribution. Real-world sensor networks, such as those in our traffic
+experiments, are neither uniformly sampled nor necessarily supported on compact manifolds, and
+measured signals are typically noisy rather than smooth. These gaps between theory and practice
+are absolutely standard in the Laplacian convergence literature: the foundational results of [14], as
+well as subsequent works on vector diffusion maps [92, 93] and manifold-based learning [28, 13],
+all assume compact manifolds and uniform or smooth sampling densities, yet are routinely and
+successfully applied under weaker conditions. Our numerical results confirm that HilbNets likewise
+remain effective under these standard approximations, consistently outperforming baselines that lack
+the principled bundle-geometric structure. On the computational side, the network sheaf Laplacian
+∆Ft
+n,d ∈Rnd×nd scales quadratically in the product of spatial and fiber dimensions, which may
+become prohibitive for very large graphs or high-dimensional signal discretizations without further
+sparsification or approximation strategies. Finally, broader and tailored empirical validation on other
+infinite-dimensional signal types, such as distributional or functional data on manifolds, remains an
+important direction for future work.
+C
+Existing Convolutional Architectures as Actualizations of HilbNets
+C.1
+Universality of HilbNets
+Due to the first-principles approach to the construction of HilbNets, we note that they serve as a
+sort of universal architecture. That is, several popular variations of convolutional architectures in
+geometric deep learning, across domains and modalities, can be derived as particular instantiations of
+HilbNets - even when their construction does not explicitly invoke cellular sheaves. We consider a
+few concrete examples of this philosophy.
+C.1.1
+CNNs, GNNs, and Sheaf NNs
+Convolutional neural networks (CNNs) and graph neural networks (GNNs) are both often formalized
+as acting on signals f : M →R. In particular, by the consistency of the discrete Fourier transform,
+CNNs operating on fixed grid can be viewed as operating on a principled discretization of M = [0, 1]2.
+We may more generally view the uniform grid on which CNNs act as a particular instantiation of a
+graph, and thus view CNNs as a special case of GNNs [59], and the relevant convolutional operator
+as the graph Laplacian. The GNNs can likewise be viewed as principled discretizations of manifold
+neural networks [102], precisely by the convergence result of [14]. Sheaf neural networks [50, 18]
+may then be understood as an enrichment that allows for matrix-valued edge weights rather than
+scalars during convolution. Further, in [11], it was made precise that sheaf neural networks may in
+particular, be viewed as acting upon tangent bundle signals s : M →TM, via the convergence
+result of [92]. In particular, the convergence result of [92] applies strictly to tangent bundle setting,
+providing an explanation as to why existing works of sheaf neural networks either explicitly or
+implicitly restrict to discretizing the tangent bundle with either flat or Levi-Civita connections [7, 5].
+As such, existing sheaf neural network architectures can be typically be recovered as HilbNets under
+the paradigm that E = TM.
+C.1.2
+Equivariant CNNs and GNNs
+The equivariant case of CNNs and GNNs arises when we wish for our architecture to respect some
+underlying symmetry group G ↷M. More generally, there may not exist a global representation
+of the symmetry, but rather only a local representation. In physics, this is known as a gauge
+symmetry, and is formalized by considering our signal f as a section of a bundle with connection
+(M, E, ∇), where the group action is then encoded as a symmetry of the connection ∇. As such,
+gauge-equivariant CNNs and GNNs constitute perhaps the most general equivariant architectures
+in the literature (see Weiler et al. [105] for a thorough introduction in the CNN case), and are
+formulated precisely as convolutions at the level of sections of a frame bundle (although the necessary
+datum of a connection is often suppressed in the literature). From this perspective, it is natural that
+gauge-equivariant CNNs and GNNs can be derived as particular cases of cellular sheaf networks
+(see the Li et al. [68] for a more in-depth exploration of this perspective). Thus, by noting that these
+architectures can be equivalently reformulated in the language of sheaves, our Theorem 1, as well as
+the consequent transferability result, can be seen to apply to these architectures. In particular, this
+may be understood as establishing the theoretical bedrock for the intuitive idea that as the underlying
+mesh or graph is increasingly refined, these architectures indeed approach continuous operators on
+sections of the underlying bundle, while maintaining equivariance across scales.
+C.1.3
+Spatio-Temporal GNNs
+A formal treatment of signal processing of graphs whose signals at each node are timeseries is still
+emerging and is an active area of research, and these filtering techniques then serve as the basis for
+the development of spatiotemporal graph neural networks (STGNNs). In this literature, it is common
+to consider convolutional operators built via the joint Laplacian LJ = LT ⊗IdG + IdT ⊗LG,
+where LG is the graph-domain Laplacian and LT is the ‘time-domain’ Laplacian [45]. Due to this
+decomposition, the resulting ‘time’ and ‘space’ filters commute, allowing for the development of both
+time-and-space or time-then-space STGNNs [73]. Consider now the continuous setting. Convolutions
+via ∆∇intertwine the spatial and temporal domains, and this is precisely encoded by our parallel
+transport maps. So suppose our bundle is trivial E = M × L2(Rn) with trivial connection ∇. In
+this case, our parallel transport maps are simply Pγ = Id, and the connection Laplacian collapses
+to the Laplace-Beltrami operator. On product manifolds M = M1 × M2, the Laplace-Beltrami
+operator decomposes as ∆M = ∆M1 ⊗IdM2 + IdM1 ⊗∆M2, implying that heat flow is given by
+et∆M = et∆M1 ⊗et∆M2 (see [46] for a formal derivation). Expressing et∆M as an integral operator
+via the heat kernel, the fact that spatial and temporal filters commute in this case is then simply an
+application of Fubini’s theorem. As such, we see that the type of filtering commonly considered
+in STGNNs is recovered precisely as the ‘base case’ of HilbNet, and in particular, our robustness
+guarantees can also be applied to these STGNN architectures.
+D
+Practical Implementations of Parallel Transport
+As we have established, a key strength of the HilbNets architecture is the ability to encode signal-level
+geometric priors through the principled incorporation of relevant parallel transport operators. This
+naturally raises the question as to how these transport operators should be implemented in-practice.
+We may consider three general classes of use-cases.
+Task-Inherent Priors The most theoretically well-grounded case is when knowledge of the geometry
+of task itself may be utilized to build our parallel transport operators. For instance, suppose the nodes
+of our base graph represent cameras and the task is multi-view 3D recognition. Then the relevant
+transport operators should record the rotation Pxi→xj ∈SO(3) that aligns views as in [68], resulting
+in an appropriately equivariant sheaf Laplacian operator. More generally, whenever the data modality
+lacks a ‘global’ reference frame or coordinate system, then the appropriate alignments between
+local reference frames precisely gives rise to a connection and the associated parallel transport. For
+instance, biomedical timeseries analysis often utilizes algorithms based upon the large deformation
+diffeomorphic metric mapping (LDDMM) [12], a core part of which may be understood as extracting
+the necessary parallel transport from the data using the first-order ODE definition. We may also
+consider the tangent bundle networks of [10] in this category, as they use explicit vector-field data
+from which they may then compute the necessary sheaf transition maps via local PCA. As such, we
+see that HilbNets may be applied to any of these settings, where the relevant parallel transport would
+be completely determined by the task itself and thus, can typically be explicitly pre-computed.
+Domain-Inherent Priors Alternatively, it is often the case that we may not have access to task-
+specific priors, but rather to general knowledge of the structure of the signal-domain. For instance, in
+many domains, our generic stalks may be equipped with the additional structure of a reproducing
+kernel Hilbert space (RKHS), i.e. Hκ. Analogously to the previous case, we may then view parallel
+transport as operators that that maximize alignment, but now with respect to our kernel. For instance,
+given a choice of similarity kernel κ between timeseries or distributions, then given our initial section
+data {Su}F0
+u=1, we may define our parallel transport operator matrices via
+P (d,eij)
+xj→xi := arg max
+T∈C
+F0
+X
+q=1
+κ(TSi,q, Sj,q)
+(15)
+for some suitable class of operators C ⊆O(d), and force the diagonal blocks of the sheaf Laplacian
+to be the sum of the scalar edge weights given by the kernel. This is exactly the discretized Sheaf
+Laplacian from (8). In practice, given a choice of similarity kernel on our fibers, we may then either
+precompute these parallel transport operators using the above optimization objective or learn them
+end-to-end with the model’s learned filters. In the latter case, (15) is applied as a regularization
+to the task loss. The special case in which (15) is not employed at all, C = O(d), K = 1 in (10),
+recovers the sheaf diffusion neural network from [18]. As such, we see that the greater generality
+of the Hilbert sheaf Laplacian consequently lends itself to more flexible and perhaps more broadly
+applicable design choices than existing sheaf neural networks.
+E
+Parallel Transport Parametrizations
+This appendix details the finite-dimensional transport parametrizations used to instantiate the network
+sheaf Laplacian ∆Ft
+n,d in the experiments. In particular, this particular instantiation of HilbNets may
+be considered as a paticular of the end-to-end learning paradigm introduced in D for polynomial
+filters and a few demonstrative classes of C and κ. The discussion should be read as a continuation of
+the two-stage discretization in Section 5: after sampling the manifold, we obtain a Hilbert cellular
+sheaf Ft
+n; after sampling or projecting the fibers, we obtain a finite-dimensional network sheaf Ft
+n,d
+with d-dimensional stalks.
+E.1
+From bundle transports to network-sheaf restrictions
+Recall that, before signal discretization, the Hilbert cellular sheaf Ft
+n induced by a sample Xn =
+{x1, . . . , xn} assigns the node stalk
+Ft
+n(xi) = Exi
+(16)
+and, for an edge eij ∈, the edge stalk
+Ft
+n(eij) = Emγij ,
+(17)
+where mγij is the midpoint of the chosen geodesic between xi and xj. Its restriction maps are
+weighted parallel transports of the form
+(Ft
+n)xi≤eij =
+q
+kt
+ij Pxi→mγij ,
+kt
+ij = exp
+
+−dM(xi, xj)2
+4t
+
+.
+(18)
+After fiber discretization, the network sheaf Ft
+n,d has finite-dimensional stalks, which we identify
+with Rd after choosing the first d basis elements of the fiber Hilbert space. The corresponding
+restriction maps are matrices
+(Ft
+n,d)xi≤eij : Rd →Rd.
+(19)
+For the pragmatic parametrizations used in the experiments, it is useful to express the same sheaf
+Laplacian in node-to-node transport coordinates. Fix an orientation convention for each edge eij.
+After identifying the edge stalk with the coordinate system of one endpoint, we write the restrictions
+as
+(Ft
+n,d)xi≤eij =
+q
+kt
+ij Id,
+(Ft
+n,d)xj≤eij =
+q
+kt
+ij P (d,eij)
+xj→xi,
+(20)
+where
+P (d,eij)
+xj→xi ∈O(d)
+(21)
+is the finite-dimensional transport carrying the discretized fiber over xj into the discretized fiber
+over xi along edge eij. When the transport comes from the continuous Hilbert bundle, this matrix is
+the finite-dimensional representation of the corresponding parallel transport, after the chosen fiber
+projection and coordinate identification. When the continuous connection is unknown, P (d,eij)
+xj→xi is
+instead chosen from a transport hypothesis class.
+With the shorthand
+P e
+j→i := P (d,eij)
+xj→xi,
+(22)
+the action of the network sheaf Laplacian on a sampled signal
+sn,d = (sx1, . . . , sxn) ∈C0(Ft
+n,d; Gn),
+sxi ∈Rd,
+(23)
+takes the concrete form
+(∆Ft
+n,dsn,d)xi =
+X
+xj∈N (xi)
+kt
+ij
+ sxi −P eij
+j→isxj
+
+.
+(24)
+Equivalently, ∆Ft
+n,d ∈Rnd×nd is the block matrix with blocks
+(∆Ft
+n,d)ij =
+
+
+
+
+
+
+
+
+
+X
+r: eir∈E
+kt
+irId,
+i = j,
+−kt
+ijP eij
+j→i,
+i ̸= j and eij ∈E,
+0,
+otherwise.
+(25)
+This is the same sheaf Laplacian defined in Section 4, specialized to the coordinate convention in (20).
+The scalar weight kt
+ij controls how strongly the two sampled base points interact, while the transport
+matrix P eij
+j→i controls how the two discretized fibers are aligned before their signals are compared.
+E.2
+Transport hypothesis classes
+As mentioned in D, the true connection is often unknown and parallel transport maps must be learned.
+In the experimental results of this work, we always learn the parallel transport maps end-to-end using
+the task loss regularized with (15), and we restrict each edgewise transport to hypothesis classes C
+such that
+P eij
+j→i ∈C ⊆O(d).
+(26)
+We use three transport classes in the experiments: frozen identity, free orthogonal transports, and
+circulant or time-stationary transports.
+Frozen identity.
+The simplest class is
+Cid = {Id}.
+(27)
+This recovers the usual assumption that neighboring fibers are canonically identified and that no
+non-trivial alignment is needed. In this case,
+P eij
+j→i = Id
+(28)
+for every edge, and (24) becomes
+(∆Ft
+n,dsn,d)xi =
+X
+xj∈N (xi)
+kt
+ij
+ sxi −sxj
+
+.
+(29)
+Thus, frozen identity reduces the sheaf Laplacian to a standard weighted graph Laplacian applied
+independently to each fiber coordinate, and, therefore, HilbNets to standard GCNs. It is a useful
+baseline: any improvement over frozen identity quantifies the value of learning or imposing non-trivial
+transports.
+Free orthogonal transports.
+The most expressive finite-dimensional class is
+Cfree = O(d),
+(30)
+or, when the target transports are known to lie in the identity component,
+Cfree = SO(d).
+(31)
+In the experiments, we parameterize free orthogonal transports by products of Householder reflections.
+For a nonzero vector v ∈Rd, define the Householder reflection
+H(v) = Id −2 vv⊤
+∥v∥2
+.
+(32)
+Each H(v) is orthogonal and symmetric:
+H(v)⊤H(v) = Id,
+H(v)⊤= H(v).
+(33)
+For each oriented edge eij, we store R Householder vectors
+veij,1, . . . , veij,R ∈Rd
+(34)
+and define
+P eij
+j→i = H(veij,R) · · · H(veij,1).
+(35)
+Therefore P eij
+j→i is exactly orthogonal for every parameter value.
+By the Cartan-Dieudonné theorem, every matrix in O(d) can be represented as a product of at
+most d Householder reflections. In practice, the choice of R is dataset-dependent: in our synthetic
+experiments we use R = 16 for d = m = 10, a modest over-parametrization that aids optimization
+in our traffic experiments we use R = 8 for d = T = 12, which parameterizes a strict Householder
+subset of O(T) rather than the full orthogonal group, and which we find sufficient for the alignment
+patterns observed in the data. If one fixes exactly R non-degenerate reflections, the determinant parity
+is fixed:
+det(P eij
+j→i) = (−1)R.
+(36)
+Thus, an even number of reflections parameterizes the identity component SO(d), while an odd
+number parameterizes the other component. In the synthetic Gaussian experiment, the ground-truth
+Levi-Civita transports are obtained continuously from the identity along geodesics and, after Cholesky
+rescaling, lie in the identity component. Hence an even number of reflections is appropriate. If both
+connected components of O(d) are needed, one may add a fixed final reflection or a discrete sign
+component. For numerical stability, the implementation uses
+H(veij,r) = Id −2
+veij,rv⊤
+eij,r
+∥veij,r∥2
+2 + ϵ,
+(37)
+with a small ϵ > 0 to avoid division by zero at degenerate veij,r. This recovers the exact Householder
+reflection H(q) = Id −2qq⊤with q = veij,r/∥veij,r∥2 in the limit ϵ →0 for ∥veij,r∥2 > 0, and
+yields a matrix orthogonal up to numerical precision.
+The free class is useful as an expressivity test. If the target transport belongs to O(d) in the chosen
+coordinates, then the Householder class can represent it. This is precisely the role it plays in the
+synthetic statistical-bundle experiment, where Cholesky rescaling converts the intrinsic Wasserstein-
+unitary Levi-Civita transports into Euclidean-orthogonal matrices. In real-data experiments, the free
+class serves as a high-capacity transport baseline.
+Circulant or time-stationary transports.
+For time-series fibers, the discretized fiber dimension is
+the number of retained time samples, so we write d = T. A natural prior is that inter-fiber transport
+should commute with time shifts. Let
+ST : RT →RT
+(38)
+be the cyclic shift operator. A time-stationary transport is one satisfying
+P eij
+j→iST = ST P eij
+j→i.
+(39)
+The commutant of the cyclic shift is the algebra of circulant matrices. Requiring in addition that
+P eij
+j→i be orthogonal gives the class of orthogonal circulant transports.
+Let FT denote the unitary discrete Fourier transform matrix. Then every orthogonal circulant transport
+has the form
+P eij
+j→i = F ∗
+T diag(λeij)FT ,
+|λeij,k| = 1.
+(40)
+For real-valued time-domain signals, the Fourier multipliers must satisfy conjugate symmetry:
+λeij,T −k = λeij,k.
+(41)
+We therefore store only the independent positive-frequency phases. Let
+mT =
+T −1
+
+.
+(42)
+The learnable parameter for edge eij is
+φeij = (φeij,1, . . . , φeij,mT ) ∈RmT .
+(43)
+We define
+λeij,0 = 1,
+λeij,k = eiφeij ,k,
+λeij,T −k = e−iφeij ,k,
+k = 1, . . . , mT .
+(44)
+If T is even, the Nyquist frequency is self-conjugate and is fixed to
+λeij,T/2 = 1
+(45)
+for the identity-component parametrization.
+This yields a real orthogonal circulant matrix
+through (40). Equivalently, P eij
+j→i can be constructed in real arithmetic from its first column. For
+r = 0, . . . , T −1, define
+ceij[r] = 1
+T
+"
+1 + I{T even}(−1)r + 2
+mT
+X
+k=1
+cos
+
+φeij,k + 2πkr
+T
+#
+.
+(46)
+The full circulant matrix is then
+(P eij
+j→i)ab = ceij[(a −b) mod T],
+a, b = 0, . . . , T −1.
+(47)
+This form is convenient for implementation because it avoids explicitly manipulating complex-valued
+matrices. The circulant class has only
+mT =
+T −1
+
+(48)
+parameters per edge, compared with d(d −1)/2 degrees of freedom for a general orthogonal matrix.
+Each phase φeij,k has a direct interpretation as the phase lag at frequency k between the two endpoint
+fibers. Thus, the transport may advance or delay oscillatory components across an edge, but it
+cannot arbitrarily mix frequencies or reshape the waveform. This is the intended inductive bias for
+spatiotemporal signals such as traffic or sensor time series, where neighboring sensors may observe
+delayed or phase-shifted versions of related temporal patterns. In the synthetic experiment, the
+same class is used more abstractly as a structured subgroup of O(d) against which the ground-truth
+transports can be projected.
+E.3
+Parameter counts
+For a graph Gn = (Xn, E) with |E| undirected edges and discretized fiber dimension d, the transport
+parameter counts are summarized in Table 3.
+Thus, the free class is maximally expressive but parameter-heavy, while the circulant classes encode
+a strong time-stationary prior and scale linearly with the number of frequencies or bands.
+Transport class
+Parameters per edge
+Interpretation
+Frozen identity
+no learned alignment
+Free Householder
+Rd
+product of R reflections in O(d)
+Full circulant
+⌊(d −1)/2⌋
+one phase per positive frequency
+Table 3: Parameter counts for the finite-dimensional transport classes used in Ft
+n,d.
+F
+Additional Experimental Details
+F.1
+Synthetic experiments: the statistical bundle over centered Gaussians
+F.1.1
+The bundle
+The base manifold is M = Sym++(p), the open cone of p × p symmetric positive-definite matrices.
+Each Σ ∈M parameterizes a centered Gaussian N(0, Σ) on Rp with density ρΣ. We equip M
+with the Otto-Wasserstein metric, namely the Riemannian metric induced on Sym++(p) by the
+optimal-transport distance W2 between centered Gaussian measures.
+Concretely, the tangent space is naturally identified with symmetric matrices,
+TΣM ∼= Sym(p),
+(49)
+and the Otto-Wasserstein inner product between U, V ∈Sym(p) is
+WΣ(U, V ) = 1
+2 Tr
+ LΣ[U] V
+
+,
+LΣ[U]Σ + ΣLΣ[U] = U,
+(50)
+where LΣ[U] is the unique symmetric solution of the Lyapunov equation.
+Above each Σ, the ambient Hilbert fiber is the vector-field space
+HΣ := L2(ρΣ; Rp),
+(51)
+equipped with the inner product
+⟨a, b⟩HΣ =
+Z
+Rp a(x)⊤b(x)ρΣ(x) dx.
+(52)
+This fiber is genuinely infinite-dimensional. The finite-rank fiber used in the synthetic experiments is
+the Otto-velocity image of covariance perturbations:
+EΣ :=
+
+vV (x) = LΣ[V ]x : V ∈Sym(p)
+	
+⊂L2(ρΣ; Rp).
+(53)
+Thus, the computational fiber EΣ is a finite-dimensional statistical subspace of the ambient Hilbert
+fiber. The map V 7→vV is an isometry between Sym(p) with the Otto-Wasserstein metric and EΣ
+with the L2(ρΣ; Rp) inner product. Indeed, for U, V ∈Sym(p),
+⟨vU, vV ⟩HΣ = Ex∼N(0,Σ)
+
+x⊤LΣ[U]LΣ[V ]x
+
+= Tr
+ LΣ[U]LΣ[V ]Σ
+
+.
+(54)
+Using V = LΣ[V ]Σ + ΣLΣ[V ] and the fact that LΣ[U], LΣ[V ], and Σ are symmetric, this equals
+2Tr
+ LΣ[U]V
+
+= WΣ(U, V ).
+(55)
+Therefore,
+dim EΣ = dim Sym(p) = d = p(p + 1)/2.
+(56)
+Since the fibers EΣ are already m-dimensional, the fiber discretization of Proposition 1 is exact with
+d = m. Throughout this appendix, we therefore write d = m and use the network sheaf notation
+Ft
+n,d and Laplacian ∆Ft
+n,d ∈Rnd×nd from Section 5.
+This construction is useful because it gives a faithful but tractable proxy for the Hilbert-bundle
+settings that motivate HilbNets. It is faithful in the sense that the ambient fibers L2(ρΣ; Rp) are
+infinite-dimensional vector-field Hilbert spaces, and the Levi-Civita connection of (Sym++(p), WΣ)
+yields non-trivial, metric-compatible parallel transports. It is tractable because the Otto-velocity map
+selects a finite-rank statistical sub-bundle on which the metric, parallel-transport ODE, and projection
+of ground-truth transports onto restricted transport classes admit closed-form numerical evaluation.
+Thus, the experiments probe the finite-rank computational slice used by the implementation.
+F.1.2
+Levi-Civita connection and closed-form parallel transport
+The Levi-Civita connection on (Sym++(p), WΣ) is the canonical metric-compatible torsion-free
+connection associated with the Otto-Wasserstein metric. In covariance coordinates, its Christoffel
+symbol is
+ΓΣ(U, V ) = 1
+ ULΣ[V ] + V LΣ[U]
+
+∈Sym(p),
+(57)
+which is symmetric in (U, V ), as required for a torsion-free connection.
+Let Σt denote the Wasserstein geodesic from Σ0 to Σ1. Parallel transport of a tangent vector
+V (t) ∈Sym(p) along Σt is governed by
+˙V (t) = −ΓΣt
+  ˙Σt, V (t)
+
+,
+V (0) = V0.
+(58)
+We solve this ODE numerically by Euler integration with 50 steps. The resulting linear map on the
+finite-rank fiber is the ground-truth Levi-Civita transport
+P LC
+xi→xj : Sym(p) →Sym(p).
+(59)
+In the notation of Def, 3, the restriction maps of the induced sheaf Ft
+n,d use the midpoint transports
+P LC
+xi→mij, which play the role of the discretized parallel transport P (d)
+xi→mij with d = m. These
+midpoint transports define the restriction maps used in the spectral-stability experiments. The
+transport-recovery experiments instead regress against the Cholesky-rescaled node-to-node transport
+˜P LC
+xj→xi, which adopts the orientation convention of Appendix D.
+Because the connection is metric-compatible, P LC
+xi→xj is unitary with respect to the Otto-Wasserstein
+inner products on the source and target fibers:
+Wxj
+ P LC
+xi→xjU, P LC
+xi→xjV
+
+= Wxi(U, V ).
+(60)
+We verify this numerically to within 0.5% using 200 Euler steps. This Wasserstein-unitarity is the
+geometric invariant that justifies comparing the ground-truth transports to orthogonal parametrizations
+after metric rescaling.
+F.1.3
+Cholesky rescaling
+The free-O(m) transport class used in the implementation is Euclidean-orthogonal in vectorized
+fiber coordinates (cf. the hypothesis classes in Appendix D with d = m). However, the intrinsic
+fiber metric is WΣ, not the raw Frobenius metric on Sym(p). Therefore, P LC
+xi→xj is not generally
+orthogonal in raw coordinates.
+Let GΣ be the Gram matrix of WΣ in a fixed basis of Sym(p). We factor
+GΣ = R⊤
+ΣRΣ
+(61)
+by Cholesky decomposition and represent a fiber coordinate vector u in the rescaled frame as
+˜u = RΣu.
+(62)
+In this frame, the rescaled Levi-Civita transport is
+˜P LC
+xi→xj = RxjP LC
+xi→xjR−1
+xi .
+(63)
+By Wasserstein-unitarity, it satisfies
+  ˜P LC
+xi→xj
+⊤˜P LC
+xi→xj = Im.
+(64)
+Hence,
+˜P LC
+xi→xj ∈O(m).
+(65)
+This is the coordinate system used in the transport-recovery experiments. In these coordinates, the
+free-O(m) Householder class described in Appendix D contains the ground-truth transports. The
+spectral-stability metrics are computed from the assembled sheaf Laplacian ∆Ft
+n,d and are invariant
+to this coordinate choice up to similarity transformation.
+F.1.4
+Sample construction
+We draw samples
+Σi = RiDiR⊤
+i ,
+i = 1, . . . , n,
+(66)
+where Ri is a Haar-random p × p orthogonal matrix, obtained by QR decomposition of a standard-
+normal matrix, and Di is diagonal with log-uniform spectrum on [log 0.5, log 2.0]. Equivalently, the
+eigenvalues of Σi lie in [0.5, 2.0] on a log-uniform scale.
+Although Sym++(p) is non-compact, this procedure samples a bounded subset of it. This is appropri-
+ate for the finite deployment-regime stability tests reported here, but it is not the normalized-volume
+sampling assumption used in the asymptotic convergence theorem.
+We build a kNN graph Gn = (Xn, E) with k = 8 under the Gaussian Wasserstein distance
+W2(Σi, Σj) and assign Gaussian-kernel weights
+kt
+ij = exp
+
+−W2(Σi, Σj)2
+4t
+
+,
+t = 0.5.
+(67)
+The induced network sheaf Ft
+n,d has per-edge restriction maps
+(Ft
+n,d)xi≤eij =
+q
+kt
+ij P LC
+xi→mij,
+(68)
+as in Def, 3, where mij is the Wasserstein-geodesic midpoint between Σi and Σj.
+F.1.5
+Spectral stability under sampling density increase
+For each Gaussian dimension p, sample size n ∈{50, 100, 200, 400, 800}, and random seed, we
+sample Xn ⊂Sym++(p), build Ft
+n,d using the closed-form Levi-Civita transports, and assemble the
+sheaf Laplacian
+∆Ft
+n,d ∈Rnd×nd
+(69)
+as a sparse block matrix. Since the sheaf Laplacian has size nmaxm × nmaxm and we require a dense
+eigendecomposition, we choose nmax so that nmax · d ≈104 remains tractable on a single CPU node,
+yielding nmax ∈{4000, 2000, 1000} for p ∈{2, 3, 4} (i.e., d ∈{3, 6, 10}), respectively.
+Let
+λ(n)
+≤· · · ≤λ(n)
+k
+(70)
+denote the bottom-k eigenvalues of ∆Ft
+n,d, with k = 32, and define λ(nmax)
+i
+analogously for the
+reference operator ∆Ftnmax,m. We measure both the aggregate ℓ2 and worst-case relative spectral
+discrepancy of the bottom-32 eigenvalues of ∆Ft
+n,d against a high-resolution reference, sweeping
+p ∈{2, 3, 4} and n ∈{50, 100, 200, 400, 800}, and averaging over 5 sampling realizations. Fig. 3
+shows a monotone decrease for both metrics across all dimensions, demonstrating that the sheaf
+Laplacian stabilizes as manifold sampling density increases, and faster for higher signal sampling
+densities. Moreover,
+Aggregate discrepancy.
+Fig. 3 (Left) reports the low-frequency spectral ℓ2 discrepancy
+spec-L2(n) = 1
+k
+ k
+X
+i=1
+ λ(n)
+i
+−λ(nmax)
+i
+2
+!1/2
+.
+(71)
+We average across three seeds and report ¯x ± s as the shaded band.
+Worst-case discrepancy.
+Fig. 3 (Right) reports the relative max error over the bottom-k eigenvalues:
+spec-rel-max(n) =
+max1≤i≤k
+λ(n)
+i
+−λ(nmax)
+i
+
+λ(nmax)
+k
+.
+(72)
+This complements the aggregate metric by capturing worst-case low-frequency spectral error.
+Overall, Fig. 3 shows a monotone decrease for both metrics across all dimensions, demonstrating that
+the sheaf Laplacian stabilizes as manifold sampling density increases, and faster for higher signal
+sampling densities.
+102
+nnodes
+1
+spectral L2 distance
+d = 3
+d = 6
+d = 10
+nnodes
+1
+101
+spectral rel-max error
+Figure 3: Spectral stability of ∆Ft
+n,d for different signal and manifold sampling densitites. Left:
+aggregate ℓ2 eigenvalues discrepancy. Right: worst-case relative error.
+We train three transport parametrizations from Appendix D, free O(d) (Householder), circulant, and
+frozen identity, to recover the Levi-Civita transports in Cholesky-rescaled coordinates by minimizing
+the per-edge transport-MSE loss
+L =
+|E|
+X
+eij∈E
+EV ∼N (0,Id)
+P eij
+j→iV −˜P LC
+xj→xiV
+2 .
+(73)
+Here P eij
+j→i ∈O(d) is the rescaled transport produced by the model for edge eij, ˜P LC
+xj→xi is the
+ground-truth Levi-Civita transport from xj to xi in Cholesky-rescaled coordinates, and V is a fresh
+isotropic Gaussian test vector.
+By the trace identity
+EV ∼N (0,Id)∥AV ∥2
+2 = ∥A∥2
+F ,
+(74)
+the population loss equals the mean per-edge squared Frobenius distance
+L∗=
+|E|
+X
+eij∈E
+P eij
+j→i −˜P LC
+xj→xi
+F .
+(75)
+Free O(d).
+The free transport is parameterized by products of Householder reflections, as detailed
+in Appendix D. Since ˜P LC
+xj→xi ∈O(d) in the Cholesky-rescaled frame, the free-O(d) class contains
+the target transport and the minimum population loss is zero. Empirically, we observe L∗≈1.6·10−7
+at convergence, confirming recovery to numerical precision.
+Restricted classes and analytical projections.
+For each restricted transport hypothesis class
+C ⊆O(d), the population loss minimum is the mean Frobenius distance from each ground-truth
+transport ˜P LC
+xj→xi to its best approximation inside C:
+L∗
+C =
+|E|
+X
+eij∈E
+min
+T ∈C
+T −˜P LC
+xj→xi
+F =
+|E|
+X
+eij∈E
+ ˜P LC
+xj→xi −projC
+  ˜P LC
+xj→xi
+
+F .
+(76)
+This is the Theory column in Table 1.
+Frozen identity. For Cid = {Id}, the projection is trivial: proj{I}( ˜P LC
+xj→xi) = Id, so
+L∗
+frozen =
+|E|
+X
+eij∈E
+ ˜P LC
+xj→xi −Id
+F .
+(77)
+Circulant. For the circulant class (Appendix D with d = m), let Fd be the d × d DFT matrix and
+define
+Ccirc =
+
+F ∗
+d diag(eiφ1, . . . , eiφd)Fm : φk ∈R
+	
+.
+(78)
+The Frobenius-best projection of any T ∈O(d) onto this class is the diagonal-phase Procrustes
+solution
+projcirc(T) = F ∗
+mdiag(ei ˆφ1, . . . , ei ˆφd)Fd,
+ˆφk = arg
+ (FdTF ∗
+d )kk
+
+.
+(79)
+The zero-frequency phase is pinned to zero to preserve the constant mode, and the self-conjugate
+Nyquist frequency, when present, is handled according to the real-valued convention of Appendix D.
+In the synthetic experiment the circulant class is used as a structured subgroup of O(d) for testing
+transport-class projection, rather than as a time-series prior.
+Empirical vs. theoretical plateaus.
+In Table 1, the Empirical column is the lowest training loss
+observed over the 5000-epoch budget, while the Theory column is L∗
+C computed on the same edge
+set used during training. Both columns report means ± standard deviations across three seeds. The
+empirical and theoretical plateaus track each other to within 3% for the circulant class and within
+2.3% for frozen identity, with closer agreement (within 1%) at large n. This confirms that restricting
+the transport class to C ⊆O(d) constrains the per-edge restriction maps of ∆Ft
+n,d in a quantitatively
+predictable way. We do not claim that such an arbitrary edgewise subgroup constraint automatically
+lifts to a smooth global connection class on the continuous bundle.
+F.1.6
+Hyperparameters
+See Table 4.
+Spectral stability
+Transport recovery
+Gaussian dimension p
+{2, 3, 4} (d ∈{3, 6, 10})
+4 (d=10)
+sample-size grid n
+{50, 100, 200, 400, 800}
+{16, 32, 64, 128, 256}
+reference nmax
+{4000, 2000, 1000} at p ∈{2, 3, 4}
+-
+graph
+kNN, k=8, W2 distance
+kNN, k=8, W2 distance
+top-k eigenvalues
+-
+seeds
+3
+epochs / patience
+-
+5000 / 600
+optimizer
+-
+Adam, lr 5·10−3, batch 256
+Householder reflections
+-
+R=16
+Euler steps for P LC
+50
+Table 4: Synthetic experiments: hyperparameters for spectral stability and transport recovery.
+F.2
+Traffic forecasting: experimental details
+F.2.1
+Datasets
+We use two standard traffic-speed benchmarks from [69].
+METR-LA. |Xn| = 207 loop-detector sensors on the Los Angeles highway network, recording
+average traffic speed at 5-minute intervals. The spatial graph follows the DCRNN convention:
+edge weights Wij = exp(−dM(xi, xj)2/σ2) with σ set to the standard deviation of the pairwise
+road-network distances are thresholded to retain Wij ≥κ (with κ = 0.1) and symmetrized via
+W ←max(W, W ⊤).
+PEMS-BAY. |Xn| = 325 sensors in the San Francisco Bay Area, with the same temporal resolution
+and graph construction.
+For both datasets, we use T = 12 observed time steps as input and forecast at horizons h ∈{3, 6, 12}.
+Train/validation/test splits follow the standard 70/10/20 chronological partition of [69].
+F.2.2
+Task formulation
+At each forecasting instance, the input signal is
+sn,T = (sx1, . . . , sxn) ∈C0(Ft
+n,T ; Gn),
+sxi ∈RT ,
+(80)
+where n = |Xn| and d = T, so the network sheaf Ft
+n,T has T-dimensional stalks and Laplacian
+∆Ft
+n,T ∈RnT ×nT . The goal is to predict future speed vectors y(h) ∈R|Xn| at each horizon h. The
+prediction loss is the mean absolute forecasting error
+Lpred =
+|D|
+X
+(sn,T ,y)∈D
+X
+h∈{3,6,12}
+by(h)(sn,T ) −y(h)
+1 .
+(81)
+For HilbNet variants with learned transports, we add the kernel regularizer of Appendix D with
+weight λ, giving the full training objective L = Lpred + λ Lkernel−reg.
+F.2.3
+Model variants and baselines
+All HilbNet variants are discretized HilbNets (Def, 5) with polynomial filters of order K and the
+same per-node linear readout (DCRNN convention) mapping sheaf-filtered features to per-node
+horizon predictions. The only architectural difference is the admissible class of edgewise transports
+P eij
+j→i ∈C ⊆O(T), as described in Appendix D with d = T. The transport hypothesis classes are
+the same of the previous section, briefly summarized and contextualized below.
+Frozen identity. Cid = {IT }. Neighboring sensors exchange time windows without temporal
+alignment. The sheaf Laplacian reduces to a standard weighted graph Laplacian applied independently
+to each temporal coordinate, recovering a graph convolutional network.
+Circulant.
+Each transport is a real orthogonal circulant matrix parameterized by ⌊(T−1)/2⌋
+frequency-wise phases per edge. This encodes a time-stationary prior: the transport can advance or
+delay oscillatory components across an edge but cannot arbitrarily mix temporal coordinates. This is
+a natural inductive bias for traffic data, where congestion patterns propagate through the road network
+with local delays and phase shifts.
+Free O(T). Each transport is parameterized by a product of R=8 Householder reflections, yielding
+an orthogonal matrix in a strict Householder-defined subset of O(T) (see Appendix D). This is
+the most expressive transport class but uses ∼10× more parameters in total than the circulant
+variant (e.g., 119,036 vs 11,656 on METR-LA; per edge the ratio is ∼20×, since circulant uses only
+⌊(T−1)/2⌋= 5 phases per edge at T=12).
+We also compare against two non-transport baselines. A fiber-only MLP processes each sensor’s time
+window independently, ignoring graph structure. A spatiotemporal graph baseline applies standard
+graph convolution to the temporally-augmented node features but does not learn sheaf transports.
+Finally, we include two external baselines from the literature: FC-LSTM [69] and STAEformer [71],
+reported as in the cited papers.
+F.2.4
+Detailed results
+Table 2 reports MAE, RMSE, and MAPE at horizons 3, 6, and 12 (mean ± std over five seeds for our
+experiments).
+Value of graph structure.
+On both datasets, the frozen-identity HilbNet improves over the fiber-
+only MLP baseline, confirming that sheaf diffusion over the spatial graph is beneficial even without
+non-trivial transports.
+Value of learned transports.
+Both the free and circulant variants consistently outperform frozen
+identity at all horizons on both datasets. This confirms that the sheaf structure helpw beyond the
+usual graph structure.
+Free vs. circulant.
+On METR-LA, the free-O(T) model achieves the best absolute accuracy at
+all horizons (e.g., MAE 3.938 vs. 4.059 for circulant at horizon 12), as expected from its larger
+hypothesis class. On PEMS-BAY, the two variants are nearly tied: free wins MAE and MAPE at
+horizon 12 by ∼0.03 mph (a 2-4σ effect over five seeds), circulant wins MAE/MAPE at horizon
+3, and RMSE is statistically indistinguishable at horizons 6 and 12. In both cases, the circulant
+model uses roughly one tenth of the transport parameters (e.g., 11,656 vs. 119,036 on METR-LA),
+making it the most parameter-efficient HilbNet variant. This supports the central pragmatic-transport
+message: a structured transport class encoding a physically motivated alignment prior can recover
+most of the benefit of unconstrained learned transports with substantially fewer degrees of freedom.
+Comparison with external baselines.
+Our HilbNet variants are lightweight models designed to test
+the value of Hilbert-sheaf structure, not to compete with large-scale spatiotemporal transformers. The
+external baselines (FC-LSTM, STAEformer) are included for reference and use substantially more
+parameters and architectural components. Nevertheless, the circulant and free HilbNets outperform
+FC-LSTM at all horizons on both datasets while using far fewer parameters.
+F.2.5
+Hyperparameters
+See Table 5. All experiments are run on a single H200 GPU. Hyperparameters are chosen with a
+sweep. All presented variants are computed using the same codebase, and we made sure they differ
+only in their transport parametrization.
+METR-LA
+PEMS-BAY
+sensors |Xn|
+325
+input window T
+12
+horizons h
+{3, 6, 12}
+{3, 6, 12}
+input feature dim
+2 (speed + time-of-day)
+2 (speed + time-of-day)
+graph
+thresh. kernel exp(−d2/σ2), κ=0.1
+thresh. kernel exp(−d2/σ2), κ=0.1
+sheaf-conv layers
+L=2, channel widths [2, 16, 32]
+L=2, channel widths [2, 16, 32]
+polynomial order K per layer
+K = [2, 2] (HilbNet), K = [1, 1] (MLP fiber baseline)
+K = [2, 2] (HilbNet), K = [1, 1] (MLP fiber baseline)
+Householder reflections
+8
+readout
+per-node linear (Tin·Flast →Tout)
+per-node linear (Tin·Flast →Tout)
+epochs / patience
+150 / 20
+150 / 20
+batch size
+32
+optimizer
+Adam, β=(0.9, 0.999)
+Adam, β=(0.9, 0.999)
+learning rate
+5·10−3 (HilbNet); 1·10−3 (STGNN baseline)
+5·10−3 (HilbNet); 1·10−3 (STGNN baseline)
+LR schedule
+cosine annealing, ηmin=10−6
+cosine annealing, ηmin=10−6
+weight decay / dropout
+0 / 0
+0 / 0
+gradient clipping
+∥g∥2≤5 (DCRNN convention)
+∥g∥2≤5 (DCRNN convention)
+kernel regularizer λ
+0.01
+0.01
+seeds
+5
+Table 5: Traffic forecasting hyperparameters.
+G
+Mathematical Background
+G.1
+Hilbert Bundles
+In this section, we provide relevant background on the theory of Hilbert bundles. In particular, we
+define the notions of Banach and Hilbert manifolds, as well as introduce the appropriate notions of
+connection, parallel transport, and heat flow for bundles in this setting.
+G.1.1
+Banach and Hilbert manifolds
+To study heat kernels for smooth Hilbert bundles, we must examine manifolds modeled on generic
+Banach spaces. We will assume all Banach spaces and Hilbert spaces are defined over the field of
+real numbers R, unless otherwise stated.
+Definition 7. A second-countable topological space M is a topological Banach manifold if there is
+a Banach space V and an atlas {(Ui , ϕi : Ui →V)}i∈I such that the following conditions hold:
+1. each Ui is an open subset of M;
+2. each ϕi : Ui →V is a homeomorphism onto an open subset of V;
+3. for all i, j, ϕi(Ui ∩Uj) is an open subset of V;
+4. the transition map ϕjϕ−1
+i
+: ϕi(Ui ∩Uj) →ϕj(Ui ∩Uj) is a homeomorphism.
+When the Banach space V is specified, we say that M is an V-manifold, or a Banach manifold
+modeled on V. If each map ϕi and transition map ϕjϕ−1
+i
+is k-times Fréchet differentiable, we say
+that M is a Ck-Banach manifold. If these maps are smooth i.e. C∞, we say that M is a smooth
+Banach manifold.
+Definition 8. A topological (resp. Ck / smooth) Banach manifold M is a topological (resp. Ck /
+smooth) Hilbert manifold if it can be modeled on a Banach space V which admits the structure of a
+Hilbert space.
+Remark 1. We make a few observations about this definition.
+1. Since every n-dimensional real Banach space is isomorphic to Rn, a finite dimensional
+Banach manifold is exactly a real manifold in the usual sense.
+2. Like ordinary manifolds, we require Banach manifolds to be second countable, and hence
+to have a countable dense subset. It follows that if M is a manifold modeled on a Banach
+space V, then V itself must be separable. This condition could be be removed, but it will
+generally make our lives easier.
+3. The definition of a Hilbert manifold does not directly require the transition maps τij :=
+ϕj ◦ϕ−1
+i
+: V →V to respect inner product structure on the modeling Hilbert space V.
+Hence, it is often better to think of a Hilbert manifold as a special case of a Banach manifold,
+instead of as a manifold that respects the Hilbert space structure per se.
+The usual differential geometric constructions on manifolds extend naturally to Hilbert and Banach
+manifolds. For example, tangent spaces generalize naturally. Given a Ck-Banach manifold M with
+k ≥1, for each x ∈M, one may form the tangent space TxM at a point x ∈M as equivalence
+classes of triples (U, ϕ, v) of a chart ϕ : U →V and a vector v ∈V, under the relation:
+(U1, ϕ, v) ∼(U2, ψ, w) ⇐⇒(Dϕ(x)(ψϕ)−1)(v) = w.
+Such equivalence classes are easily seen to form a real vector space isomorphic to V.
+G.1.2
+Smooth bundles
+Definition 9 (Smooth Banach and Hilbert bundles). Let M be a smooth finite-dimensional manifold
+and let V be a fixed separable Banach space. A smooth Banach bundle with model space V consists
+of a smooth Banach manifold E equipped with a smooth surjective submersion
+π: E −→M ,
+that satisfies the following conditions.
+1. Local triviality. For every p ∈M there exists an open neighborhood U ⊂M and a
+diffeomorphism
+ϕU : π−1(U)
+∼
+=
+−−→U × V
+satisfying π = proj1◦ϕU and such that, for each q ∈U, the restriction ϕU|Eq : Eq →{q}×V
+is a bounded linear isomorphism. We call the pair (U, ϕU) a trivializing chart.)
+2. Smooth transition functions. Whenever U, ϕU and V, ϕV are trivializing charts, the transi-
+tion map
+τUV (q, −) := ϕV ◦ϕ−1
+U
+ q, −
+
+: V −→V,
+q ∈U ∩V,
+is a bounded isomorphism and depends smoothly on q; that is, τUV : U ∩V →GL(V) is a
+smooth map, where GL(V) denotes the Banach-Lie group of bounded invertible operators
+on V with the operator-norm topology.
+3. Smooth norm. There is a smooth map N : E →R such that the trivializing charts (U, ϕU)
+can be chosen with the additional property that for each x ∈Ep,
+N(x) =
+ϕU
+
+Ep(x)
+
+V .
+4. Smooth fiberwise operations. The fiberwise addition and scalar-multiplication maps
++ : E ×M E −→E,
+· : R × E −→E,
+are smooth Banach-manifold maps.
+When the Banach space X is a separable Hilbert space, we say π : E →B is a Hilbert bundle. We
+denote the inner product on the fiber Ep by ⟨−, −⟩p.
+Remark 2. We make a few remarks about the definition of a Hilbert bundle above.
+1. For convenience, we restrict our attention to real Hilbert bundles over compact finite
+dimensional manifolds with separable fibers. None of these restrictions are essential for
+the general theory of Banach and Hilbert bundles. However, these restrictions are essential
+when defining and finding heat kernels.
+2. The idea to have in mind is simple: A smooth Banach bundle is a smooth vector bundle
+where the fibers are allowed to be infinite-dimensional and come equipped with a complete
+norm. infinite-dimensional fibers over each point p ∈M are stitched together into a smooth
+manifold. The smooth norm condition essentially enforces that the Banach space fibers are
+stitched together in such a way that the fiber-wise norm varies smoothly. In the case of a
+Hilbert bundle, the smooth norm condition also enforces that the fiber-wise inner product
+⟨−, −⟩p varies smoothly.
+3. In light of the previous remarks, the definition presented here is not minimal. We make the
+choice to include redundant information in our definition for clarity, with the understanding
+that some conditions are superfluous [75].We also make the choice to include the smooth
+norm condition, often called a smooth orthogonal/Hermitian metric, in the definition of the
+bundle itself.
+4. In the case of a finite dimensional model space V, this definition recovers the usual smooth
+vector bundle, with the additional data of a smooth orthogonal/Hermitian metric.
+5. Suppose π : E →M is a smooth Hilbert bundle modeled on a Hilbert space H. While
+the transition maps τUV must respect the topological structure of the Hilbert space H, it
+need not respect the inner product structure. When each transition map τUV is a unitary
+isomorphism, we say the bundle is a smooth unitary Hilbert bundle
+Definition 10 (Smooth sections of a Banach bundle). Let π : E →M be a smooth Banach bundle
+(resp. Hilbert bundle) over a finite-dimensional manifold M with model Banach space (resp. Hilbert
+space) B. A section of E is a map S : M →E such that π ◦S = idM. We denote the collection of
+all smooth sections by Γ(E) := C∞(M, E). Note that this is a module over the commutative algebra
+C∞(M) with point-wise addition and multiplication. If the section S is only k-times continuously
+differentiable, we write S ∈Ck(M, E).
+Definition 11 (L2-Sections of a Banach bundle). Suppose that the manifold M is endowed with a
+measure µ, we say that S is an L2-section if ∥S∥2 :=
+ R
+M⟨S(x), S(x)⟩x dµ(x)
+1/2 < ∞. We may
+similarly form a space of L2-sections, denoted L2(M, E; µ), or simply L2(M, E) when the measure
+is implied by context. When E is modeled on a separable Hilbert space H, the space of L2-sections
+L2(M, E; µ) is a real separable Hilbert space with inner product ⟨s, t⟩E =
+R
+M s(x)t(x) dµ(x).
+Remark 3. In the Riemannian setting, we have a natural candidate for µ via the (pseudo) volume
+form on M, or its normalized variant.
+G.1.3
+Connections
+We now introduce connections on smooth Banach and Hilbert bundles. The smooth Banach manifold
+structure on the bundle E provides no way to directly compare vectors in different fibers Ex and Ey
+with respect to their Banach space structures. Instead, we use a connection to link the fibers though
+the geometry of the base manifold M.
+Definition 12. Let π : E →M be a smooth Banach bundle over a compact manifold M, and let
+T ∗M denote the cotangent bundle on M. A connection on E is any of the following three equivalent
+structures:
+1. A connection is an R-linear map:
+∇: Γ(E) →Γ(T ∗M ⊗E)
+such that the product rule:
+∇(fS) = Df ⊗S + f∇S
+holds for all smooth function f : M →R and smooth sections s ∈Γ(E).
+2. A connection is a map ∇: Γ(TM) × Γ(E) →Γ(E) which is C∞(M, R)-linear in its
+vector-field input, and satisfies the Leibniz rule:
+∇X(fS) = X[f]S + f∇XS
+where ∇XS := ∇(X, S) and X[f](x) := (Dxf)(Xx) is the directional derivative of f
+along the vector field X.
+3. A connection ∇is the data of an R-linear map ∇xS : TxM →Ex for each x ∈M and
+s ∈Γ(E) that satisfies the following conditions:
+(a) ∇(−)S depends smoothly on x
+(b) ∇x(a1S1 + a2S2) = a1∇xS1 + a2∇xS2 for all x ∈M, S1, S2 ∈Γ(E), and a1, a2 ∈
+R;
+(c) for every smooth f : M →R and section S ∈Γ(E), let fS ∈Γ(E) denote the section
+(fS)(x) := f(x)s(x). For each x ∈M, the maps ∇x(fS) and ∇xs are related by
+∇x(fS)(v) = Dxf(v)S(x) + f(x)(∇xS)(v)
+for all v ∈TxM.
+The following proposition provides a standard representation theorem for a smooth connection ∇.
+Proposition 2. Let ∇be a smooth connection on a trivial Hilbert bundle π : M × H →M. There
+is a map
+A : Γ(M × H) →Γ(T ∗M ⊗(M × H))
+such that for every section S ∈Γ(M × H), we have:
+∇S = dS + AS
+where d is the Fréchet derivative. Equivalently, for each x ∈M, and v ∈TxM, there is a bounded
+linear operator Ax,v : H →H, varying smoothly in (x, v), such that:
+(∇xS)(v) = (DxS)(v) + (Ax,vS)(x) .
+Moreover, the assignment v 7→Ax,v is linear for each x.
+Remark 4. While this proposition is stated for trivial bundles, it can be applied to any Hilbert bundle
+through the choice of a trivialization, or through Kuiper’s theorem.
+G.1.4
+Parallel transport
+Connections allow us to relate the geometries of the fibers over nearby points in M. For example, we
+may define parallel transport.
+Given a smooth curve γ : [0, 1] →M, say that S : [0, 1] →E is a section over γ if π ◦S = γ.
+Definition 13. Let π : E →M be a smooth Banach bundle with model space X, let ∇be a
+connection on E, and let γ : [0, 1] →M be a smooth path. A map S : [0, 1] →E is a section over γ
+if π ◦S = γ. A section over γ is parallel if
+∇˙γS = 0.
+Proposition 3. Let γ be a smooth path in M. For every vector v ∈Eγ(0), there is a unique parallel
+section Sv over γ such that Sv(0) = v. Moreover, the dependence on v is smooth and linear.
+Proof. The existence of the parallel section Sv can be restated as an initial value problem for a linear
+ordinary differential equation in a Banach space. Standard existence and uniqueness theorems apply.
+For details, see [62].
+By the existence and uniqueness of parallel sections, we may define corresponding parallel transport
+maps. Given a path γ : [0, 1] →M, there is an induced parallel transport operator P ∇
+γ : Eγ(0) →
+Eγ(1) defined by
+P ∇
+γ (v) := Sv(1).
+It is straightforward to see that P ∇
+γ is a linear bijection, with inverse given by (P ∇
+γ )−1 = P ∇
+γrev, where
+γrev is the path obtained by reversing γ. By the closed graph theorem, it follows that P ∇
+γ is a bounded
+linear isomorphism.
+Definition 14. Let π : E →M be a Hilbert bundle equipped with a connection ∇. We say the
+connection ∇is compatible with the Hilbert bundle structure if it satisfies:
+X[⟨S0(x), S1(x)⟩x] = ⟨∇XS0(x), S1(x)⟩x + ⟨S0(x), ∇XS1(x)⟩x
+for every smooth vector field X ∈Γ(TM), and sections S0, S1 ∈Γ(E).
+Proposition 4. Let π : E →M be a Hilbert bundle with connection ∇. The following are equivalent:
+1. ∇is compatible with the Hilbert bundle structure;
+2. Every parallel transport map P ∇
+γ is unitary;
+Proof. First suppose that ∇is compatible with the Hilbert bundle structure, and γ a smooth path in
+M. Let u, v ∈Eγ(0). By compatibility, we may check that:
+d
+dt
+
+Su(t), Sv(t)
+
+γ(t) =
+
+∇˙γSu(t), Sv(t)
+
+γ(t) +
+
+Su(t), ∇˙γSv(t)
+
+γ(t)
+= 0 .
+It immediately follows that P ∇
+γ is unitary.
+Conversely, suppose that every parallel transport map P ∇
+γ is unitary. Let X be a smooth vector
+field, and S0, S1 smooth sections of E. Let x ∈M, and let γ be a smooth path such that γ(0) = x.
+For j ∈{0, 1} let uj be a parallel section over γ such that uj(0) := Sj(x). For j ∈{0, 1}, let
+wj(t) := Sj(γ(t)) −uj(t). Finally, let wj(t) := Sj(γ(t)) −uj(t). Since uj is parallel over γ, we
+have that ∇˙γSj(γ(t)) = ∇˙γwj(t). Moreover, wj(0) = 0. We may use these facts to compute:
+X[
+
+S0(x), S1(x)
+
+x] = d
+dt
+
+t=0
+
+S0(γ(t)), S1(γ(t))
+
+γ(t)
+= d
+dt
+
+t=0
+
+u0(t) + w0(t), u1(t) + w1(t)
+
+γ(t)
+= d
+dt
+
+t=0
+⟨u0(t), u1(t)⟩γ(t) + ⟨∇˙γS0(x), S1(x)⟩x + ⟨S0(x), ∇˙γS1(x)⟩x
+Since parallel transport maps are unitary, it follows that the quantity
+
+u0(t), u1(t)
+
+γ(t) is constant in
+t. Hence
+X[
+
+S0(x), S1(x)
+
+x] = d
+dt
+
+t=0
+⟨u0(t), u1(t)⟩γ(t) + ⟨∇˙γS0(x), S1(x)⟩x + ⟨S0(x), ∇˙γS1(x)⟩x
+= ⟨∇XS0(x), S1(x)⟩x + ⟨S0(x), ∇XS1(x)⟩x
+proving that ∇is a compatible connection.
+Remark 5. We note that by the Proposition 4, as we assumed our parallel transport operators to be
+unitary in the main text, this may equivalently be understood as a metric-compatibility condition.
+G.2
+Connection Laplacian
+Let π : E →M be a Hilbert bundle on a compact oriented Riemannian manifold, equipped with
+a compatible connection ∇: Γ(M; E) →Γ(M; T ∗M ⊗E). Moreover, T ∗M ⊗E inherits the
+structure of a Hilbert bundle, with fiber-wise inner products induced from the metric g and the
+fiber-wise inner products of E. Since ∇is a linear differential operator, it has a formal adjoint
+∇∗: Γ(M; T ∗M ⊗E) →Γ(M; E), defined implicitly by the formula:
+Z
+M
+⟨∇S0(x), S1(x)⟩x dµ(x) =
+Z
+M
+⟨S0(x), ∇∗S1(x)⟩x dµ(x)
+where S0 ∈Γ(M; E), S1 ∈Γ(M; T ∗M ⊗E), and µ is the canonical volume form on M. Using
+this adjoint, we may define the connection Laplacian.
+Definition 15. The connection Laplacian is the linear operator:
+∆∇:= ∇∗∇: Γ(E) →Γ(E) .
+Remark 6. The connection ∇: Γ(E) →Γ(T ∗M ⊗E) can be extended to a closed, densely-defined
+unbounded operator ∇L2 : L2(E) →L2(T ∗M ⊗E). This extended operator has an adjoint ∇∗
+L2
+as a Hilbert space operator, from which we may define a composite ∆∇L2 := ∇∗
+L2∇L2. The formal
+adjoint ∇∗and connection Laplacian ∆∇can be found by restricting the domains of ∇∗
+L2 and ∆∇L2
+to linear subspaces of smooth sections. From this perspective, it becomes clear that the connection
+Laplacian ∆∇is well defined for all C2 sections, as C2 is contained in the Sobolev space H2.
+The connection Laplacian also admits a characterization in terms of covariant derivatives. Let ∇2
+X,Y
+denote the second covariant derivative with respect to vector fields X, Y .
+Lemma 1. (Connection Laplacian in Coordinates) Let (M, E, ∇) be a Hilbert bundle over a compact
+oriented Riemannian manifold equipped with a compatible Fréchet connection. As operators,
+∆∇S = −tr∇2S .
+Moreover, with respect to a local orthonormal frame {ei}m
+i=1 that is synchronous at p ∈M, we have
+equality:
+∆∇S(p) = −
+m
+X
+i=1
+∇ei∇eiS(p) .
+Proof. We adapt the proof of [79] to the Hilbert bundle setting, using the synchronous frame technique
+of [76]. By a partition of unity argument, it suffices to show that for every pair of smooth sections
+S1, S2 supported inside the domain of a local orthonormal frame {ei}m
+i=1, we have an equality:
+Z
+M
+⟨∆∇S1(x), S2(x)⟩x dµ(x) = −
+Z
+M
+m
+X
+i=1
+⟨∇2
+ei,eiS1(x), S2(x)⟩x dµ(x) .
+Using the formal adjoint of ∇, the integral on the left can be rewritten as
+Z
+M
+⟨∆∇S1(x), S2(x)⟩x dµ(x) =
+m
+X
+i=1
+Z
+M
+⟨∇eiS1(x), ∇eiS2(x)⟩x dµ(x) .
+To analyze the right hand side, simply note that ∇2
+ei,eiS1 = ∇ei∇eiS1 −∇∇eieiS1, and by compati-
+bility, that:
+ei[⟨∇eiS1(x), S2(x)⟩x] = ⟨∇ei∇eiS1(x), S2(x)⟩x + ⟨∇eiS1(x), ∇eiS2(x)⟩x .
+Rearranging and summing over i yields:
+X
+i
+⟨∇2
+ei,eiS1(x), S2(x)⟩x = −
+X
+i
+⟨∇eiS1(x), ∇eiS2(x)⟩x
++
+X
+i
+ ei[⟨∇eiS1(x), S2(x)⟩x] −⟨∇∇eieiS1(x), S2(x)⟩x
+
+.
+The second sum on the right-hand side may be identified as the divergence of the vector field
+⟨∇vS1(x), S2(x)⟩x, and hence integrates to zero by Stokes’ theorem. Therefore
+−
+Z
+M
+X
+i
+⟨∇2
+ei,eiS1(x), S2(x)⟩x dµ(x) =
+X
+i
+Z
+M
+⟨∇eiS1(x), ∇eiS2(x)⟩x dµ(x)
+as well. Therefore ∆∇(S) = −tr∇2(S). Under the additional hypothesis that {ei}m
+i=1 is synchronous
+at p, we have ∇eiei = 0 for each 1 ≤i ≤m. At such a point, the trace reduces to tr∇2S(p) =
+P
+i ∇ei∇eiS(p).
+G.3
+Heat Flow on a Hilbert Bundle
+In this section, we fix a compact finite-dimensional Riemannian manifold (M, g) with canonical
+volume psuedo-form µ, a smooth Hilbert bundle π : E →M with fiber Ex ∼= H, and a connection ∇.
+Our goal in this section is three-fold:
+1. Demonstrate that the heat equation with respect to the connection Laplacian ∆∇has a
+unique solution;
+2. Show that the heat-flow admits a Heat Kernel;
+3. Provide asymptotic estimates for the heat flow that relate to the geometry of the underlying
+manifold M.
+Our approach is to adapt the methods of Berline, Getzler, and Vergne [15] for finite-rank bundles to
+the Hilbert bundle setting. A key subtlety that arises in this generalization is in the definition of tensor-
+products of bundles. While the algebraic and topological tensor products of finite-rank Hilbert spaces
+agree, they need not coincide for general Hilbert spaces. This complicates, for instance, the necessary
+tensor-hom adjunction. In order to keep track of the appropriate tensor, we adopt the following
+convention. Let π0 : E0 →M and π1 : E1 →M be smooth Hilbert bundles over a common
+manifold M. One may form the hom-bundle hom(E0, E1) →M, whose fiber hom(E0, E1)x is the
+Banach space of bounded linear operators from E0 to E1. This is a Banach bundle when hom(E0, E1)x
+is topologized with the operator norm.
+Definition 16. Let ∆∇be the connection Laplacian for a compatible connection on a smooth Hilbert
+bundle π : E →M over a compact orientable manifold M. A heat kernel for ∆∇is a continuous
+section K∇(x, y, t) of the Banach bundle hom
+ pr∗
+2E, pr∗
+1E
+
+over M × M × (0, ∞) that satisfies the
+following conditions.
+1. K∇(x, y, t) is C1 with respect to t, and is C2 with respect to x.
+2. K∇(x, y, t) satisfies the heat equation ∂tK∇(x, y, t) = −(∆∇)xK∇(x, y, t), where
+(∆∇)x means applying the Laplacian to x.
+3. K∇(x, y, t) satisfies the boundary condition limt→0 KtS = S for every smooth section
+s ∈Γ(E), where (KtS)(x) =
+R
+K∇(x, y, t)S(y) dµ(y).
+Lemma 2. (Heat Kernel for Hilbert Bundles) Let ∆∇be the connection Laplacian associated to a
+Hilbert bundle, (M, E, ∇). Let n := dim(M)/2, ψ be a cutoff function, and
+Cn(x, y) :=
+exp
+
+−dM(x,y)2
+4t
+
+(4πt)n/2
+.
+The following hold:
+1. The Laplacian ∆∇admits a unique heat kernel K∇(x, y, t).
+2. There exist smooth sections Φi ∈Γ
+ M × M, hom
+ pr∗
+2E, pr∗
+1E
+
+such that for every N >
+n, the kernel
+KN(x, y, t) := Cn(x, y)ψ(dM(x, y)2)
+N
+X
+i=0
+tiΦi(x, y)j(x, y)−1/2|dx|1/2
+is asymptotic to K∇(x, y, t), in the sense that
+∥∂k
+t (K∇(x, y, t) −KN(x, y, t))∥ℓ= O(tN−n+ℓ+2k
+).
+3. The leading term Φ0(x, y) is equal to the parallel transport Py→x : Ey →Ex with respect
+to the Fréchet connection associated to H along the unique length-minimizing geodesic
+joining y and x.
+Proof. (Sketch) We note that parametrix-based approach of Berline, Getzler, and Vergne [15] extends
+to our setting with minor but judicious modifications. As the original parametrix argument is quite
+lengthy, we simply make note of the necessary modifications to their argument. First, all integration
+must be understood as Bochner integration. Second, to avoid ambiguities surrounding the algebraic
+and geometric tensor bundle, the hom-bundle is used instead of tensor bundles.
+Now note that the parametrix argument is fundamentally local in nature. Consider a smooth Hilbert
+bundle E →M, and note that we require an associated Fréchet connection ∇to be metric-compatible.
+Then, in a local trivialization E
+
+U ∼= U × H, with H a separable Hilbert space, the connection has
+the form ∆= d + A with A a smooth hom(H, H) valued 1-form by Proposition 2. The connection
+Laplacian is a second-order elliptic operator with scalar principal symbol and lower-order coefficients
+in the Banach algebra hom(H, H). The parametrix argument then proceeds via solving transport
+equations along geodesics and then correcting the resulting approximated kernel by a Volterra series.
+These steps do not rely in any essential way on the finite-dimensionality of the fiber, but only on
+the fact that the coefficient algebra admits the usual smooth calculus and operator-norm estimates.
+Thus, replacing matrix-valued coefficients by hom(H, H)-valued ones, one obtains in the same way
+a smooth kernel K∇(x, y, t), and the usual energy argument gives uniqueness.
+Remark 7. The details of the necessary parametrix argument may be found in 2.1 - 2.5 of [15]. Note
+that while they assume a finite-rank hypothesis through the entirety of chapter two, the hypothesis
+is actually unused until section 2.6 of their work, when the operator Kt is required to be Hilbert-
+Schmidt.
+G.4
+Borel Functional Calculus
+Given a linear map T : Rn →Rn and a suitably well-behaved function g : R →C, one may
+"apply g" to T to get a new linear map g(T) : Rn →Rn. In particular, whenever g is analytic
+with a globally defined Maclaurin expansion g(x) = P
+j ajxj, one may define g(T) = P
+j ajT j,
+where T j is interpreted as the j-fold composition T ◦· · · ◦T. When T is a bounded linear endo-
+operator on a Hilbert space, one may similarly define g(T) via series expansion. However, when T is
+unbounded, more care must be taken to handle series convergence. This difficulty in the unbounded
+case is pertinent for the HilbNet architecture, where the convolution filter g must be applied to the
+unbounded connection Laplacian ∆∇. The Borel functional calculus provides an elegant solution.
+While traditionally formulated through the spectral theorem and projection-valued measures, for the
+purpose of the HilbNet architecture, the following version (Theorem VIII.5 of [82]) will be sufficient.
+Theorem 3. (Spectral Theorem - Functional Calculus Form) Let A be a self-adjoint operator on a
+Hilbert space H. Then there is a unique map ˆϕ from the bounded Borel measurable functions on R
+into the space of bounded linear operators on H, L(H), so that
+• ˆϕ is an algebraic *-homomorphism.
+• ˆϕ is norm continuous, that is, ∥ˆϕ(h)∥L(H) ≤∥h∥∞.
+• Let gn(x) be a sequence of bounded Borel functions with gn(x) −−−−→
+n→∞x for each x and
+|hn(x)| ≤|x| for all x and n. Then, for any ψ ∈dom(A), limn→∞ˆϕ (hn) ψ = Aψ.
+• If gn(x) →h(x) pointwise and if the sequence ∥hn∥∞is bounded, then ˆϕ(hn) →ˆϕ(h)
+strongly.
+In addition:
+• If Aψ = λψ, then ˆϕ(h)ψ = h(λ)ψ.
+• If g ≥0, then ˆϕ(h) ≥0.
+G.5
+Cellular Sheaves and Sheaf Laplacians
+Cellular sheaves on graphs are a data structure that generalizes weighted graphs. We take our
+exposition of cellular sheaves and their Laplacians primarily from [51]. See [51, 29, 53] for more
+details.
+Definition 17 (Cellular Sheaf on a Graph). Let G = (V, E) be an undirected multi-graph without
+self-loops, and finitely many vertices and edges. Let v ≤e denote that node v is incident to the edge
+e. A cellular sheaf, or equivalently network sheaf, F on G consists of the following data.
+• A vector space F(σ) for each σ ∈V ⨿E, called the stalk over σ.
+• A linear map Fv≤e : F(v) →F(e) for each incident pair v ≤e, called the restriction map
+of v into e.
+Remark 8. At the level of category theory, a cellular sheaf is a functor F : G →Vect, where the
+graph G = (V, E) is viewed as a posetal category with objects Ob(G) = V ⨿E, and a unique
+homomorphism from v →e whenever v ≤e. In this light, we adopt the notation F : G →Vect for
+a cellular sheaf F on a graph G.
+Traditionally, to add geometric content to a cellular sheaf, one passes to weighted cellular sheaves: a
+cellular sheaf F : G →Vect where each stalk Fσ is a finite dimensional vector space endowed with
+an inner product ⟨−, −⟩σ. To accommodate infinite-dimensional Hilbert space stalks, we instead
+follow the approach of [44].
+Definition 18. (Hilbert Cellular Sheaf on a Graph) A Hilbert cellular sheaf F on a finite graph
+G = (V, E) consists of the following data.
+• A Hilbert space F(v) for each v ∈V , referred to as the node stalk over v.
+• A Hilbert space F(e) for each e ∈E, referred to as the edge stalk over v.
+• For each edge e ∈E with bounding vertices u, v, a pair of bounded linear restriction maps
+Fu≤e : F(u) →F(e) and Fv≤e : F(v) →F(e).
+Remark 9. A bounded Hilbert sheaf F can again be viewed as a functor F : G →HilbR, where G
+is the graph G viewed as an acyclic category, and HilbR is the category of real Hilbert spaces and
+bounded globally-defined linear operators.
+Remark 10. In order to better differentiate between the usual finite-rank cellular sheaf on a graph
+and the potentially infinite-rank Hilbert cellular sheaves considered above, we use the terminology of
+network sheaves when we wish to emphasize the finite-rank consideration.
+Definition 19. Let F : G →HilbR be a bounded Hilbert sheaf on a graph G = (V, E). The spaces
+of 0-cochains and 1-cochains are defined by:
+C0(G; F) :=
+M
+v∈V
+F(v) ,
+C1(G; F) :=
+M
+e∈E
+F(e) .
+where ⊕denotes the direct sum of Hilbert spaces. For a 0-cochain x ∈C0(G; F), we denote
+the component of x in the stalk over the node v by xv, with a similar notation for components of
+1-cochains.
+Definition 20. Let G = (V, E) be a graph. A signed incidence relation on G is a pairing [−: −] :
+V × E →{−1, 0, 1} which satisfies the following conditions:
+1. [v : e] ̸= 0 if and only if v ≤e.
+2. For each e, P
+v≤e[v : e] = 0.
+Remark 11. The data of a signed incidence structure on G = (V, E) is equivalent to the choice of a
+source s(e) and target t(e) for each edge e. In particular, the total set of incidences can be put into
+two-to-one correspondence with edges, counting the two distinct "boundings" of each e ∈E.
+Definition 21. Let G = (V, E) be a graph equipped with a signed incidence relation. Let F : G →
+HilbR be a bounded Hilbert sheaf on G. The coboundary operator δ : C0(G; F) →C1(G; F) is
+the operator with image on the each edge stalk:
+(δx)e :=
+X
+v≤e
+[v : e]Fv≤e(xv) .
+Remark 12. The coboundary map δ depends on the choice of the signed incidence relation. However,
+given two signed incidence relations [−: −]1, [−: −]2, the corresponding coboundary operators
+δ1, δ2 differ on the stalk F(e) by at most a sign difference (δ1x)e = ±(δ2x)e. In particular, ker(δ)
+does not depend on the choice of ϵ.
+Definition 22. Let F : G →HilbR be a bounded Hilbert network sheaf on a graph G = (V, E, ϵ)
+equipped with a signed incidence relation. Let δ∗: C1(G; F) →C0(G; F) denote the linear adjoint
+of the corresponding coboundary operator with respect to the inner product structures on the spaces
+of cochains as product spaces. The Hilbert sheaf Laplacian is the operator ∆F : C0(G; F) →
+C0(G; F) defined by the composition:
+∆F = δ∗◦δ .
+Proposition 5. The Hilbert sheaf Laplacian ∆F has the following properties.
+1. The Laplacian ∆F is a self-adjoint globally-defined bounded linear operator.
+2. When C0(G; F)
+δ−→C1(G; F) is viewed as a Hilbert complex (in the sense of [23]) the
+kernel ker(∆F) recovers the space of harmonic 0-cochains.
+3. The negative Laplacian −∆F is the infinitesimal generator of a strongly continuous semi-
+group e−t∆F on C0(G; F). For a choice of initial cochain x0 ∈C0(G; F), the resulting
+flow xt := e−t∆F x0 is a solution to the sheaf heat equation d
+dtxt = −∆Fxt. Moreover,
+the flow has limiting behavior limt→∞xt = Πker(∆F)x0, where Πker(∆F) denotes the
+orthogonal projection onto ker(∆F).
+Proof. See [44].
+We now recall our construction of Hilbert cellular sheaf from a spatially-discretized Hilbert bundle.
+Definition (Hilbert Cellular Sheaf from a Hilbert Bundle). For a given Hilbert bundle (M, E, ∇)
+with sampled points Xn = {x1, . . . , xn} ⊂M, fix a geodesic γij between xi and xj, for all i < j.
+Further, let mγij denote the midpoint of this geodesic. Consider the graph Gn = (Xn, E) with an
+undirected edge eij between xi and xj, for each i < j. The associated Hilbert cellular sheaf Ft
+n on
+Gn with bandwidth parameter t is given by the following assignments:
+• The Hilbert space Ft
+n(xi) := Exi for each xi ∈Xn, referred to as the node stalk over xi ∈Xn.
+• The Hilbert space Ft
+n(eij) := Emγij for each eij ∈E, referred to as the edge stalk over ei,j ∈E.
+• For each edge eij ∈E with bounding vertices xi, xj, a pair of bounded linear restriction maps
+(Ft
+n)xi≤eij :=
+q
+kt
+ij Pxi→mγij : Ft
+n(xi) →Ft
+n(eij),
+(Ft
+n)xj≤eij :=
+q
+kt
+ij Pxj→mγij : Ft
+n(xj) →Ft
+n(eij),
+(82)
+where kt
+ij = e−dM(xi,xj)2/4t, with dM the geodesic distance on M, and Pxi→mγij denotes the
+unitary parallel transport map on E between xi and mγij.
+Remark 13. We make a few clarifying remarks on this construction.
+• Note that geodesics exist in this setting by the Hopf-Rinow theorem [36] by compactness of
+M, and we should further choose length-minimizing geodesics.
+• For simplicity, we use the geodesic distance to weight our restriction maps. However, we
+could also use the Euclidean heat kernel ala [14], and this would result in a reweighted sheaf
+Laplacian but would ultimately converge to the same connection Laplacian. In practical
+implementations, it is thus well-justified to work with the Euclidean heat kernel rather than
+geodesic distance based weights.
+• While this particular construction is chosen to emphasize the relationship to [14] and
+allow for the necessary analytical arguments, there exist alternative constructions that
+are geodesic choice-independent that generate the same sheaf Laplacian but emphasize
+functoriality.
+G.6
+Empirical Laplacians
+Analogously to [14], we introduce two intermediary notions of Laplacian that interpolate between the
+Hilbert sheaf Laplacian and the Laplacian on a Hilbert bundle. For this section, fix a Hilbert bundle
+with compatible Fréchet connection (M, E, ∇) over a closed manifold M.
+Definition 23. Consider the unique normalized pseudo-volume form on M (or the usual volume
+form if M is orientable), denoted dµ. Thus, dµ equips M with a probability measure and we may
+refer to the resulting distribution as the uniform distribution on M.
+Henceforth, let Xn = {x1, . . . , xn} denote the realization of an iid random sample drawn from the
+uniform distribution on M. We then recall the following construction.
+Definition. (Point-Cloud Extension of Sheaf Laplacian) Let (M, E, ∇) be a Hilbert bundle and
+consider a sample Xn ⊂M. Then the corresponding Hilbert sheaf Laplacian ∆Ftn may be extended
+to the point-cloud Laplacian ˆ∆Ftn, an operator on L2(M, E) via
+( ˆ∆FtnS)(x) = 1
+n
+X
+j
+e−dM(x,xj)2/4t S(x) −Pxj→xS(xj)
+
+(83)
+Remark 14. We make the following remarks about the point-cloud Laplacian.
+1. The point-cloud Laplacian is the extension of the Hilbert sheaf Laplacian ∆Ftn
+:
+C0(G; Ft
+n) →C0(G; Ft
+n) to an operator acting on sections of the Hilbert bundle E →M,
+normalized by a factor of 1/n. In particular, when evaluated at a sample point xi ∈X,
+the point cloud Laplacian ˆ∆FtnS(xi) is exactly the normalized xi component of the Hilbert
+sheaf Laplacian ∆Ftn evaluated at the cochain (S(x1), . . . , S(xn))T ∈C0(G; Ft
+n).
+2. The point-cloud Laplacian is well defined for any section S : M →E, regardless of
+regularity.
+Definition 24 (Functional Approximation Laplacian). For a section S ∈C1(E), we define the
+functional approximation to the connection Laplacian
+( ˆ∆tS)(x) =
+Z
+M
+ S(x) −Py→xS(y)
+
+exp
+
+−dM(x, y)2
+4t
+
+dy
+where
+R
+(−) dy denotes Bochner integration with respect to the canonical normalized pseudovolume
+form on M.
+Remark 15. We make the following remarks about the functional approximation Laplacian.
+1. The functional approximation Laplacian has no dependence on a sample of points from the
+underlying manifold. Instead, the functional approximation may be treated as the limiting
+operator where all points on the manifold have been sampled, and contribute uniformly via
+parallel transport.
+2. The geometric data of the connection ∇impacts the functional approximation Laplacian
+through the parallel transport maps Py→x : Ey →Ex, which links the fibers of E.
+3. Viewing the sample Xn = {x1, . . . , xn} ⊆M as having been drawn iid from the uniform
+probability distribution on M, the functional approximation Laplacian can be identified
+pointwise on a section S as the expected value of the point cloud Laplacian. That is, for any
+S ∈C1(M, E) and x ∈M, we have:
+vol(M)( ˆ∆tS)(x) = EX
+h
+( ˆ∆FtnS)(x)
+i
+H
+Proofs of Results
+H.1
+Auxiliary Lemmas for Theorem 1
+Lemma 3. For x = (x1, . . . , xm) ∈Rm, k ∈N, and a, t > 0, the following Gaussian identities
+hold:
+(2πat)m/2
+Z
+xi exp
+
+−∥x∥2
+2at
+
+dx = 0,
+(84)
+(2πat)m/2
+Z
+xixj exp
+
+−∥x∥2
+2at
+
+dx = atδij,
+(85)
+(2πat)m/2
+Z
+∥x∥2k+1 exp
+
+−∥x∥2
+2at
+
+dx = O(tk+ 1
+2 )
+as t →0,
+(86)
+where δij is the Kronecker delta.
+Proof. Notice that
+(2πat)m/2 exp
+
+−∥x∥2
+2at
+
+is the density function of a multivariate normal random
+variable X ∼N(0, atI). Equations (84) and (85) are simply the values of the coordinate-mean
+E[Xi] = 0 and covariance Cov(Xi, Xj) = atδij. Finally, we may write X =
+√
+atZ, where
+Z ∼N(0, I) is a standard multivariate normal (zero-mean, uncorrelated, unit variance) in m
+dimensions. We may write E[∥X∥2k+1] = (at)k+ 1
+2 · E[||Z||2k+1], which confirms (86).
+Remark 16. If instead of integrating over the entire domain Rm, we integrate over a symmetric ball
+B := B(R, 0) centered at zero, we recover the following augmented Gaussian identities:
+(2πat)m/2
+Z
+B
+xi exp
+
+−∥x∥2
+2at
+
+dx = 0,
+(87)
+(2πat)m/2
+Z
+B
+xixj exp
+
+−∥x∥2
+2at
+
+dx =
+
+at + O(e−R2/2at)
+
+δij
+as t →0,
+(88)
+(2πat)m/2
+Z
+B
+∥x∥2k+1 exp
+
+−∥x∥2
+2at
+
+dx = O(tk+ 1
+2 )
+as t →0.
+(89)
+The restriction to the ball B leaves all odd-degree symmetries unchanged, and augments the even
+symmetries by a factor of the form O(e−c/t), capturing the exponential decay on probability mass
+far away from the origin.
+Lemma 4. (Banach Mean Value Theorem) Consider Banach spaces B1, B2 and some open U ⊆B1,
+Then if S : U →B2 is Gateaux differentiable, then the mean value theorem holds in the sense that
+∥S(x) −S(y)∥B2 ≤∥x −y∥B1 sup
+0≤t≤1
+∥Df(tx + (1 −t)y)∥
+whenever the convex hull [x, y] lies in U.
+Proof. The proof is a standard functional analysis argument but we recall it here for completeness. Let
+L be the one-dimensional subspace spanned by some fixed nonzero u ∈U. Consider φ(cu) = c∥u∥
+as a continuous linear functional on L with norm 1. By the strong form of the Hahn-Banach, as stated
+in [3], for instance, we may extend this functional to the whole domain. Then note that φ(u) = ∥u∥,
+so the result follows by considering u = S(x) −S(y).
+Remark 17. We recall that Fréchet differentiability in particular implies Gateaux differentiable,
+which will be sufficient for our purposes.
+Lemma 5. (Banach Weak Law of Large Numbers) Let {Xj}j∈N denote an independent identically
+distributed collection of random variables Xj ∈L1(Ω, B), where Ω:= (Ω, Σ, P) is a probability
+space and B is a Banach space. Let Sn := Pn
+j=1 Xj denote the partial sum of the first n random
+variables. As n →∞, the normalized sequence 1
+nSn converges in probability to the mean µ := E[Xj].
+That is for all ϵ > 0,
+lim
+n→∞P
+
+nSn −µ
+ > ϵ
+
+= 0.
+Proof. See Pinelis [80] or Ledoux & Talagrand [64].
+H.2
+Key Lemmas for Theorem 1
+Lemma 6. (Taylor Series for Hilbert Signals) Let (M, E, ∇) be a Hilbert bundle equipped with a
+Fréchet connection. For a given signal S ∈Cn+1(M, E), the space of (n + 1)-times continuously
+Fréchet-differentiable sections, and p ∈M, consider any q ∈M in a geodesic ball of p and fix a
+length-minimizing curve γ(t) from p to q. Let S∗(t) := Pγ(t)→pS(γ(t)) denote the parallel transport
+of S from γ(t) back to p along γ. As t →0, we have that
+S∗(t) =
+
+
+n
+X
+j=0
+tj
+j!
+ ∇(j)
+˙γ S
+
+(p)
+
++ O(tn+1)
+Proof. We first establish for a section V (t) of E along γ, that:
+d
+dt
+ Pγ(t)→pV (t)
+
+= Pγ(t)→p (∇˙γV ) (γ(t))
+We compute directly from the definition:
+d
+dt
+ Pγ(t)→pV (t)
+
+= lim
+h→0
+Pγ(t+h)→pV (γ(t + h)) −Pγ(t)→pV (γ(t))
+h
+(90)
+= lim
+h→0 Pγ(t)→p
+Pγ(t+h)→γ(t)V (γ(t + h)) −V (γ(t))
+h
+
+(91)
+= Pγ(t)→p (∇˙γV ) (γ(t))
+(92)
+where in the second line we used the composition law for parallel transport, P −1
+γ(t)→p ◦Pγ(t+h)→p =
+Pγ(t+h)→γ(t). which follows from uniqueness of the parallel transport ODE, together with the fact
+that Pγ(t)→p is a bounded linear operator and hence may be factored outside the limit.
+Recall that S∗(t) := Pγ(t)→pS(γ(t)) is a curve in the fixed Hilbert space Ep. Iteratively apply-
+ing the previous derivative computation to V (t) =
+ ∇(n)
+˙γ S
+ γ(t)
+
+, where (−)(n) denotes n-fold
+composition, yields:
+dn
+dtn S∗(t) = Pγ(t)→p
+
+∇(n)
+˙γ S
+
+(γ(t))
+Evaluating at t = 0, where Pp→p = id:
+dn
+dtn S∗
+
+t=0
+=
+
+∇(n)
+˙γ S
+
+p .
+Finally, applying Taylor’s theorem for Banach spaces [25] yields the desired asymptotic statement.
+Lemma 7. Let ˆ∆Ftn and ˆ∆t denote the point-cloud and functional Laplacian operators with band-
+width t. We have the concentration inequality:
+P
+
+t(4πt)m/2
+ ˆ∆FtnS(x) −ˆ∆tS(x)
+ > ϵ
+
+≤2 exp
+
+−t2(4πt)mϵ2n
+2K2
+
+for some K > 0 which depends only on the choice of section s. Consequently, we have the following
+limit in probability as n →∞:
+t(4πt)m/2 ˆ∆Ft
+nS(x)
+P−→ˆ∆tS(x) .
+Proof. The point cloud Laplacian ∆FtnS(x) may be viewed as the sample average of n iid Hilbert-
+space valued random variables:
+Xi := exp
+
+−dM(x, xi)2
+4t
+
+S(x) −exp
+
+−dM(x, xi)2
+4t
+
+Pxi→xS(xi)
+Moreover, the functional approximation ˆ∆t may be viewed as the expectation E∆Ft
+n with respect to
+the uniform probability measure on M. The bundle E →M has separable fibers, so the results of
+[80] apply. We may recover a Hoeffding inequality:
+P
+1
+δ
+ ˆ∆FtnS(x) −E ˆ∆FtnS(x)
+ > ϵ
+
+≤2 exp
+
+−(δϵ)2n
+2K2
+
+where K is the maximum norm of the section S over the compact manifold M. Setting δ = t(4πt)m/2
+and identifying E ˆ∆FtnS(x) = ˆ∆tS(x) yields the desired concentration inequality. Convergence in
+probability follows immediately.
+Lemma 8. Let (M, E, ∇) be a Hilbert bundle on a closed Riemannian manifold equipped with a
+Fréchet connection. Let B ⊆M be open, and p ∈B. Fix a section S ∈C3(M, E). For each
+x ∈M, let F(x) := Px→pS(x) denote the parallel transport of S(x) along the designated geodesic
+connecting x to p. For any real a ∈R>0, the following asymptotic bound holds as t →0:
+
+Z
+M
+e−∥y−p∥
+4t
+F(y) dµ(y) −
+Z
+B
+e−∥y−p∥
+4t
+F(y) dµ(y)
+ = o(ta).
+Proof. We note this is a modified version of Lemma 4.1 of [14]. Let d := infx̸∈B ∥p −x∥, K :=
+supx∈M ∥S(x)∥, and M := µ(M \ B), where µ is the canonical measure with respect to the
+volume form. Since p is compact and M \ B is closed the infimum distance d > 0. Recalling that
+Px→p : Ex →Ep is unitary, and hence ∥F(x)∥= ∥S(x)∥for all x ∈M, we may bound:
+
+Z
+M
+e−∥y−p∥
+4t
+F(y) dµ(y) −
+Z
+B
+e−∥y−p∥
+4t
+F(y) dµ(y)
+ ≤
+Z
+M\B
+e−∥y−p∥
+4t
+F(y)
+ dµ(y)
+≤
+Z
+M\B
+e−∥y−p∥
+4t
+∥S(y)∥dµ(y)
+≤MK exp
+
+−d
+4t
+
+= o(ta).
+Lemma 9. Let (M, E, ∇) be a Hilbert bundle equipped with a compatible Fréchet connection,
+with associated Laplacian ∆∇, and functional approximation ˆ∆t with bandwidth t . Fix a section
+S ∈C3(M, E). For any x ∈M as the bandwidth t →0, we have pointwise convergence:
+lim
+t→0
+t (4πt)
+m
+ˆ∆tS(x) =
+vol(M)∆∇S(x) .
+Proof. Let γt := 1
+t
+(4πt)m/2 , and consider the scaled functional approximation γt ˆ∆t which acts on a
+section S at point p by:
+
+γt ˆ∆tS
+
+(p) = γt
+Z
+M
+e−dM(p,x)2
+4t
+(S(x) −Px→pS(p)) dµ(x) .
+Let B ⊆M denote a sufficiently small ball containing p. By Lemma 8,
+lim
+t→0
+h
+γt ˆ∆tS
+
+(p)
+i
+= lim
+t→0 γt
+Z
+B
+e−dM(p,x)2
+4t
+(S(p) −Pp→xS(x)) dµ(x).
+Parameterize B via geodesic coordinates such that p = 0. Let F(x) := Px→pS(x). Let ˜S : Rk →H
+and ˜B ⊆Rk denote the section S and ball B in coordinates. In these coordinates, we may write:
+lim
+t→0
+h
+γt ˆ∆t
+FnS
+
+(p)
+i
+= lim
+t→0
+vol(M)γt
+Z
+˜
+B
+e−
+dM(expp(x),0)2
+4t
+( ˜F(0) −˜F(x))
+q
+det(gij) dx .
+In geodesic coordinates, since the closed manifold M has bounded Ricci curvature, the metric tensor
+has an asymptotic expansion given by (as in e.g. [36])
+det(gij) = 1 + O(∥x∥2) .
+This approximation and the identification dM(expp(x), p) = ∥x∥in coordinates allows us to express:
+lim
+t→0
+h
+γt ˆ∆t
+FnS
+
+(p)
+i
+= lim
+t→0
+vol(M)γt
+Z
+˜
+B
+e−∥x∥2
+4t ( ˜F(0) −˜F(x))
+ 1 + O(∥x∥2)
+
+dx .
+Let Lt :=
+vol(M)γt
+R
+˜
+B exp
+
+−∥x∥2
+4t
+
+( ˜F(0) −˜F(x))
+ 1 + O(∥x∥2)
+
+dx. This expression splits as
+Lt = At + Bt, where:
+At :=
+vol(M)γt
+Z
+˜
+B
+exp
+
+−∥x∥2
+4t
+
+( ˜F(0) −˜F(x)) dx ,
+Bt :=
+vol(M)γt
+Z
+˜
+B
+exp
+
+−∥x∥2
+4t
+
+( ˜F(0) −˜F(x))
+
+O(∥x∥2)
+
+dx .
+We first analyze the limiting behavior of At as t →0. Within our geodesic coordinates centered at p,
+we may further work with a local synchronous frame of E along these coordinates x = (x1, . . . , xk)
+such that it is parallel along all radial geodesics. Consequently, within this frame, ordinary derivatives
+of ˜F coincide with covariant derivatives of S at the basepoint:
+∂i ˜F(p) = ∇eiS(p)
+∂i∂j ˜F(p) = ∇ei∇ejS(p) + curvij ,
+where curvij := −1
+2RE(ei, ej)S(p) is half the bundle curvature of E arising from the connection ∇.
+Hence by Lemma 6, the Taylor expansion of ˜F at p is
+˜F(x) = ˜F(p) +
+X
+i
+xi∇eiS(p) + 1
+X
+i,j
+xixj
+ ∇ei∇ejS(p) + curvij
+
++ O(∥x∥3),
+with curvij = −curvji.
+Using the augmented Gaussian identities (87), (88), and (89), we may compute:
+It :=
+(4πt)m/2
+Z
+˜
+B
+( ˜F(p) −˜F(x)) exp
+
+−∥x∥2
+4t
+
+dx
+= −1
+X
+i,j
+h ∇ei∇ejS(p) + curvij
+ 
+2t + O
+
+e−c/t
+δij
+i
++ O
+
+t3/2
+= −t
+X
+i
+∇ei∇eiS(p) −t
+X
+i
+curvii + O
+
+t3/2
+where δij is the Kronecker delta. Since curvij is antisymmetric, curvii = 0, hence
+It = −t
+X
+i
+∇ei∇eiS(p) + O(t3/2).
+Inserting into the definition of At yields
+lim
+t→0 At = −
+vol(M)
+X
+i
+∇ei∇eiS(p).
+Thus we recover the connection Laplacian by Lemma 1 .
+To analyze the quantity Bt, we first observe that inside of ˜B, the parallel transport map Pexpp(x)→p
+varies smoothly in x, with bounded derivatives. Since the section S is C3, the mean value theorem
+(Lemma 4) ensures there is a K > 0 such that ∥F(x) −F(p)∥≤K∥x −p∥for all x ∈˜B. Utilizing
+this Lipschitz bound and the augmented Gaussian identities, we may compute:
+∥Bt∥≤
+vol(M)γt
+Z
+˜
+B
+exp
+
+−∥x∥2
+4t
+
+∥˜F(0) −˜F(x)∥
+
+O(∥x∥2)
+
+dx
+≤K/vol(M)
+t
+(4πt)m/2
+Z
+˜
+B
+∥x∥3 exp
+
+−∥x∥2
+4t
+
+= 1
+t O
+
+t3/2
+= O
+√
+t
+
+.
+Hence Bt →0 as t →0. Combining with the analysis of At yields:
+lim
+t→0
+h
+γt ˆ∆t
+FnS
+
+(p)
+i
+= lim
+t→0[At + Bt]
+= ∆∇S(p)
+Lemma 10 (Variance asymptotics). Let (M, E, ∇) be a Hilbert bundle equipped with a compatible
+Fréchet connection, with associated Laplacian ∆∇. Fix a section S ∈C4(M, E). Consider a random
+sample of n-points with respect to the normalized volume form, Xn = {x1, x2, · · · , xn} ⊂M. For
+each bandwidth t, let γ := (t(4πt)m/2)−1, where m := dim(M). Define an error term:
+Rn(S) := γ ˆ∆FtnS −
+vol(M)∆∇S .
+There is a constant Cvar > 0, which depends on the section S, such that the following asymptotic
+estimate holds as t →0+:
+EXn
+h
+∥Rn(S) −EXnRn(S)∥2
+L2
+i
+≤
+Cvar
+nt2+ m
+2 .
+Proof. Let Yj be the random section given by
+Yj(x) := γ(S(x) −Pxj→xS(xj)) exp
+
+−dM(x, xj)2
+4t
+
+.
+Note that Yj is stochastic only through the sample point xj, and that Yi, Yj are independent when
+i ̸= j. It is straightforward to verify by Funbini’s theorem that
+EXn
+h
+∥Rn(S) −EXnRn(S)∥2
+L2
+i
+= 1
+n
+ Ex1
+
+∥Y1∥2
+L2
+
+−∥Ex1Y1∥2
+L2
+
+≤1
+nEx1
+
+∥Y1∥2
+L2
+
+.
+Set K := maxx∈M ∥S(x)∥Ex. By Fubini, we may exchange the order of integration and find
+Ex1
+
+∥Y1∥2
+L2
+
+=
+Z
+M
+Ex1
+h
+∥Yj(x)∥2
+Ex
+i
+dx
+We may compute:
+Ex1
+
+∥Y1(x)∥2
+Ex
+
+=
+vol(M)
+Z
+M
+γ(S(x) −Px1→xS(x1)) exp
+
+−dM(x, x1)2
+4t
+
+Ex
+dx1
+≤4γ2K2
+vol(M)
+Z
+M
+exp
+
+−dM(x, x1)2
+2t
+
+dx1 .
+By standard Gaussian identities, the remaining Gaussian integral is O(tm/2) as t →0+, with constant
+independent of x. Recalling the definition of γ in terms of t, we recover that
+Ex1
+
+∥Y1(x)∥2
+Ex
+
+= O(t−(2+m)) · O(tm/2) = O(t−(2+m/2)).
+Since the constants are all independent of x, we may integrate over M and find that
+Ex1
+
+∥Y1∥2
+L2
+
+= O(t−(2+m/2))
+as well. The result immediately follows.
+Lemma 11 (Bias asymptotics). Let (M, E, ∇) be a Hilbert bundle equipped with a compatible
+Fréchet connection, with associated Laplacian ∆∇. Fix a section S ∈C4(M, E). Consider a random
+sample of n-points with respect to the normalized volume form, Xn = {x1, x2, · · · , xn} ⊂M. For
+each bandwidth t, let γ := (t(4πt)m/2)−1, where m := dim(M). Define an error term:
+Rn(S) := γ ˆ∆t
+FnS −
+vol(M)∆∇S
+There is a constant Cbias > 0, which depends on the section S, such that the following asymptotic
+estimate holds as t →0+:
+h
+∥EXnRn(S)∥2
+L2
+i
+≤
+ Cbiast
+2 .
+Proof. This follows from essentially repeating the analysis in the proof of Lemma 9 using the fourth
+order Taylor expansion F(y) = Py→xS(y) in terms of the covariant derivative. In particular, after
+accounting for the fourth-order Taylor remainder, we find that:
+EXn[γ ˆ∆Ft
+n(x)] =
+vol(M)∆∇S(x) + O(t) .
+The result follows.
+H.3
+Proof of Theorem 1
+H.3.1
+Proof of Theorem 1A
+Theorem. Let (M, E, ∇) be a Hilbert bundle equipped with a compatible Fréchet connection, with
+associated Laplacian ∆∇. Fix a section S ∈C3(M, E). Consider a random sample of n-points with
+respect to the normalized volume form, Xn = {x1, x2, · · · , xn} ⊂M. Let Ft
+Xn be the associated
+Hilbert cellular sheaf with bandwidth t and associated Point cloud Laplacian ˆ∆Ftn. Then, we have
+that in probability, for any x ∈M,
+lim
+n→∞
+tn (4πtn)
+m
+ˆ∆Ftn
+n S(x) =
+vol(M)∆∇S(x)
+with bandwidth tn = n−
+m+2+α , α > 0.
+Proof. Let γn :=
+tn
+(4πtn)m/2 , and consider the scaled functional approximation γn ˆ∆tn which acts
+on a section S at point p by:
+
+γn ˆ∆tnS
+
+(p) = γn
+Z
+M
+e−dM(p,x)2
+4tn
+(Px→pS(x) −S(p)) dµ(x) .
+We may bound:
+P
+
+γn
+ˆ∆Ftn
+n S(x) −
+vol(M)∆∇S(x)
+ > 2ϵ
+
+≤
+P
+ 1
+γn
+ ˆ∆Ftn
+n S(x) −ˆ∆tnS(x)
+ > ϵ
+
++ P
+
+γn
+ˆ∆tnS(x) −
+vol(M)∆∇S(x)
+ > ϵ
+
+as n →∞we have tn →0. Hence the second quantity on the right hand side goes to zero by Lemma
+9. On the other hand, the first quantity on the right hand side can be bound by the concentration
+inequality of Lemma 7, yielding:
+P
+ 1
+γn
+ ˆ∆Ftn
+n S(x) −ˆ∆tnS(x)
+ > ϵ
+
+≤2 exp
+t2+m
+n
+n(4πt)mϵ2
+2K2
+
+,
+where K is a constant depending on the section S. Since nt2+m
+n
+→∞as n →∞, the concentration
+upper bound goes to zero as n →∞as well. This completes the proof of the of the main theorem.
+H.3.2
+Proof of theorem 1B
+Theorem. Let (M, E, ∇) be a Hilbert bundle equipped with a compatible Fréchet connection, with
+associated Laplacian ∆∇. Fix a section S ∈C4(M, E). Consider a random sample of n-points with
+respect to the normalized volume form, Xn = {x1, x2, · · · , xn} ⊂M. Let Ft
+Xn be the associated
+Hilbert cellular sheaf with bandwidth t and associated Point cloud Laplacian ˆ∆Ftn. Then, we have
+the following convergence in expectation:
+lim
+n→∞EX
+
+
+tn (4πtn)
+m
+ˆ∆Ftn
+n S(x) −
+vol(M)∆∇S(x)
+L2
+
+= 0
+with bandwidth tn = n−
+m+2+α , α > 0.
+Proof. Let γn := (tn(4πtn)m/2)−1. Define an error term:
+Rn(S) := γ ˆ∆FtnS −
+vol(M)∆∇S .
+We may decompose the error into a bias and variance term as:
+EXn
+
+∥Rn∥2
+L2
+
+= EXn
+h
+∥Rn(S) −EXnRn(S)∥2
+L2
+i
++ ∥EXnRn(S)∥2
+L2 .
+By the asymptotic results of Lemmas 10 and 11, there are positive constants Cvar and Cbias such that
+EXn
+
+∥Rn∥2
+L2
+
+≤
+Cvar
+nt
+2+ m
+n
++ C2
+biast2
+n
+Since tn = n−1/(m+2+α), we have t2
+n →0 and nt
+2+ m
+n
+→∞as n →∞. Hence both terms vanish
+in limit, proving the desired convergence.
+H.4
+Key Lemmas for Theorem 2
+Definition 25. Let E be a smooth Hilbert bundle over a manifold M. A finite rank approximating
+sequence for E is a sequence of smooth sub-bundles {Ed}d≥1 with the following properties:
+1. For each d, Ed has finite rank;
+2. For each d, the bundle Ed is a sub-bundle of Ed+1;
+3. For each x ∈M, we have that cl (span (S
+d(Ed)x)) = Ex.
+Lemma 12. Let E be a smooth Hilbert bundle with infinite dimensional fibres over a compact
+manifold M. A finite rank approximating sequence {Ed}d exists.
+Proof. By Kuiper’s Theorem [61], the unitary group of the typical fiber H is contractible, implying
+that there exists an isomorphism of E with bundle M × H at the level of purely topological bundles.
+Now note that every Hilbert bundle M × H admits a finite rank approximating sequence, by
+considering a Hilbert space basis {e1, e2, . . .} for H, and defining Hn := span(e1, . . . , en). The
+sequence {M × Hd}d can then be seen to be a finite rank approximating sequence. Furthermore,
+because the base space is a finite-dimensional manifold, this topological trivialization can be upgraded
+to a smooth global trivialization [75]. Let Φ : E →M×H be such a smooth isomorphism. Thus, the
+finite rank approximating sequence {M × Hd}d pulls back to a finite rank approximating sequence
+on E by Ed := Φ−1(M × Hd), as desired.
+Lemma 13. Let (E, M, ∇) be a smooth Hilbert bundle over a compact manifold M equipped with
+a compatible connection ∇. Let {Ed}d≥1 be a finite rank approximating sequence for E. The data of
+∇induces a compatible connection ∇d := Πd∇on Ed, where Πd : E →Ed denotes the fibre-wise
+orthogonal projection onto Ed.
+Proof. This follows immediately from the fact that ∇is compatible and orthogonal projections are
+self-adjoint.
+Remark 18. Let (M, E, ∇) be a smooth Hilbert bundle equipped with a compatible connection. By
+the previous lemmas, we may always find a finite rank approximating sequence (Ed, M, ∇d), each
+with compatible connection. These compatible connections induce connection Laplacians ∆∇d on
+each sub-bundle. Moreover, Theorem 1B applies to each Laplacian ∆∇n.
+We restate and prove Proposition 1.
+Proposition. Let (M, E, ∇) be a Hilbert bundle, with generic Hilbert-space fiber H. Fix an
+orthogonal basis B = {e1, e2, ...} of H and let Hd := span(e1, e2, ..., ed). Then there exists a
+smooth map of bundles
+Πd : E →Ed
+(93)
+where Ed is a d-dimensional vector bundle with generic fiber Hd and at each x ∈M, Πd|Ex : Ex →
+Ed,x recovers the usual orthogonal projection map.
+Proof. One we fix a basis B, the conclusion follows from the proof of Lemma 12 and an application
+of Lemma 13.
+Definition 26. Let (M, E, ∇) be a smooth Hilbert bundle over a compact oriented manifold M of
+dimension m equipped with a compatible connection ∇. Fix a section S ∈C4(M, E). Let {Ed}d
+be a finite rank approximating sequence for E with induced connections ∇d, connection Laplacians
+∆∇d, and bandwidth t point cloud Laplacians ˆ∆t
+n,d associated to an iid sampling X = {x1, x2, . . .}.
+Let Πd : E →Ed denote the fiber-wise orthogonal projection map onto Ed. The discretization error
+D(n, d) and the continuous geometry error E(d) are the quantities:
+D(n, d) :=
+γn ˆ∆tn
+n,d(ΠdS) −
+vol(M)∆∇d(ΠdS)
+L2
+E(d) :=
+vol(M) (∆∇d(ΠdS) −∆∇S)
+L2 .
+Remark 19. The discretization error D(n, d) captures the error introduced by approximating the
+connection Laplacian ∆∇d by a point-cloud Laplacian on n points. The continuous geometry error
+E(d) is a deterministic quantity that captures the error introduced by moving to the sub-bundle Ed.
+Lemma 14. The continuous geometry error E(d) converges to zero as d →∞.
+Proof. Without loss of generality, by pushing through the global trivialization of Kuiper’s theorem,
+we may assume without loss of generality that E = H × M as topological bundles. First, note that
+the orthogonal projection Πd commutes with the Fréchet derivative D on sections, in the sense that:
+D(ΠdS) = Πd(DS).
+By Proposition 2, for any vector field X, we may write:
+∇XS = DS(X) + A(X)S
+where A(X) is a globally bounded linear operator acting on the fiber H. We may now compute:
+(∇d)X(ΠdS) = Πd∇X(ΠdS)
+= Πd (DΠdS(X) + A(X)ΠdS)
+= ΠdDS(X) + ΠdA(X)ΠdS)
+Since Πd →id in the strong operator topology and DS(X) ∈H, we have that ΠdDS(X) →DS(X)
+as d →∞. Similarly since A(X) : H →H is bounded, we find that for each x ∈M, we have
+ΠdA(X)ΠdS(x) →A(X)S(x). Therefore ∇d(ΠdS)(x) →∇S(x) . By a similar argument, we
+may conclude that for a pair of vector fields X, Y , that (∇d)X(∇d)Y (ΠdS)(x) →∇X∇Y S(x).
+Hence using the coordinate form of the connection Laplacian of Lemma 1, we recover that:
+lim
+d→∞[∆∇dS(x)] = ∆∇S(x)
+for all x ∈M.
+We now upgrade to this statement to L2 convergence by the dominated convergence theorem. If
+there is a global bound K such that ∥∆∇d(ΠdS)(x) −∆∇S(x)∥H ≤K for all x ∈M, we may
+apply the dominated convergence theorem and conclude that E(d) →0. To find such a K, we first
+observe that ∆∇S is a continuous section, and hence ∥∆∇S(x)∥H ≤K1 is bounded on the compact
+manifold M. Next, for a pair of vector fields X, Y , we may use the fact that ∥Πd∥op = 1 and the
+representation ∇= D + A to find a d-independent bound on
+ (∇d)X(∇d)Y (ΠdS)
+
+(x)
+
+H. The
+local coordinate form the connection Laplacian ∆∇d again allows us to conclude that there is a bound
+∥∆∇d(ΠdS)(x)∥H ≤K2 for all x ∈M and d ≥1. The triangle inequality finally allows us to
+bound:
+∥∆∇d(ΠdS)(x) −∆∇S(x)∥H ≤K1 + K2 .
+This completes the proof.
+H.5
+Proof of Theorem 2
+Theorem. Let (E, M, ∇) be a smooth Hilbert bundle over a compact oriented manifold M of
+dimension m equipped with a compatible connection ∇. Fix a section S ∈C4(M, E). Let {Ed}d be
+a finite rank approximating sequence for E with induced connections ∇d, connection Laplacians ∆∇d,
+and bandwidth t point cloud Laplacians ˆ∆Ft
+n,d associated to an iid sampling X = {x1, x2, . . .}. Let
+Πd : E →Ed denote the fiber-wise orthogonal projection map onto Ed. There exists a deterministic
+increasing sequence dn, depending on the section S, such that
+lim
+n→∞EX
+"
+tn(4πtn)m/2 ˆ∆Ftn
+n,dn(ΠdnS) −
+vol(M)∆∇S
+L2
+#
+= 0
+with bandwidth tn = n−
+m+2+α , α > 0.
+Proof. Let γn :=
+tn(4πtn)m/2 . We may easily bound the expected global error in terms of the
+continuous geometry error and the expected discretization error:
+EX
+"γn ˆ∆tn
+Fn,dn(ΠdnS) −
+vol(M)∆∇S
+L2
+#
+≤2EXn[D(n, d)] + 2E(d) .
+By applying Theorem 1 to the bundle Ed, the expected discretization error EXn[D(n, d)] →0 as
+n →∞. On the other hand, Lemma 14 ensures that E(d) →0 as d →∞.
+To construct the diagonal sequence, first choose an increasing sequence pi such that E(d) < 1
+i for all
+d ≥pi. Next, choose an increasing sequence Ni such that EXn[D(n, pi)] < 1
+i for each n ≥Ni. For
+each n ≥1, set ϕ(n) := max{i | Ni ≤n}. Observe that E(pϕ(n)) <
+ϕ(n) ≤1
+n since ϕ(n) ≥n.
+On the other hand, EXn[D(n, pϕ(n))] <
+ϕ(n) ≤1
+n as well. Therefore setting dn := pϕ(n) yields a
+diagonal sequence with the property that
+EX
+"γn ˆ∆Ftn
+n,dn(ΠdnS) −
+vol(M)∆∇S
+L2
+#
+< 4
+n .
+This diagonal subsequence is deterministic as both the continuous geometry error and the expected
+discretization error are deterministic.
+H.6
+Key Lemmas for Corollary 2.1
+Lemma 15. Let (E, M, ∇) be a smooth Hilbert bundle over a compact oriented manifold M of
+dimension m equipped with a compatible connection ∇. Fix a section S ∈C4(M, E). Let {Ed}d be
+a finite rank approximating sequence for E with induced connections ∇d, connection Laplacians ∆∇d,
+and bandwidth t point cloud Laplacians ˆ∆Ft
+n,d associated to an iid sampling X = {x1, x2, . . .}. Let
+Πd : E →Ed denote the fiber-wise orthogonal projection map onto Ed. Let {dn} be the diagonal
+sequence induced by Theorem 2. Let ˜∆n :=
+tn(4πtn)m/2 ˆ∆Ftn
+n,dnΠdn with bandwidth tn = n−
+m+2+α ,
+α > 0. Similarly, let ˜∆:=
+vol(M)∆∇. Finally, let g : R →R be a bounded continuous function.
+Under the Borel functional calculus (Appendix G.4), we have MSE convergence:
+E
+g( ˜∆n)S −g( ˜∆)S
+L2
+
+→0 .
+Proof. Observe that ˜∆and each ˜∆n are self-adjoint unbounded operators on L2(E; M). We begin
+by showing there is a common core D ⊆L2(E; M) and a subsequence ni for which ˜∆niS →˜∆S
+in L2(E; M).
+Take D to be any countable dense subset of C∞(M, E). Since E has separable fibers, such a
+countable dense subset necessarily exists. Moreover, ˜∆and ˜∆n are all defined on D. This D shall be
+our common core.
+Treat ˜∆nS as an L2(M, E)-valued random variable. For each S ∈D, Theorem 2 ensures that
+˜∆nS →˜∆S in mean square error. It immediately follows that ˜∆nS
+PX
+−−→˜∆S in probability with
+respect to the measure from which the sampling X is drawn.
+Enumerate D = {S1, S2, . . .}. Since convergence in probability implies almost sure convergence on
+a subsequence, we may inductively construct a doubly-indexed sequence of indices N a
+b such that the
+following properties hold:
+1. For each a, the sequence {N a+1
+b
+}b is a subsequence of {N a
+b }b;
+2. Along the sequence {N a
+b }b, we have almost sure convergence ˜∆Na
+b Sa
+a.s.
+−−→˜∆Sa as b →∞.
+Take the diagonal sequence ni := N i
+i . Along ni, we have that ˜∆niS
+a.s.
+−−→˜∆S as i →∞for all
+S ∈D. Now applying Theorems VIII.25(a) and VIII.20(b) of [82], we may conclude that:
+∥g( ˜∆ni)S −g( ˜∆)S∥L2
+a.s.
+−−→0
+almost surely for each S.
+Notice that the previous argument can not only be applied to the sequence n = {1, 2, 3, ...}, but
+also along any subsequence of {n}n. Since any subsequence of {n}n therefore has an almost surely
+convergent sub-subsequence, we may conclude that for the original sequence n, for each section S
+(not necessarily in D), we have convergence in probability:
+∥g( ˜∆n)S −g( ˜∆)S∥L2
+PX
+−−→0
+in probability with respect to the sampling X as n →∞.
+Finally, by the spectral calculus, since g : R →R is bounded by some B, we may bound
+∥g( ˜∆n)S∥L2 ≤B∥S∥L2. Similarly, |g( ˜∆)S∥L2 ≤B∥S∥L2. It follows that for each n,
+∥g( ˜∆n)S −g( ˜∆)S∥2
+L2 ≤4B2
+for all n. Hence the dominated convergence theorem admits an MSE upgrade to the desired conclu-
+sion:
+E
+g( ˜∆n)S −g( ˜∆)S
+L2
+
+→0 .
+H.7
+Proof of Corollary 2.1
+Corollary. Under the hypotheses of Theorem 2, let {dn}n be the constructed deterministic diagonal
+sequence, and L ∈N. Let σ be a fiber-wise nonlinearity that is Cσ-Lipschitz in the corresponding
+fiber norms. For bounded continuous filters g0, . . . , gL−1 ∈W, consider the continuous and sampled
+architectures:
+Sℓ+1 := σ
+
+gℓ
+˜∆
+
+Sℓ
+Sℓ+1
+n
+:= σ
+
+gℓ
+˜∆n
+
+Sℓ
+n
+
+,
+with initializations S0
+:=
+S and S0
+n
+:=
+ΠdnS, where ˜∆
+:=
+vol(M)∆∇and ˜∆n
+:=
+tn(4πtn)m/2 ˆ∆Ftn
+n,dn.
+Then, the output of the discrete architecture converges in mean square to the output of the continuous
+architecture:
+lim
+n→∞E
+hSL
+n −SL2
+L2(M;E)
+i
+= 0 .
+Proof. We proceed by induction on the layers. Let en,ℓand δn,ℓdenote the signal error and spectral
+filter error at layer ℓrespectively:
+en,ℓ:=
+Sℓ
+n −Sℓ
+L2
+δn,ℓ:=
+gℓ( ˜∆n)(ΠdnSℓ) −gℓ( ˜∆)Sℓ
+L2 .
+Let Mℓ:= supx∈R ∥gℓ(x)∥. By the Lipschitz continuity of the nonlinearity σ, the triangle inequality
+yields the pathwise recursive bound:
+en,ℓ+1 ≤Cσ(Mℓen,ℓ+ δn,ℓ) .
+Iterating this inequality over L layers expands to:
+en,L ≤
+ L−1
+Y
+r=0
+CσMr
+!
+en,0 +
+L−1
+X
+q=0
+ L−1
+Y
+r=q+1
+CσMr
+!
+Cσδn,q .
+By Theorem 2, the initialized signal error en,0 →0 in mean square. Furthermore, by Lemma 15,
+δn,q →0 in mean square as well for each q.
+Taking the expectation of the squared recursive bound and applying the Cauchy-Schwarz inequality
+to the finite sum isolates the individual mean square limits. Hence, as n →0, we have that the total
+error satisfies:
+lim
+n→∞E[e2
+n,L] = 0 .
+In particular, we have that as sampling density goes to infinity, in MSE ,
+Ω(Fn,dn, ˆ∆Fn,dn, W, σ) →Ω(E, ∆∇, W, σ) .
+H.8
+Proof of Corollary 2.2
+Corollary. Let (E, M, ∇) be a smooth Hilbert bundle over a compact oriented manifold M of
+dimension m equipped with a compatible connection ∇. Fix a section S ∈C4(M, E). Let {Ed}d be
+a finite rank approximating sequence for E with induced connections ∇d, and connection Laplacians
+∆∇d. Let Πd : E →Ed denote the fiber-wise orthogonal projection map onto Ed. Let X =
+{x1, x2, . . .} and Y = {y1, y2, . . .} be a pair of independent iid samplings of points on the manifold.
+Denote the bandwidth t point cloud Laplacians associated to these distinct samplings by ˆ∆Ft
+Xn,d and
+ˆ∆Ft
+Yn,d respectively. Let {dn} be a diagonal sequence such that the conclusion of Theorem 2 holds
+for both samplings. Let ˜∆X
+n :=
+tn(4πtn)m/2 ˆ∆Ftn
+Xn,dn
+Πdn with bandwidth tn = n−
+m+2+α , α > 0,
+and similar for ˜∆Y
+n.
+Let L ∈N be a network depth, and σ be a fiber-wise nonlinearity that is Cσ-Lipschitz in the corre-
+sponding fiber norms. For bounded continuous filters g0, . . . , gL−1 ∈W, consider the continuous
+and sampled architectures:
+Sℓ+1 := σ
+
+gℓ
+
+˜∆
+
+Sℓ
+SX,ℓ+1
+n
+:= σ
+
+gℓ
+
+˜∆X
+n
+
+SX,ℓ
+n
+
+SY,ℓ+1
+n
+:= σ
+
+gℓ
+
+˜∆Y
+n
+
+SY,ℓ
+n
+
+,
+with initializations S0 := S and SX,0
+n
+, SY,0
+n
+:= ΠdnS. Under these hypotheses and notation, one
+may obtain a MSE convergence result:
+lim
+n→∞E
+hSX,L
+n
+−SY,L
+n
+L2
+i
+= 0 .
+Further, one may derive a quantitative bound for the L2 disagreement ∥SX,L
+n
+−SY,L
+n
+∥L2 in terms of
+sample-indpendent quantities.
+Proof. One may bound:
+SX,L
+n
+−SY,L
+n
+L2 ≤2
+SX,L
+n
+−SL2
+L2 + 2
+SY,L
+n
+−SL2
+L2
+Applying Corollary 2.1 to each sampling separately yields the MSE convergence. In particular, we
+have that
+lim
+n→∞EX,Y
+Ω(Ftn
+Xn,dn, ˆ∆Ftn
+Xn,dn, W, σ) −Ω(Ftn
+Yn,dn, ˆ∆Ftn
+Yn,dn, W, σ)
+L2
+
+= 0 .
+To derive a quantitative bound, introduce the per-sampling signal error and spectral filter error at level
+ℓby:
+e(−)
+n,ℓ:=
+S(−),ℓ
+n
+−Sℓ
+L2
+δ(−)
+n,ℓ:=
+hℓ( ˜∆(−)
+n
+)(ΠdnSℓ) −hℓ( ˜∆)Sℓ
+L2 .
+Apply the triangle inequality and the layer-wise recursive bounds of the proof of Corollary 2.1 to
+establish:
+SX,L
+n
+−SY,L
+n
+
+L2 ≤
+ L−1
+Y
+r=0
+CσMr
+!
+(eX
+n,0 + eY
+n,0) +
+L−1
+X
+q=0
+ L−1
+Y
+r=q+1
+CσMr
+!
+Cσ(δX
+n,q + δY
+n,q) .
+The level-zero signal error is sampling independent, and bounded above by ∥S∥L2. On the other
+hand, we may further apply the Borel functional calculus to bound each spectral filter error by:
+δ(−)
+n,q ≤2Mq∥Sq∥L2 .
+We hence conclude a sample-independent bound:
+SX,L
+n
+−SY,L
+n
+
+L2 ≤2
+ L−1
+Y
+r=0
+CσMr
+!
+∥S∥L2 + 2
+L−1
+X
+q=0
+ L−1
+Y
+r=q+1
+CσMr
+!
+CσM∥Sq∥L2 .

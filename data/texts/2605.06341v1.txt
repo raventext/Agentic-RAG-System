@@ -1,0 +1,1153 @@
+CoupleEvo: Evolving Heuristics for Coupled Optimization
+Problems Using Large Language Models
+Thomas Bömer
+thomas.boemer@kit.edu
+Karlsruhe Institute of Technology
+Karlsruhe, Germany
+Bastian Amberg
+bastian.amberg@kit.edu
+Karlsruhe Institute of Technology
+Karlsruhe, Germany
+Max Disselnmeyer
+max.disselnmeyer@kit.edu
+Karlsruhe Institute of Technology
+Karlsruhe, Germany
+Anne Meyer
+anne.meyer@kit.edu
+Karlsruhe Institute of Technology
+Karlsruhe, Germany
+Best heuristic code
+Programs Database
+Heuristic
+Generator LLM
+Prompt Strategies
+Best heuristic code
+Code
+Thoughts
+Code
+Thoughts
+...
+Code
+Thoughts
+Heuristic Tuple 1
+Best heuristic code
+...
+Coupled Problem
+Evaluation
+Subproblem 1
+Code
+Subproblem 2
+Code
+Subproblem k
+Code
+...
+Coupled Problem
+Specifications
+Subproblem 1
+Specifications
+Subproblem 2
+Specifications
+Subproblem k
+Specifications
+...
+Specifications
+Heuristic Output
+Modification
+M1
+M2
+E2
+E1
+Exploration
+Prompt Strategies
+Code
+Thoughts
+Code
+Thoughts
+...
+Code
+Thoughts
+New Heuristic Tuple
+Prompt
+Specifications
+Prompt
+Specifications
+Prompt
+Specifications
+Prompt
+Specifications
+...
+Code
+Thoughts
+Code
+Thoughts
+...
+Code
+Thoughts
+Heuristic Tuple n
+...
+Figure 1: CoupleEvo evolves multiple heuristics for coupled optimization problems.
+Abstract
+Many real-world optimization problems consist of multiple tightly
+coupled subproblems whose solutions must be coordinated to achieve
+high overall performance. However, existing large language model
+driven automated heuristic design approaches are limited to single-
+problem settings. In this paper, we propose CoupleEvo. CoupleEvo
+proposes three evolutionary coordination strategies to evolve heuris-
+tics for coupled optimization problems: the sequential strategy
+evolves heuristics for one subproblem after the other; the iterative
+strategy alternates the evolution of heuristics for different sub-
+problems over successive generations; and the integrated strategy
+evolves heuristics for all problems simultaneously. The approach
+is evaluated on two representative coupled optimization problems.
+Experimental results show that decomposition-based strategies
+This work is licensed under a Creative Commons Attribution 4.0 International License.
+GECCO Companion ’26, San Jose, Costa Rica
+© 2026 Copyright held by the owner/author(s).
+ACM ISBN 979-8-4007-2488-6/2026/07
+
+(sequential and iterative) provide more stable convergence and
+higher solution quality, while the integrated evolution strategy
+suffers from increased search complexity and variability. These
+findings highlight the importance of coordinating evolutionary
+search across interdependent subproblems and demonstrate the
+potential of LLM-driven heuristic design for complex coupled op-
+timization problems. The code is available: 
+git-kit-research/CoupleEvo.
+CCS Concepts
+• Computing methodologies →Heuristic function construc-
+tion; Natural language processing; Learning paradigms; Plan-
+ning and scheduling; • Mathematics of computing →Combi-
+natorial optimization.
+Keywords
+large language models, automated heuristic design, coupled opti-
+mization problems
+arXiv:2605.06341v1 [cs.NE] 7 May 2026
+
+GECCO Companion ’26, July 13-17, 2026, San Jose, Costa Rica
+Bömer et al.
+ACM Reference Format:
+Thomas Bömer, Bastian Amberg, Max Disselnmeyer, and Anne Meyer.
+2026. CoupleEvo: Evolving Heuristics for Coupled Optimization Problems
+Using Large Language Models. In Genetic and Evolutionary Computation
+Conference (GECCO Companion ’26), July 13-17, 2026, San Jose, Costa Rica.
+ACM, New York, NY, USA, 9 pages. 
+Introduction
+Many real-world optimization systems are composed of multiple
+tightly coupled subproblems whose solutions must be jointly coor-
+dinated in order to achieve high overall system performance. These
+coupled optimization problems often combine two or more NP-hard
+optimization subproblems. This structure is prevalent, for example,
+in complex production and logistics environments. In this domain,
+coupled optimization problems frequently include a vehicle routing
+component. Representative examples of such coupled problems
+include the Inventory Routing Problem (IRP) [9], the Production
+Routing Problem [1], and the Location Routing Problem [19]. In
+these settings, the interaction among subproblems fundamentally
+determines solution quality. Consequently, optimizing each sub-
+problem in isolation often yields suboptimal global outcomes. At
+the same time, the combinatorial growth of the joint solution space
+renders fully integrated, simultaneous optimization computation-
+ally intractable for realistically sized instances. As a result, practical
+solution approaches commonly rely on some form of sequential or
+iterative coordination between subproblems, rather than integrated
+global optimization (see Figure 2).
+Subproblem 1
+Subproblem 2
+Subproblem k
+...
+(a) sequential
+Subproblem 1
+Subproblem 2
+Subproblem k
+...
+(b) iterative
+Subproblem 1
+Subproblem 2
+Subproblem k
+...
+(c) integrated
+Figure 2: Comparison of sequential, iterative, and integrated
+solution strategies for coupled optimization problems.
+In recent work, large language models (LLMs) have demonstrated
+strong performance in the automatic design of heuristics for com-
+binatorial optimization problems [14, 20, 23, 26]. In these LLM-
+based automated heuristic design frameworks the evolutionary
+loop evolves a single heuristic for a single-problem setting. The
+challenge to design multiple heuristics for multiple tightly coupled
+subproblems has not been addressed yet. For the adoption of LLM-
+enabled heuristic design, it requires an evolutionary coordination
+strategy to coordinate the evolution of multiple heuristics. In this
+context, the evolutionary coordination strategy itself becomes a
+first-class design object that directly shapes the evolutionary search
+dynamics and the resulting quality of generated heuristics. This
+observation motivates the systematic investigation of evolution-
+ary coordination strategies for coupled problems in LLM-driven
+automated heuristic design.
+To address this gap, we propose CoupleEvo (see Figure 1), which
+comprises three evolutionary coordination strategies inspired by
+established decomposition-based approaches for LLM-driven auto-
+mated heuristic design in coupled optimization problems:
+• Sequential Evolution: Heuristics are evolved for one sub-
+problem after another.
+• Iterative Evolution: Heuristics are evolved alternating be-
+tween subproblems over multiple rounds.
+• Integrated Evolution: Heuristics for all subproblems are
+evolved simultaneously.
+Each evolutionary coordination strategy has its own potential
+advantages and disadvantages. The sequential evolution strategy
+offers conceptual simplicity and a strong local convergence. How-
+ever, premature convergence in the evolution of an earlier-stage
+subproblem may constrain the effective search space for subse-
+quent subproblems. This may impede the discovery of globally
+high-quality and well-coordinated heuristics. The iterative evolu-
+tion strategy seeks to address this limitation by repeatedly shifting
+the evolutionary focus between subproblems. This enables progres-
+sive refinement of each component while preserving flexibility for
+coordination. At the same time, the frequent alternation between
+subproblems may prevent the evolutionary process from fully ex-
+ploiting the local optima of each subproblem, thereby limiting the
+overall potential of the search. By contrast, the integrated evolution
+strategy models the interdependence between subproblems directly
+by evolving all subproblem heuristics concurrently. This enables
+the evolutionary process to explicitly capture and exploit cross-
+component interactions. While this approach offers the greatest
+potential for discovering highly coordinated, high-quality solutions,
+it comes at the cost of increased heuristic search complexity and
+substantially higher demands on the generative capabilities of the
+LLM.
+In this work, we investigate the evolutionary coordination strate-
+gies for coupled optimization problems within an iterative Large
+Neighborhood Search (LNS) framework [21]. Each subproblem is
+modeled as an independent LNS component, and the overall solu-
+tion is obtained by iteratively coordinating the LNS components of
+all subproblems. LLMs are employed as automated heuristic design-
+ers to generate a dedicated destroy heuristic for each subproblem.
+The destroy heuristic determines which components of the cur-
+rent solution of its corresponding subproblem are removed in the
+iteration. The repair heuristic stays deterministic. Through this
+mechanism, the LLMs directly control neighborhood exploration
+and guide the search process.
+The main contributions of this work are summarized as follows:
+• CoupleEvo: We formulate the first LLM-driven framework
+for automated heuristic design in coupled optimization prob-
+lems, extending existing single-problem approaches to set-
+tings with multiple interdependent NP-hard subproblems.
+• Evolutionary Strategies: We propose three evolutionary
+coordination strategies (Sequential Evolution, Iterative Evo-
+lution, and Integrated Evolution) that govern how heuristics
+for interacting subproblems are generated within the evolu-
+tionary process.
+
+CoupleEvo: Evolving Heuristics for Coupled Optimization Problems Using Large Language Models
+GECCO Companion ’26, July 13-17, 2026, San Jose, Costa Rica
+• Comprehensive Evaluation: We conduct extensive exper-
+imental evaluations on two representative coupled optimiza-
+tion domains (Inventory Routing Problem and Multi-robot
+Multi-bay Unit-Load Pre-Marshalling Problem) providing
+empirical insights into the effectiveness and trade-offs of
+different evolutionary coordination strategies.
+The rest of the paper is organized as follows. Section 2 briefly
+introduces the two studied combinatorial optimization problems.
+Section 3 provides an overview on automated heuristic design ap-
+proaches using LLMs. Section 4 presents the evolutionary procedure
+and the proposed evolutionary coordination strategies. Section 5
+presents the results of computational experiments. Finally, Section
+6 summarizes the findings and outlines future research directions.
+Coupled Optimization Problems
+To analyze the evolutionary strategies proposed in CoupleEvo, we
+consider two representative coupled optimization problems. The
+Inventory Routing Problem represents the class of well-established,
+canonical benchmark problems in coupled optimization. In con-
+trast, the Multi-robot Multi-bay Unit-load Pre-marshalling Problem
+represents a recently emerging coupled optimization problem that
+is less commonly covered in existing literature and, consequently,
+less likely to be well represented in LLM knowledge bases.
+Inventory Routing Problem. The Inventory Routing Problem (IRP)
+[9] is a classical coupled optimization problem that integrates inven-
+tory management and vehicle routing decisions. The objective is to
+determine replenishment quantities and delivery routes for a set of
+customers over a planning horizon, such that customer demand is
+satisfied while minimizing total cost, including transportation and
+inventory holding costs.
+The problem can be decomposed into two tightly coupled sub-
+problems: the inventory management problem and the capacitated
+vehicle routing problem. The inventory management problem in-
+volves determining the amount and time to deliver inventory to
+each customer in order to maintain feasible stock levels over time.
+Given these replenishment decisions, the vehicle routing problem
+constructs delivery routes that satisfy vehicle capacity constraints
+and minimize transportation cost.
+Multi-robot Multi-bay Unit-load Pre-marshalling Problem. The
+Multi-robot Multi-bay Unit-load Pre-marshalling Problem (MR-
+MUPMP) [6-8] generalizes the Unit-load Pre-marshalling Problem
+[18] into a tightly coupled optimization setting. The objective is to
+reorganize unit loads in a block-stacking warehouse according to
+priority classes using a fleet of autonomous robots, while minimiz-
+ing the overall makespan of the operations.
+The problem can be decomposed into two interdependent sub-
+problems: the move search problem and a vehicle routing problem
+with precedences. The move search problem determines a sequence
+of relocation operations required to reach a blockage-free config-
+uration, where each move consists of repositioning a unit load
+from one storage slot to another. The vehicle routing problem with
+precedences then assigns these moves to robots and schedules their
+execution so as to minimize the total makespan. These precedences
+arise from the fact that certain moves must be performed before
+others in order to ensure executability.
+Related Work
+In this section, we review studies that employ LLMs within evo-
+lutionary frameworks for heuristic design in combinatorial opti-
+mization. For a broader perspective, [16] provides a comprehensive
+survey of LLMs for algorithm design, including a clear taxonomy
+and an extensive overview of existing approaches.
+LLM-based automated heuristic design was pioneered by Google
+DeepMind’s FunSearch [20], which leverages a pre-trained LLM
+within an evolutionary search loop to iteratively generate and re-
+fine a single heuristic code. A variety of subsequent approaches
+have since extended and adapted this paradigm. EoH [15] repre-
+sents heuristics as natural-language thoughts and executable code,
+refining both jointly through structured prompting. It achieves su-
+perior performance with significantly fewer LLM queries than prior
+approaches. P-CEoH [5] and A-CEoH [4] enhance EoH through
+prompt augmentation, showing that in-context learning improves
+heuristic performance and evolutionary efficiency, particularly for
+smaller LLMs. ReEvo [26] augments evolutionary search with re-
+flective reasoning through a multi-stage workflow, using iterative
+reflection to guide heuristic generation and improve performance.
+HSEvo [11] combines evolutionary operators with harmony search
+and a reflection mechanism to enhance diversity and tune elitist
+heuristic parameters. Hercules [25] improves prompt efficiency
+through reflective abstraction of elite heuristics and reduces evalu-
+ation cost via performance prediction based on semantic similar-
+ity. HiFo-Prompt [10] augments LLM-based heuristic evolution
+with foresight and hindsight mechanisms that adapt search dy-
+namics and distill reusable knowledge to guide future generations.
+ShinkaEvolve [13] introduces a evolutionary framework that im-
+proves sample efficiency in LLM-driven program evolution through
+adaptive parent selection, novelty-based rejection sampling, and
+bandit-based LLM ensemble selection. EvoX [17] introduces a meta-
+evolutionary framework that jointly evolves heuristics and their
+search strategies. It adapts selection and variation dynamically to
+balance exploration and exploitation. EASE [24] provides a modular
+and domain-agnostic framework for LLM-guided algorithm design.
+It enables flexible orchestration of components, supporting modular
+research across diverse tasks. LLaMEA [23] applies LLM-guided
+evolutionary design to continuous black-box optimization, gener-
+ating and refining full metaheuristic algorithms that outperform
+state-of-the-art methods.
+Recent work has extended automated heuristic design to the
+generation of LNS components. Notably, some LNS-focused ap-
+proaches move beyond single-heuristic design and consider the
+joint generation of two interacting heuristics. LLM-LNS [27] ap-
+plies LLM-driven heuristic evolution to the design of a single de-
+stroy operator within an LNS framework for Mixed Integer Linear
+Programming. G-LNS [28] evolves two heuristics-a destroy and a
+repair operator-within a cooperative evolutionary framework. The
+operators are maintained in separate populations and evaluated
+jointly by sampling pairs during LNS execution, while a synergy ma-
+trix captures their interaction and guides selection. The framework
+is evaluated on two standard routing problems. VRP-Agent [12]
+proposes an LLM-driven framework that evolves two complemen-
+tary heuristics, namely a destroy operator and an ordering operator,
+for LNS. In contrast to separate populations, heuristic components
+
+GECCO Companion ’26, July 13-17, 2026, San Jose, Costa Rica
+Bömer et al.
+are generated and maintained as pairs. The repair operator remains
+the same. The approach is evaluated on routing problems.
+Overall, existing work demonstrates that LLMs can effectively
+generate heuristics for combinatorial optimization. Most works
+focus on framework extensions to improve performance through
+refined evolutionary mechanisms. The adaptation to LNS has fur-
+ther motivated the transition from single to multiple interacting
+heuristics. However, to the best of our knowledge, no prior work
+addresses the generation of heuristic tuples for coupled optimiza-
+tion problems, nor systematically studies different evolutionary
+coordination strategies.
+CoupleEvo: Evolutionary Coordination
+Strategies for Coupled Optimization Problems
+In this section, we describe the general evolutionary loop and the se-
+quential, iterative, and integrated evolutionary coordinating strate-
+gies proposed in CoupleEvo.
+Evolutionary Procedure. We consider a coupled optimization
+problem composed of a set of subproblems K = {1, . . . , |K|}. We
+define a heuristic tuple as:
+ℎ=  ℎ(1),ℎ(2), . . . ,ℎ(|K|),
+where ℎ(𝑘) denotes the heuristic associated with subproblem 𝑘∈K.
+Each component heuristic ℎ(𝑘) is represented as a pair
+ℎ(𝑘) =  𝑐(𝑘),𝜏(𝑘),
+where 𝑐(𝑘) denotes the executable program code implementing the
+heuristic logic and 𝜏(𝑘) denotes the corresponding thought describ-
+ing the underlying conceptual idea that guided the construction of
+𝑐(𝑘).
+Accordingly, a full heuristic tuple takes the form:
+ℎ=  (𝑐(1),𝜏(1)), . . . , (𝑐(|K|),𝜏(|K|)).
+The evolutionary framework refines heuristics for these subprob-
+lems over multiple generations. The evolutionary loop differs for
+the three evolutionary coordination strategies: sequential, iterative,
+and integrated.
+The sequential strategy progresses through the set of subprob-
+lems K. For each subproblem 𝑘∈K, an independent evolutionary
+procedure is executed for a predefined number of generations ¯𝑔.
+The population of heuristic tuples at generation 𝑔∈G for subprob-
+lem 𝑘∈K is denoted by P𝑘
+𝑔. During the evolution of subproblem
+𝑘, only the heuristic ℎ(𝑘) is requested via prompt to evolve, while
+the remaining heuristic {ℎ(𝑗) : 𝑗≠𝑘} are fixed to their current
+best-performing heuristics and are copied unchanged into every
+individual of the population. To evolve subproblem 𝑘in genera-
+tion 𝑔a set of prompt strategies S = {1, 2, . . . , |S|} is employed to
+produce the next population P𝑘
+𝑔using a pre-trained LLM. Every
+strategy 𝑠∈S is applied ¯𝑟times, yielding a total of |S| · ¯𝑟new
+heuristics for generation 𝑔. Each newly produced heuristic tuple
+ℎis evaluated on a collection of coupled optimization problem in-
+stances I = {1, 2, . . . , |I|}, where its performance is quantified by
+a fitness score 𝑓I(ℎ). Fitness evaluation is therefore always per-
+formed for full heuristic tuples, but evolution is restricted to the
+currently active subproblem. All subproblems that have not been
+evolved yet are initialized using a simple seed heuristic to allow
+the fitness evaluation. After evaluation, ℎis added to the current
+population P𝑘
+𝑔, and the process continues until all heuristics for the
+generation have been generated. The population size is denoted by
+¯𝑛. At the end of each generation, the top-performing ¯𝑛heuristics are
+retained and carried over to the next generation. After completing
+¯𝑔generations, the best-performing heuristic ℎ(𝑘) yet is fixed and
+used in the evaluation of all subsequent subproblems. Before the
+loop begins for subproblem 𝑘, an initialization phase generates the
+initial population P𝑘
+0 by requesting an initial prompt 2 · ¯𝑟times.
+This procedure is summarized in Algorithm 1.
+Algorithm 1: Sequential Evolution of Heuristic Tuples
+Initialize seed heuristic tuple
+ℎ★←(ℎ(1)
+seed, . . . ,ℎ(𝐾)
+seed)
+for 𝑘∈K do
+Generate P𝑘
+0 by requesting an initial prompt 2¯𝑟times
+Select the top ¯𝑛individuals from P𝑘
+0 and copy them to
+P𝑘
+for 𝑔= 1 to ¯𝑔do
+for 𝑠∈S do
+for 𝑟= 1 to ¯𝑟do
+Generate candidate heuristic ℎ(𝑘) using
+prompt strategy 𝑠via the LLM
+Construct full heuristic tuple
+ℎ= (ℎ(1), . . . ,ℎ(𝑘), . . . ,ℎ(𝐾))
+using fixed ℎ(𝑗) for all 𝑗≠𝑘
+Evaluate fitness 𝑓I(ℎ) on instance set I
+Insert ℎinto P𝑘
+𝑔
+Select the top ¯𝑛individuals from P𝑘
+𝑔and copy them
+to P𝑘
+𝑔+1
+Let ℎ(𝑘)
+best be the best individual in P𝑘
+¯𝑔
+Update
+ℎ★←(ℎ(1), . . . ,ℎ(𝑘)
+best, . . . ,ℎ(𝐾))
+return ℎ★
+The iterative evolutionary coordination strategy works simi-
+larly to the sequential strategy but employs an additional round-
+based control structure. Let ¯𝑙denote the number of control rounds.
+Let L = {1, 2, . . . , ¯𝑙} denote the set of control rounds. At each round
+𝑙∈L, the algorithm cycles through the set of subproblems K as
+described for the sequential strategy. The initialization procedure
+is only performed in the first round 𝑙= 1 for each subproblem.
+In all consecutive rounds, the top ¯𝑛best-performing component
+heuristics obtained in the previous round for subproblem k are
+retained. The sequential strategy can be described as the iterative
+strategy with only a single control round 𝑙.
+The integrated strategy evolves all subproblem heuristics of a
+heuristic tuple ℎsimultaneously. The evolutionary loop is similar
+to the sequential loop described in Algorithm 1, with the difference
+that the LLM is prompted to produce a new candidate heuristic
+tuple in its entirety. It jointly proposes updated program code and
+corresponding thoughts for all subproblems within a single prompt.
+
+CoupleEvo: Evolving Heuristics for Coupled Optimization Problems Using Large Language Models
+GECCO Companion ’26, July 13-17, 2026, San Jose, Costa Rica
+The LLM generates a full heuristic tuple. The tuple is evaluated for
+the coupled optimization problem.
+Heuristic Prompt Strategies. This work employs the prompt strate-
+gies by [15], including the initialization prompt I1, two exploration
+prompts (E1 and E2), and two modification prompts (M1 and M2).
+The following summarizes the functionality of each strategy.
+I1: Construct a heuristic designed to address the specified
+optimization problem.
+E1: Create a heuristic that is significantly different from ¯𝑝
+parent heuristics sampled from the current population.
+E2: Generate a heuristic that preserves the main conceptual
+principles of ¯𝑝parent heuristics while introducing a novel
+variation.
+M1: Refine an existing parent heuristic from the population
+to improve its effectiveness.
+M2: Adjust the parameter settings of a parent heuristic from
+the population to enhance its overall performance.
+Please visit our repository for detailed information on the prompts
+(click here).
+Experimental Setup. CoupleEvo is designed problem-agnostic
+and can be applied to the automated generation of interacting
+heuristics in various solution construction or improvement frame-
+works. In this work, the LLM-generated heuristics are deployed as
+destroy operators within an alternating Large Neighborhood Search
+(LNS) framework for coupled optimization problems [21]. Each
+subproblem is assigned a dedicated LNS module consisting of a
+problem-specific destroy and repair operator. The destroy operator
+is subject to the LLM-enabled automated heuristic design. The re-
+pair operators are deterministic and identical across all experiments,
+ensuring that performance differences arise solely from the evolved
+destroy heuristics. Figure 3 illustrates the solution procedure and
+highlights the components evolved by the LLM.
+Destroy
+Repair
+Stop?
+LNS
+Subproblem 1
+Initial solution
+LNS
+Subproblem 2
+Destroy
+Repair
+Stop?
+LNS
+Subproblem k
+Destroy
+Repair
+Stop?
+...
+Figure 3: The LLM generates a destroy function for an alter-
+nating LNS framework. The LLM-generated parts are colored.
+Starting from a simple initial feasible solution, the solution pro-
+cedure iterates the LNS components of the subproblems until a
+global time limit 𝑇max is reached. Within each subproblem, the
+corresponding LNS inner loop terminates when one of its local
+stopping criteria is met, namely reaching a maximum number of
+iterations 𝐼sub
+max or exceeding a time limit 𝑇sub
+max. Upon termination,
+only the best solution found by the active subproblem LNS is re-
+tained and passed as the initial state to the next subproblem’s LNS
+module.
+For each LNS invocation, the corresponding LLM-generated de-
+stroy heuristic determines which elements of the current solution
+are removed. The repair operator then reconstructs a complete
+feasible solution from the partially destroyed state. All feasibility
+constraints across subproblems are enforced, guaranteeing that
+intermediate and final solutions remain valid.
+This alternating LNS structure is highly modular and readily
+adaptable to coupled optimization problems across different appli-
+cation domains. New problem settings can be addressed by defining
+additional subproblem-specific LNS modules, without modifying
+the overall evolutionary coordination strategy.
+Computational Experiments
+We conducted extensive experiments on two coupled optimization
+problems to show the effects of the proposed sequential, iterative,
+and integrated evolutionary coordination strategy.
+Evolutionary Parameters. We select the Qwen3-coder:30b open-
+source LLM. The LLM has demonstrated strong coding capabilities
+[2]. Each evolutionary coordination strategy (sequential, iterative,
+and integrated) is executed in six experimental runs for each cou-
+pled optimization problem (IRP and MR-MUPMP). Each of the
+coupled optimization problems consists of two subproblems. The
+population size is set to ¯𝑛= 20 for all evolutionary coordination
+strategies. For the sequential strategy we set the number of gen-
+erations per subproblem ¯𝑔= 20 for both subproblems (20 · 2 = 40
+generations total). For the iterative strategy we set the number
+of control rounds ¯𝑙= 4 and the number of generations per sub-
+problem ¯𝑔= 5 (4 · 2 · 5 = 40 generations total). For the integrated
+strategy we set the number of generations for the coupled problem
+¯𝑔= 40. Hence, overall we end up with 40 generations total for all
+evolutionary coordination strategies. For all evolutionary coordi-
+nation strategies we employ the prompt strategies E1, E2, M1, and
+M2. The number of parent heuristics for E1 and E2 is set to ¯𝑝= 5.
+The number of prompts per prompt strategy is set to ¯𝑟= 20. The
+initialization prompt I1 is called 40 times for each subproblem. In
+total, we request 40 · 2 + 40 · 4 · 20 = 3280 prompt per experimental
+run for all evolutionary coordination strategies. This fixed evolu-
+tionary budget allows a fair comparison of performance across all
+evolutionary coordination strategies.
+Evaluation Parameters. For the IRP we set the global time limit
+𝑇max = 60 seconds. Within each subproblem, the LNS procedure is
+executed with identical local stopping parameters. Specifically, the
+maximum number of LNS iterations for both subproblems is set
+to 𝐼LNS
+max = 1000, and the runtime limit is set to 𝑇LNS
+max = 10 seconds.
+For the MR-MUPMP we set the global time limit 𝑇max = 60. The
+maximum number of LNS iterations for the move search is set to
+𝐼MS-LNS
+max
+= 10 and the subproblem-specific runtime limit is set to
+𝑇MS-LNS
+max
+= 10 seconds. The vehicle routing problem with dependen-
+cies is limited to 𝐼VRP-LNS
+max
+= 90 iterations per LNS and a runtime of
+
+GECCO Companion ’26, July 13-17, 2026, San Jose, Costa Rica
+Bömer et al.
+a maximum of 𝑇MS-LNS
+max
+= 10 seconds. Please note, that the heuristic
+performance is also subject to this parameter setting. However, for
+this work parameter optimization is out of scope.
+For the IRP we use the three instances published by the authors of
+[22] with 25 nodes, 18 unit capacity, clustered node positioning, and
+urban area setting (available here: 
+For the MR-MUPMP we employ ten instances (seed 0-9) published
+in [8] with warehouse layout 2x2, bay layout 5x5, fill level 80 %,
+max priority class five, access direction south and north, and robot
+number two (available here: 
+All heuristics were evaluated on a machine with an AMD EPYC
+7401P processor and 64 gigabytes of RAM.
+Fitness Calculation. Each complete heuristic tuple ℎis evaluated
+for its fitness. A lower fitness value indicates a better performance.
+Let I be the set of problem instances, 𝑜𝑖the objective value of
+heuristic tuple ℎto solve instance 𝑖∈I. For the IRP, we calculate
+the fitness as the relative gap between the objective value 𝑜𝑖and
+the current state-of-the-art HGS approach’s objective value 𝑜𝑟𝑒𝑓
+𝑖
+by
+[29] (see Equation 1).
+𝑓I(ℎ) = 1
+|I|
+∑︁
+𝑖∈I
+𝑜𝑖−𝑜𝑟𝑒𝑓
+𝑖
+𝑜𝑟𝑒𝑓
+𝑖
+(1)
+For the newer MR-MUPMP, we calculate the fitness as the aver-
+age objective value (see Equation 2).
+𝑓I(ℎ) = 1
+|I|
+∑︁
+𝑖∈I
+𝑜𝑖
+(2)
+Fitness Convergence. The fitness convergence behavior for the
+IRP is illustrated in Figure 4. The experiments reveal a clear differ-
+ence between the three evolutionary coordination strategies.
+The sequential strategy exhibits a rapid improvement in fitness
+during the evolution of the heuristic for the inventory subproblem
+(generations 1-20) indicating the exploration of strong heuristic
+features. However, after switching to the vehicle routing subprob-
+lem, the convergence rate decreases noticeably. This behavior can
+be attributed to two factors. First, the previously evolved inventory
+heuristic is effectively fitted to the initial vehicle routing heuris-
+tic, thereby constraining the subsequent heuristic search space
+and limiting further improvements. Second, once a high-quality
+heuristic has already been established through the earlier evolution-
+ary phase, achieving additional improvements becomes inherently
+more difficult.
+In contrast, the iterative strategy demonstrates a more gradual
+yet consistently improving convergence trajectory. The strategy
+mitigates premature overfitting to heuristics and preserves adapt-
+ability throughout the evolutionary process by alternating between
+subproblems. As a result, improvements are observed across both
+the inventory and vehicle routing components over successive gen-
+erations.
+For the integrated coordination strategy, the results show a het-
+erogeneous performance pattern: while some runs achieve mod-
+erate to strong fitness values, others fail to identify competitive
+heuristic tuples. This variability suggests that the increased com-
+plexity of the joint search space hampers the consistent refinement
+of high-quality heuristic tuples.
+10
+20
+30
+40
+Generation
+0.02
+0.04
+0.06
+0.08
+0.10
+Fitness
+sequential
+10
+20
+30
+40
+Generation
+iterative
+10
+20
+30
+40
+Generation
+integrated
+Figure 4: Fitness convergence over generations for each evo-
+lutionary coordination strategy for the IRP generated by
+Qwen3-Coder:30b. The run with the best fitness is highlighted
+in opaque. The vehicle routing subproblem generations are
+shaded in grey.
+10
+20
+30
+40
+Generation
+525
+535
+545
+Fitness
+sequential
+10
+20
+30
+40
+Generation
+iterative
+10
+20
+30
+40
+Generation
+integrated
+Figure 5: Fitness convergence over generations for each evolu-
+tionary coordination strategy for the MR-MUPMP generated
+by Qwen3-Coder:30b. The run with the best fitness is high-
+lighted in opaque. The vehicle routing subproblem genera-
+tions are shaded in grey.
+The fitness convergence behavior for the MR-MUPMP is illus-
+trated in Figure 5. The results show distinct convergence character-
+istics across the three evolutionary coordination strategies.
+Similar to the results for the IRP, the sequential strategy exhibits
+a strong improvement in fitness while evolving the first subproblem
+heuristic. This phase is characterized by a steep decrease in fitness
+values, indicating effective initial search progress. However, after
+transitioning to the second subproblem, the convergence rate de-
+creases, albeit less pronounced than for the IRP. This indicates that,
+while the search becomes more challenging in the second phase,
+the impact is weaker for the MR-MUPMP. The best experimental
+run for the sequential strategy demonstrates that improvements in
+this phase are still possible, but such behavior is not representative
+of the typical convergence trajectory.
+
+CoupleEvo: Evolving Heuristics for Coupled Optimization Problems Using Large Language Models
+GECCO Companion ’26, July 13-17, 2026, San Jose, Costa Rica
+Consistent with the IRP results, the iterative strategy demon-
+strates a more uniform but comparatively slower convergence than
+the sequential strategy. The repeated alternation between subprob-
+lems distributes improvements across both subproblems and mit-
+igates overfitting to a single subproblem. One outlier run can be
+observed in which the strategy fails to evolve a competitive heuris-
+tic tuple. Nevertheless, the best overall fitness value for the MR-
+MUPMP is achieved by the iterative strategy.
+For the integrated coordination strategy, the convergence behav-
+ior is characterized by substantial variance across runs. Some runs
+achieve significant improvements, while others show only marginal
+progress or remain at comparatively poor fitness levels. The joint
+evolution of both subproblems increases the difficulty of heuristic
+generation, which appears to hinder consistent progress and makes
+the discovery of high-quality heuristic tuples less reliable.
+Table 1 summarizes the performance of the three evolutionary
+coordination strategies across both problem domains. For the IRP,
+the sequential strategy achieves the best minimum and mean fit-
+ness values, indicating strong overall solution quality. The iterative
+strategy provides the most stable results, as reflected by the smallest
+median and span. The integrated strategy generally exhibits weaker
+performance, with higher average fitness values and increased vari-
+ability across runs. However, it also evolves some competitive runs,
+indicating that it is capable of discovering high-quality solutions.
+For the MR-MUPMP, the sequential strategy yields the best mean
+performance and the smallest span, indicating a robust and consis-
+tent behavior across runs. The iterative strategy attains the best
+minimum and median fitness values, demonstrating its ability to
+discover a high-quality heuristic tuple. The observed variability is
+primarily driven by a single outlier run in which the strategy fails
+to identify a competitive heuristic tuple. The integrated strategy
+again shows inferior performance, with the highest mean values
+and the largest span.
+Table 1: Fitness performance and variability across evolu-
+tionary coordination strategies for IRP and MR-MUPMP.
+IRP
+MR-MUPMP
+seq.
+iter.
+int.
+seq.
+iter.
+int.
+0.0296
+0.0323
+0.0347
+521.2
+520.7
+522.3
+0.0341
+0.0386
+0.0398
+523.0
+522.0
+531.4
+0.0374
+0.0400
+0.0468
+525.4
+523.7
+541.3
+0.0456
+0.0475
+0.0611
+526.0
+524.1
+541.5
+0.0515
+0.0498
+0.0650
+526.7
+526.2
+544.8
+0.0594
+0.0513
+0.0748
+527.4
+537.5
+545.1
+min
+0.0296
+0.0323
+0.0347
+521.2
+520.7
+522.3
+max
+0.0594
+0.0513
+0.0748
+527.4
+537.5
+545.1
+mean
+0.0429
+0.0433
+0.0537
+524.95
+525.7
+537.73
+median
+0.0415
+0.0437
+0.0539
+525.7
+523.9
+541.4
+span
+0.0298
+0.0191
+0.0401
+6.2
+16.8
+22.8
+Benchmarking. To assess the quality of the evolved heuristics,
+we compare the best-performing LLM-generated alternating LNS
+heuristics for each coupled optimization problem against estab-
+lished benchmark methods from the literature. This evaluation
+aims to position the automatically generated heuristics relative to
+existing approaches in terms of solution quality. We refer to our
+approach as CoupleLNS. The code of the best-performing heuristics
+is available in our repository (click here).
+Table 2 reports the results for the IRP and compares the perfor-
+mance of CoupleLNS with established methods from the literature,
+namely the matheuristic (MH) by [3] and the large neighborhood
+and hybrid genetic search (HGS) by [29].
+The results indicate that CoupleLNS consistently outperforms
+the MH across all tested instances, achieving an average improve-
+ment of 5.61 %. This demonstrates that the automatically generated
+heuristics can also surpass classical matheuristics in terms of solu-
+tion quality.
+In comparison to HGS, which represents a state-of-the-art ap-
+proach for the IRP, CoupleLNS achieves slightly inferior results.
+The average gap of 2.96 % suggests that while the LLM-generated
+heuristics do not outperform highly specialized methods, they still
+achieve competitive performance without relying on extensive
+problem-specific engineering.
+Table 2: Benchmark comparison of solution quality on IRP
+training instances. Gaps are reported in %.
+N Q T
+MH
+HGS
+CoupleLNS
+MH Gap
+HGS Gap
+25 18 6
+3426.5
+3211.4
+3242.6
+-5.37
+0.97
+25 18 9
+4491.2
+4193.0
+4361.6
+-2.88
+4.02
+25 18 12
+8721.1
+7672.5
+7971.5
+-8.59
+3.90
+Mean
+5546.27
+5025.63
+5191.91
+-5.61
+2.96
+Table 3 reports the benchmarking results for the MR-MUPMP
+and compares CoupleLNS against the state-of-the-art step-based
+sequential solution approach (SBS) proposed by [8] on the same set
+of problem instances generated by the seeds zero to nine. The SBS
+relies on an optimal A* search to minimize the number of reshuffling
+moves and tie-breaks on loaded move distance. However, due to
+the complexity of the move search subproblem, this optimal search
+fails to find feasible solutions within the imposed time limit of 600
+seconds for some instances.
+The results indicate that, for most instances for which a solution
+is obtained, SBS achieves superior solution quality compared to
+CoupleLNS (average gap of 5.04 %). However, the approach fails to
+solve some instances (seeds two and four) within the time limit. In
+contrast, CoupleLNS successfully solves all instances, albeit with
+slightly inferior average solution quality. The performance differ-
+ence is partly caused by the number of moves found in the move
+search subproblem.
+To provide a fair comparison, we additionally consider an adapted
+variant, denoted as SBS*, in which the optimal A* is replaced by
+an A* search guided by an LLM-generated heuristic as proposed
+in [4]. This modification enables the approach to solve all instances
+within the time limit, albeit without guaranteeing optimality with
+respect to the number of moves. CoupleLNS and SBS* use the same
+A* guided by an LLM-generated heuristic.
+In comparison to SBS*, CoupleLNS achieves competitive perfor-
+mance, with an average improvement of 5.01 %. While SBS* ben-
+efits from the LLM-guided search to ensure feasibility across all
+
+GECCO Companion ’26, July 13-17, 2026, San Jose, Costa Rica
+Bömer et al.
+Table 3: Benchmark comparison of solution quality on MR-
+MUPMP training instances. Each row shows the result for
+a problem instance generated with a certain seed. Our ap-
+proach is listed as CoupleLNS. Gaps are reported in %.
+Seed
+SBS
+SBS*
+CoupleLNS
+SBS Gap
+SBS* Gap
+494
+541
+9.51
+-4.08
+467
+477
+2.14
+-14.36
+-
+572
+-
+-0.35
+595
+600
+0.84
+-4.31
+-
+567
+-
+-6.74
+420
+431
+2.62
+-0.69
+419
+420
+0.24
+-10.06
+508
+578
+13.78
+-6.02
+510
+568
+11.37
+-0.53
+454
+453
+-0.22
+-3
+Mean
+483.38
+548.40
+520.70
+5.04
+-5.01
+instances, the results indicate that CoupleLNS is able to produce
+solutions of superior quality. Notably, CoupleLNS outperforms SBS*
+on all instances.
+Conclusion
+In this work, we introduced CoupleEvo, the first LLM-driven frame-
+work for automated heuristic design in coupled optimization prob-
+lems, extending existing approaches beyond single-problem set-
+tings. We proposed three evolutionary coordination strategies (se-
+quential, iterative, and integrated) that govern how heuristics are
+generated and refined.
+Our experimental results on two representative coupled opti-
+mization problems, the IRP and the MR-MUPMP, demonstrate that
+the choice of coordination strategy has a significant impact on
+convergence behavior, robustness, and final heuristic quality. In
+particular, decomposition-based strategies (sequential and iterative)
+consistently yield more reliable performance than the integrated
+evolution strategy.
+The sequential evolution strategy is characterized by rapid ini-
+tial fitness convergence during the heuristic evolution of the first
+subproblem. However, this early convergence often limits further
+improvements after switching to the second subproblem, as the
+search becomes constrained by the previously evolved heuristic
+that is highly fitted to the initial seeding heuristic of the other sub-
+problem. The iterative evolution strategy exhibits a more uniform
+convergence behavior. By repeatedly alternating between subprob-
+lems, it maintains flexibility throughout the search process. This
+enables continuous improvements across both subproblems. In con-
+trast, the integrated evolution strategy exhibits higher variance and
+struggles with the increased complexity of jointly evolving mul-
+tiple heuristics. Yet, it remains capable of producing competitive
+solutions in individual runs.
+The benchmarking results show that the evolved CoupleLNS
+approach is competitive with, and in some cases superior to, estab-
+lished methods from the literature. For the IRP, CoupleLNS outper-
+forms classical matheuristics and approaches the performance of
+state-of-the-art hybrid metaheuristics. CoupleLNS demonstrates a
+favorable trade-off between solution quality and robustness for the
+MR-MUPMP, consistently solving all instances while remaining
+competitive with step-based approaches.
+Overall, these findings highlight the potential of LLM-driven au-
+tomated heuristic design for coupled optimization problems. Rather
+than replacing classical methods, the results suggest that LLM-
+based approaches can complement existing techniques like LNS by
+evolving highly fitted problem-specific heuristic components.
+Several avenues for future research emerge from this work. First,
+adapting the framework to other coupled optimization problems
+with more than two subproblems. Second, improving the stabil-
+ity and scalability of the integrated evolution strategy remains an
+important challenge, particularly for problems with strong inter-
+dependencies or a larger number of subproblems. Finally, devel-
+oping adaptive coordination strategies that dynamically switch
+between optimization problems may further enhance performance.
+Acknowledgments
+This research was funded by the Ministry of Science, Research and
+Arts of the Federal State of Baden-Württemberg - InnovationCam-
+pus Future Mobility - funding code BUP59 FitLLM and the European
+Union - NextGenerationEU - funding code 13IK032I.
+References
+[1] Yossiri Adulyasak, Jean-François Cordeau, and Raf Jans. 2015. The production
+routing problem: A review of formulations and solution algorithms. Computers
+& Operations Research 55 (2015), 141-152. doi:10.1016/j.cor.2014.01.011
+[2] Alibaba. [n. d.]. Qwen3-Coder:30b. 
+[3] Claudia Archetti, Natashia Boland, and M Grazia Speranza. 2017. A matheuristic
+for the multivehicle inventory routing problem. INFORMS Journal on Computing
+29, 3 (2017), 377-387.
+[4] Thomas Bömer, Nico Koltermann, Max Disselnmeyer, Bastian Amberg, and
+Anne Meyer. 2026. Algorithmic Prompt-Augmentation for Efficient LLM-Based
+Heuristic Design for A* Search. In Applications of Evolutionary Computation,
+Pablo García-Sánchez, Josefa Díaz Álvarez, and Aidan Murphy (Eds.). Springer
+Nature Switzerland, Cham, 118-133.
+[5] Thomas Bömer, Nico Koltermann, Max Disselnmeyer, Laura Dörr, and Anne
+Meyer. 2025. Leveraging large language models to develop heuristics for emerging
+optimization problems. arXiv preprint arXiv:2503.03350 (2025).
+[6] Thomas Bömer, Nico Koltermann, Jakob Pfrommer, and Anne Meyer. 2024.
+Sorting Multibay Block Stacking Storage Systems with Multiple Robots. In
+International Conference on Computational Logistics. Springer, 34-48.
+https:
+//doi.org/10.1007/978-3-031-71993-6_3
+[7] Thomas Bömer, Max Disselnmeyer, and Anne Meyer. 2025. A Constraint Pro-
+gramming Approach for the Multi-Robot Multibay Unit Load Pre-marshalling
+Problem. Procedia CIRP 134 (2025), 508-513. doi:10.1016/j.procir.2025.02.151 58th
+CIRP Conference on Manufacturing Systems 2025.
+[8] Thomas Bömer, Jakob Pfrommer, Daniyar Akizhanov, and Anne Meyer. 2026.
+Sorting multi-bay block stacking storage systems. Computers & Operations
+Research 188 (2026), 107359. doi:10.1016/j.cor.2025.107359
+[9] Ann Campbell, Lloyd Clarke, Anton Kleywegt, and Martin Savelsbergh. 1998.
+The inventory routing problem. In Fleet management and logistics. Springer,
+95-113.
+[10] Chentong Chen, Mengyuan Zhong, Ye Fan, Jialong Shi, and Jianyong Sun. 2025.
+HiFo-Prompt: Prompting with hindsight and foresight for LLM-based automatic
+heuristic design. arXiv preprint arXiv:2508.13333 (2025).
+[11] Pham Vu Tuan Dat, Long Doan, and Huynh Thi Thanh Binh. 2024. HSEvo:
+Elevating Automatic Heuristic Design with Diversity-Driven Harmony Search
+and Genetic Algorithm Using LLMs. arXiv preprint arXiv:2412.14995 (2024).
+[12] André Hottung, Federico Berto, Chuanbo Hua, Nayeli Gast Zepeda, Daniel Wetzel,
+Michael Römer, Haoran Ye, Davide Zago, Michael Poli, Stefano Massaroli, et al.
+2025. VRPAgent: LLM-Driven Discovery of Heuristic Operators for Vehicle
+Routing Problems. arXiv preprint arXiv:2510.07073 (2025).
+[13] Robert Tjarko Lange, Yuki Imajuku, and Edoardo Cetin. 2025. Shinkaevolve:
+Towards open-ended and sample-efficient program evolution. arXiv preprint
+arXiv:2509.19349 (2025).
+[14] Fei Liu, Yilu Liu, Qingfu Zhang, Xialiang Tong, and Mingxuan Yuan. 2025. Eoh-
+s: Evolution of heuristic set using llms for automated heuristic design. arXiv
+
+CoupleEvo: Evolving Heuristics for Coupled Optimization Problems Using Large Language Models
+GECCO Companion ’26, July 13-17, 2026, San Jose, Costa Rica
+preprint arXiv:2508.03082 (2025).
+[15] Fei Liu, Tong Xialiang, Mingxuan Yuan, Xi Lin, Fu Luo, Zhenkun Wang, Zhichao
+Lu, and Qingfu Zhang. 2024. Evolution of Heuristics: Towards Efficient Auto-
+matic Algorithm Design Using Large Language Model. In Forty-first International
+Conference on Machine Learning.
+[16] Fei Liu, Yiming Yao, Ping Guo, Zhiyuan Yang, Xi Lin, Zhe Zhao, Xialiang Tong,
+Kun Mao, Zhichao Lu, Zhenkun Wang, Mingxuan Yuan, and Qingfu Zhang. 2026.
+A Systematic Survey on Large Language Models for Algorithm Design. ACM
+Comput. Surv. 58, 8, Article 218 (Feb. 2026), 32 pages. doi:10.1145/3787585
+[17] Shu Liu, Shubham Agarwal, Monishwaran Maheswaran, Mert Cemri, Zhifei Li,
+Qiuyang Mang, Ashwin Naren, Ethan Boneh, Audrey Cheng, Melissa Z Pan,
+et al. 2026. EvoX: Meta-Evolution for Automated Discovery. arXiv preprint
+arXiv:2602.23413 (2026).
+[18] Jakob Pfrommer, Anne Meyer, and Kevin Tierney. 2023. Solving the unit-load
+pre-marshalling problem in block stacking storage systems with multiple access
+directions. European Journal of Operational Research (2023). doi:10.1016/j.ejor.
+2023.08.044
+[19] Caroline Prodhon and Christian Prins. 2014. A survey of recent research on
+location-routing problems. European Journal of Operational Research 238, 1 (2014),
+1-17. doi:10.1016/j.ejor.2014.01.005
+[20] Bernardino Romera-Paredes, Mohammadamin Barekatain, Alexander Novikov,
+Matej Balog, M Pawan Kumar, Emilien Dupont, Francisco JR Ruiz, Jordan S
+Ellenberg, Pengming Wang, Omar Fawzi, et al. 2024. Mathematical discoveries
+from program search with large language models. Nature 625, 7995 (2024),
+468-475.
+[21] Stefan Ropke and David Pisinger. 2006. An adaptive large neighborhood search
+heuristic for the pickup and delivery problem with time windows. Transportation
+science 40, 4 (2006), 455-472.
+[22] Eduardo Uchoa, Diego Pecin, Artur Pessoa, Marcus Poggi, Thibaut Vidal, and
+Anand Subramanian. 2017. New benchmark instances for the Capacitated Vehicle
+Routing Problem. European Journal of Operational Research 257, 3 (2017), 845-858.
+doi:10.1016/j.ejor.2016.08.012
+[23] Niki van Stein and Thomas Bäck. 2024. Llamea: A large language model evolu-
+tionary algorithm for automatically generating metaheuristics. IEEE Transactions
+on Evolutionary Computation (2024).
+[24] Adam Viktorin, Tomas Kadavy, Jozef Kovac, Michal Pluhacek, and Roman
+Senkerik. 2025. Solve it with EASE. arXiv preprint arXiv:2509.18108 (2025).
+[25] Xuan Wu, Di Wang, Chunguo Wu, Lijie Wen, Chunyan Miao, Yubin Xiao, and
+You Zhou. 2025.
+Efficient Heuristics Generation for Solving Combinatorial
+Optimization Problems Using Large Language Models. In Proceedings of the 31st
+ACM SIGKDD Conference on Knowledge Discovery and Data Mining V.2 (Toronto
+ON, Canada) (KDD ’25). Association for Computing Machinery, New York, NY,
+USA, 3228-3239. doi:10.1145/3711896.3736923
+[26] Haoran Ye, Jiarui Wang, Zhiguang Cao, and Guojie Song. 2024. Reevo: Large
+language models as hyper-heuristics with reflective evolution. arXiv preprint
+arXiv:2402.01145 (2024).
+[27] Huigen Ye, Hua Xu, An Yan, and Yaoyang Cheng. 2025. Large Language Model-
+driven Large Neighborhood Search for Large-Scale MILP Problems. In Forty-
+second International Conference on Machine Learning.
+[28] Baoyun Zhao, He Wang, and Liang Zeng. 2026. G-LNS: Generative Large Neigh-
+borhood Search for LLM-Based Automatic Heuristic Design. arXiv preprint
+arXiv:2602.08253 (2026).
+[29] Jingyi Zhao, Claudia Archetti, Tuan Anh Pham, and Thibaut Vidal. 2025. Large
+neighborhood and hybrid genetic search for inventory routing problems. Euro-
+pean Journal of Operational Research (2025). doi:10.1016/j.ejor.2025.11.021

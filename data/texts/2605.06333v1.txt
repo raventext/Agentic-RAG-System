@@ -1,0 +1,1258 @@
+TinyBayes: Closed-Form Bayesian Inference via
+Jacobi Prior for Real-Time Image Classification on
+Edge Devices
+Shouvik Sardar∗
+Data Science Group
+Chennai Mathematical Institute
+ORCID: 0009-0004-0550-0271
+Sourish Das
+Data Science Group
+Chennai Mathematical Institute
+ORCID: 0000-0002-5354-6520
+Abstract
+Cocoa (Theobroma cacao) is a critical cash crop for millions of smallholder farm-
+ers in West Africa, where Cocoa Swollen Shoot Virus Disease (CSSVD) and
+anthracnose cause devastating yield losses. Automated disease detection from leaf
+images is essential for early intervention, yet deploying such systems in resource-
+constrained settings demands models that are small, fast, and require no internet
+connectivity. Existing edge-deployable plant disease systems rely on end-to-end
+deep learning without uncertainty quantification, while Bayesian methods for edge
+devices focus on hardware-level inference architectures rather than agricultural
+applications. We bridge this gap with TinyBayes, the first framework to combine
+a closed-form Bayesian classifier with a mobile-grade computer vision pipeline
+for crop disease detection. Our pipeline uses YOLOv8-Nano (5.9 MB) for lesion
+localisation, MobileNetV3-Small (3.5 MB) for feature extraction, and the Jacobi
+prior; a Bayesian method that provides exact, non-iterative estimators via projec-
+tion; for classification. The Jacobi-DMR (Distributed Multinomial Regression)
+classifier adds only 13.5 KB to the pipeline, bringing the total model size within
+9.5 MB, while achieving 78.7% accuracy on the Amini Cocoa Contamination
+Challenge dataset and enabling end-to-end CPU inference under 150 ms per image.
+We benchmark against seven classifiers including Random Forest, SVM, Ridge,
+Lasso, Elastic Net, XGBoost, and Jacobi-GP, and demonstrate that the Jacobi-DMR
+offers the best trade-off between accuracy, model size, and inference speed for
+edge deployment. We have proved the asymptotic equivalence and consistency,
+asymptotic normality and the bias correction of Jacobi-DMR. All data and codes
+are available here: 
+Introduction
+Cocoa (Theobroma cacao L.) underpins a global industry worth over $130 billion annually, with
+more than 60% of production concentrated in West Africa [International Cocoa Organization, 2023].
+Smallholder farmers, who account for the vast majority of cocoa cultivation, face persistent threats
+from plant diseases. Cocoa Swollen Shoot Virus Disease (CSSVD), transmitted by mealybugs, causes
+leaf swelling, shoot dieback, and eventual tree death with no known cure [Dzahini-Obiatey et al.,
+2010]. Anthracnose, caused by Colletotrichum species, produces necrotic lesions that reduce both
+yield and bean quality [Marelli et al., 2019]. Traditional identification by trained extension officers is
+slow, expensive, and inaccessible in remote regions.
+∗Correspondence to sardar@cmi.ac.in
+Preprint.
+arXiv:2605.06333v1 [cs.CV] 7 May 2026
+
+Recent advances in computer vision have enabled automated plant disease detection [Mohanty
+et al., 2016]. However, deploying deep learning models in Sub-Saharan Africa faces three practical
+constraints: (i) limited computational resources on farmers’ entry-level smartphones, (iii) very
+patchy to no-internet connectivity; and (ii) the need for uncertainty quantification to support reliable
+decision-making. These constraints define three active but largely disjoint research threads.
+The first thread, TinyML for agriculture, applies lightweight architectures such as MobileNet and
+quantised models to on-device plant disease classification [Malche et al., 2026]. These systems
+are computationally efficient but lack any Bayesian component, offering point predictions without
+uncertainty estimates.
+The second thread, Bayesian inference on edge hardware, develops specialised architectures; mem-
+ristors, ferroelectric transistors, compute-in-memory chips; for probabilistic computation at the
+hardware level. These approaches remain in the hardware research domain and are not applicable to
+software deployment on commodity smartphones.
+The third thread, Bayesian deep learning, integrates uncertainty into neural networks via MC-
+Dropout [Gal and Ghahramani, 2016], Bayes-by-Backprop [Blundell et al., 2015], or variational
+inference [Blei et al., 2017]. These methods require modified training procedures and iterative
+inference, increasing computational cost beyond what edge devices can accommodate.
+Our contribution sits at the intersection of these three threads. To our knowledge, TinyBayes is the
+first framework to bring closed-form Bayesian inference; with principled uncertainty quantification
+and sub-kilobyte model size; to edge-deployable crop disease classification. We apply the Jacobi
+prior [Das and Dey, 2006, Das, 2008, Das and Sardar, 2025], which places a conjugate prior
+on the canonical parameter of the exponential family likelihood and yields a closed form, non-
+iterative posterior mode estimator via projection. Combined with YOLOv8-Nano for detection and
+MobileNetV3-Small for feature extraction, the complete pipeline fits in 9.5 MB and runs in 150 ms
+on a single CPU core.
+TinyBayes: Edge Inference Pipeline
+Leaf
+Photo
+input
+−−−→
+YOLOv8
+Nano
+5.9 MB
+∼111 ms
+crop
+−−→
+MobileNet
+V3-Small
+3.5 MB
+∼38 ms
+576-d
+−−−→
+Jacobi
+DMR
+13.5 KB
+∼0.01 ms
+⇓
+Prediction: healthy / CSSVD /
+anthracnose
+Total: 9.5 MB | 150 ms on CPU
+Figure 1: TinyBayes end-to-end inference pipeline: component sizes, latencies, and total CPU time.
+Our contributions are:
+• We present the first edge-deployable Bayesian pipeline for crop disease classification,
+combining YOLOv8-Nano (5.9 MB), MobileNetV3-Small (3.5 MB), and Jacobi-DMR
+(13.5 KB) for a total of 9.5 MB.
+• We benchmark the Jacobi-DMR against seven classifiers on 576-dimensional MobileNetV3
+features, showing competitive accuracy (78.7%) with the fastest training (0.06 s) and smallest
+model size.
+• We demonstrate that the Jacobi-GP variant achieves the highest accuracy (86%) among all
+methods, serving as a theoretical upper bound for the Jacobi framework’s capacity.
+• We provide a PCA ablation study across all eight classifiers, showing that dimensionality
+reduction via PCA does not offer any significant benefit while adding 450 KB of storage
+overhead; validating the use of all 576 raw features.
+• We proved asymptotic consistency, asymptotic normality, bias correction and a finite-sample
+hyperparameter invariance property of the Jacobi-DMR estimator in Section 3.
+2
+The Jacobi Prior
+Here we present the Jacobi prior framework briefly; while full details are in Das and Dey [2006], Das
+[2008], Das and Sardar [2025]. It presents the closed form analytical estimator for the regression
+coefficient for β.
+Generalised Linear Model Setup
+Consider data D = {(yi, xi) | i = 1, . . . , n} where yi follows
+an exponential family distribution with canonical parameter θi, link function g(·), and linear predictor
+ηi = x′
+iβ. Standard Bayesian inference places a prior π(β) on the regression coefficients, yielding a
+posterior that requires expensive high-dimensional integration or iterative optimisation.
+Prior on Canonical Parameters
+The Jacobi prior instead assigns a conjugate prior π(θi) to each
+canonical parameter. Since g(·) is one-to-one with Jacobian J = |g′(ηi)|, the posterior of ηi is
+q(ηi|yi) = π(g(ηi)|yi) · J, and its mode ˆηi = h(yi) is available in closed form.
+Jacobi Estimator via Projection
+The vector ˆη = (h(y1), . . . , h(yn))′ is projected onto the column
+space of X:
+ˆβ = (X′X)−1X′ˆη.
+(1)
+This is a least-squares projection that decomposes h(y) = Ph(y) + (I −P)h(y), where P =
+X(X′X)−1X′ is the linear transformation matrix representing the orthogonal projection from n-
+dimensional space Rn onto the estimation space, while (I −P) represents the orthogonal projection
+of Rn onto the error space.
+Jacobi Estimator for Distributed Multinomial Regression (DMR)
+Following Taddy [2015],
+multinomial classification with K classes is handled via a Poisson surrogate representation. Although
+the observed responses satisfy Yik ∈{0, 1} with PK
+k=1 Yik = 1, the DMR formulation treats each
+class k as arising from a Poisson regression with rate λik. This is a working model; under a log-
+linear parameterisation, the Poisson likelihood yields the same score equations as the multinomial
+model [Taddy, 2015], leading to consistent estimation of the multinomial parameters despite the
+distributional mismatch. Placing the conjugate prior λik ∼Gamma(an, bn) (rate parametrisation)
+under this working model, the Jacobi posterior mode for each class k is ˆηik = ln
+  yik+a
+1+kb
+
+, and the
+class-specific coefficient vector is ˆβk = (X′X)−1X′ˆηk. Prediction assigns argmaxk exp(x′
+newˆβk).
+Gaussian Process Extension
+For nonlinear boundaries, the linear predictor is augmented with
+a GP random effect: ηi = x′
+iβ + wi + εi, where wi ∼GP(0, Σ) with squared exponential kernel.
+The Jacobi-estimated ˆη serves as the GP’s target, providing a closed-form initialisation for the
+nonparametric component.
+Theoretical Results
+We extend the asymptotic theory of the Jacobi estimator for Generalised Linear Models [Das and
+Sardar, 2025, Theorem 2.3] to the Jacobi-DMR of Section 2.
+Model and estimator.
+Following Taddy [2015] and Das and Sardar [2025, Section 3.4], under the
+DMR Poisson surrogate, the multinomial classification problem with K classes is decomposed into
+K independent Poisson regressions:
+Yik ∼Poisson(λ0,ik) ,
+η0,ik = log λ0,ik = x⊤
+i β0,k,
+i = 1, . . . , n, k = 1, . . . , K.
+Placing the conjugate prior λik ∼Gamma(an, bn) (rate parametrisation) on each λik, the closed-
+form posterior mode of ηik is
+ˆηik = logYik + an
+1 + bn
+,
+ˆβ
+(n)
+k
+= (X⊤X)−1X⊤ˆηk,
+ˆηk = (ˆη1k, . . . , ˆηnk)⊤.
+Let ˜β
+(n)
+k
+denote the posterior mode of βk under the induced Jacobi prior π(k)
+J . Define the stacked
+Jacobi-DMR estimator as ˆβ
+(n) =
+ (ˆβ
+(n)
+1 )⊤, . . . , (ˆβ
+(n)
+K )⊤⊤∈RKp, and analogously define ˜β
+(n)
+and β0.
+Assumptions.
+For each k ∈{1, . . . , K}:
+(B1) The Poisson log-likelihood ℓk(y, η) = y η −eη is twice continuously differentiable in η,
+and the design matrix X ∈Rn×p has full column rank p.
+(B2) The induced Jacobi prior π(k)
+J (βk) on βk and the prior π(k)
+n (ηk) on ηk are continuous and
+strictly positive on ε-balls around β0,k and η0,k = Xβ0,k, respectively.
+(B3) The normalised log-likelihood satisfies a uniform law of large numbers,
+sup
+βk∈B
+n
+n
+X
+i=1
+ℓk
+ Yik, x⊤
+i βk
+
+−E
+
+ℓk
+ Y1k, x⊤
+1βk
+ 
+P−→0.
+(B4) Qk(βk) := E
+
+ℓk
+ Y1k, x⊤
+1βk
+
+admits a unique maximiser β0,k ∈Rp, and η0,k = Xβ0,k
+uniquely maximises Rk(ηk) := E[ℓk(Y1k, η1k)].
+(B5) The hyperparameters scale as an = bn = 1/n.
+(B6) (Taddy DMR Poisson surrogate.) {Yik}i,k are mutually independent across i and across k,
+with Yik ∼Poisson
+ exp(x⊤
+i β0,k)
+
+.
+Theorem 1 (Asymptotic Equivalence and Consistency). Under Assumptions (B1)-(B6):
+(i) For each k = 1, . . . , K, ˆβ
+(n)
+k
+P−→β0,k,
+˜β
+(n)
+k
+P−→β0,k
+(n →∞).
+(ii) For each k and every ε, δ > 0 there exists an integer Nk(ε, δ) such that for all n ≥Nk(ε, δ),
+P
+ˆβ
+(n)
+k
+−˜β
+(n)
+k
+ > ε
+
+< δ.
+(iii) Jointly, ˆβ
+(n)
+P−→β0 in RKp, and for every ε, δ > 0 there exists an integer N(ε, δ) such that
+for all n ≥N(ε, δ), P
+ˆβ
+(n) −˜β
+(n) > ε
+
+< δ.
+Proof in Appendix 11
+Corollary 1 (Hyperparameter Invariance). Suppose the targets are one-hot encoded: Yik ∈{0, 1}
+for all i, k with PK
+k=1 Yik = 1. For any a > 0 and b > 0, the Jacobi-DMR predicted class
+ˆC(x; a, b) := arg
+max
+k∈{1,...,K} x⊤ˆβk(a, b), where
+ˆβk(a, b) = (X⊤X)−1X⊤ˆηk(a, b),
+ˆηik(a, b) = logYik + a
+1 + b ,
+is invariant to (a, b) as the transformation induces a class(k)-independent shift and a common
+positive scaling of class scores, preserving the argmax decision intact.
+Appendix 11.
+Remark 1. Corollary 1 is a finite-sample, distribution-free property; which is consistent with
+Theorem 1: the coefficient vector ˆβk(a, b) does depend on (a, b), and only the consistent choice
+an = bn = 1/n delivers ˆβ
+(n)
+k
+P−→β0,k. The argmax decision, however, is invariant in (a, b) for the
+Jacobi DMR framework.
+Appendix 11.
+Remark 2 (Empirical Validation). We evaluated Jacobi-DMR over a grid of (a, b)
+∈
+{1/2000, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0}2 using all 576 features and found classification accuracy
+is invariant across the entire grid at 78.7%, consistent with Corollary 1.
+Appendix 11.
+Asymptotic normality under a high-intensity regime.
+To analyse the distribution of the Jacobi-
+DMR estimator, we introduce a high-intensity scaling of the Poisson surrogate. Specifically, we
+consider a sequence of models in which the Poisson rates are rescaled as λ(n)
+0,ik = sn exp(x⊤
+i β0,k),
+with sn →∞. This scaling can be interpreted as an aggregation or exposure regime, where each
+observation represents sn replicated events. Under this regime, the normalised fluctuation
+Yik−λ(n)
+0,ik
+λ(n)
+0,ik
+vanishes in probability, ensuring that the log-transformed responses admit a second-order linear
+approximation. This linearisation is the key step enabling a central limit theorem for the projected
+estimator. It is important to note that this regime is not intrinsic to one-hot classification data,
+where Yik ∈{0, 1} and the implied rates are bounded. Rather, it serves as a theoretical device for
+characterising the estimator’s asymptotic behaviour. The practically relevant bounded-rate setting is
+addressed separately via bias correction in Remark 3.
+Additional assumptions.
+(C1) (Large-rate regime.) There exists a sequence λmin,n →∞with λmin,n = ω(√n) such that
+inf
+1≤i≤n, 1≤k≤K λ0,ik = inf
+i,k exp(x⊤
+i β0,k) ≥λmin,n
+for all sufficiently large n.
+(C2) (Hyperparameter rate.) an, bn →0 with √n (an + bn) →0. In particular, an = bn = 1/n
+satisfies this.
+(C3) (Design Gram limit.) n−1X⊤X →Q for some positive-definite Q ∈Rp×p.
+(C4) (Lindeberg condition.)
+max1≤i≤n ∥xi∥2/n
+→
+0,
+and the triangular array
+{xi (Yik −λ0,ik)/λ0,ik}n
+i=1 satisfies the Lindeberg condition for each k.
+(A suffi-
+cient condition is supi ∥xi∥< ∞.)
+Theorem
+(Asymptotic
+Normality).
+Under
+Assumptions
+(B1)-(B6)
+and
+(C1)-(C4),
+for
+each
+k
+=
+1, . . . , K,
+√n
+ ˆβ
+(n)
+k
+−β0,k
+
+d−→
+N
+ 0,
+Q−1 Vk Q−1
+,
+where
+Vk
+:=
+limn→∞1
+n
+Pn
+i=1 xix⊤
+i e−x⊤
+i β0,k.
+For the stacked estimator
+ˆβ
+(n)
+∈
+RKp,
+√n
+ ˆβ
+(n) −β0
+
+d−→N
+ 0, Σ
+
+, where Σ ∈RKp×Kp is the block-diagonal matrix with k-th
+diagonal block Q−1VkQ−1. The block-diagonal structure follows from the cross-class indepen-
+dence in Assumption (B6).
+Appendix 11.
+Remark 3 (Bias correction in the moderate-rate regime). When the large-rate condition (C1) is
+replaced by the moderate-rate condition infi,k λ0,ik ≥λmin > 0 (rates bounded away from zero but
+not necessarily divergent), the Anscombe-type bias −1/(2 λ0,ik) no longer vanishes asymptotically,
+and the centring in Theorem 2 requires a correction. Define the bias-corrected Jacobi-DMR estimator
+ˆβ
+(n, bc)
+k
+:= ˆβ
+(n)
+k
++ 1
+2 (X⊤X)−1X⊤
+e−x⊤
+i ˆβ
+(n)
+k
+n
+i=1.
+Under Assumptions (B1)-(B6), (C2)-(C4) and the moderate-rate condition, an analogous Taylor
+argument together with the consistency ˆβ
+(n)
+k
+P−→β0,k (Theorem 1) yields
+√n
+ ˆβ
+(n, bc)
+k
+−β0,k
+
+d−→N
+ 0, Q−1VkQ−1
+.
+The correction is an explicit, closed-form post-processing of ˆβ
+(n)
+k
+requiring no additional iterative
+computation, therefore preserves the edge-deployability of the Jacobi-DMR pipeline. Appendix 11.
+Dataset
+The Amini Cocoa Contamination Challenge [Amini and Zindi, 2024] provides annotated cocoa
+leaf images from West African farms with three class labels: healthy, CSSVD (chlorotic patches
+and vein banding from viral infection), and anthracnose (necrotic lesions from Colletotrichum
+gloeosporioides). Via stratified sampling with fixed random seeds, we constructed a training set
+of 2,000 balanced images (667/667/666 per class) and a disjoint validation set of 500 images
+(167/166/167 per class).
+Methodology for Edge Deployment
+Our pipeline has three stages, each designed for edge deployment. Figure 1 illustrates the complete
+inference flow.
+Stage 1: Lesion Localisation via YOLOv8-Nano.
+We trained YOLOv8-Nano [Jocher et al., 2023],
+a 5.9 MB object detector designed for mobile devices, on the training set bounding box annotations
+for 10 epochs (batch size 16, image size 640 × 640, Adam optimiser). At inference, boxes with
+confidence > 0.25 are retained. This replaces the Faster R-CNN used in prior work [Das and Sardar,
+2025].
+Stage 2: Feature Extraction via MobileNetV3-Small.
+A pretrained MobileNetV3-Small [Howard
+et al., 2019] (3.5 MB, ImageNet weights) serves as a fixed feature extractor. The classifier head is
+replaced with an identity mapping, yielding 576-dimensional feature vectors from each bounding box
+crop resized to 224 × 224. All 576 features are retained without dimensionality reduction.
+Stage 3: Classification.
+We evaluate eight classifiers on the extracted features: Random Forest
+(RF) (100 trees, all 576 features); SVM (RBF kernel, C = 1.0, γ = scale, standardised features);
+Ridge (α = 1.0, standardised features); Lasso (L1-penalised logistic regression, SAGA solver,
+C = 1.0); Elastic Net (L1 ratio = 0.5, SAGA solver, C = 1.0); XGBoost (100 trees, max depth 6,
+learning rate 0.1); Jacobi-DMR (Distributed Multinomial Regression with a = b = 1/n = 1/2000,
+the consistent choice per Das and Sardar [2025]); Jacobi-GP (Gaussian Process regression on
+Jacobi-estimated targets, RBF kernel, a = b = 1/2000).
+Empirical Results
+6.1
+Predictive Accuracy
+Classification Performance
+Table 1 presents the comprehensive results for all eight classifiers on
+576-dimensional MobileNetV3 features.
+Table 1: Classification performance on the validation set. E2E Pred includes YOLOv8-Nano detection
++ MobileNetV3 feature extraction + classifier prediction, measured on CPU.
+Method
+Acc
+M-P
+M-R
+M-F1
+Train(s)
+E2E Pred(ms)
+Classifier Size
+Edge?
+Random Forest
+0.732
+0.737
+0.733
+0.732
+5.23
+140.7
+4.4 MB
+△
+SVM (RBF)
+0.818
+0.819
+0.818
+0.818
+1.22
+135.2
+6.5 MB
+△
+XGBoost
+0.794
+0.796
+0.795
+0.793
+11.64
+134.8
+990.5 KB
+△
+Ridge
+0.781
+0.781
+0.781
+0.781
+0.15
+134.1
+6.8 KB
+✓
+Lasso
+0.785
+0.785
+0.785
+0.784
+83.19
+134.1
+6.8 KB
+✓
+Elastic Net
+0.772
+0.773
+0.772
+0.771
+81.77
+134.1
+6.8 KB
+✓
+Jacobi-DMR
+0.787
+0.786
+0.787
+0.787
+0.06
+133.9
+13.5 KB
+✓
+Jacobi-GP
+0.861
+0.861
+0.862
+0.861
+295.46
+151.4
+104.9 MB
+×
+✓Edge suitable
+△Moderate
+× Not suitable
+Jacobi-GP achieves the highest accuracy (86.1%) with perfect training fit, demonstrating nonlinear
+capacity. Among the edge-suitable models, Jacobi-DMR delivers the best macro F1 (0.787), fastest
+training (0.06 s), fastest inference (133.9 ms), and smallest classifier size (13.5 KB).
+Table 2: Confusion matrices for selected classifiers. Rows: true class; Columns: predicted class.
+SVM
+Jacobi-DMR
+Jacobi-GP
+H
+C
+A
+H
+C
+A
+H
+C
+A
+H (184)
+16
+138
+19
+15
+C (174)
+137
+22
+16
+148
+A (176)
+13
+19
+146
+11
+PCA Ablation: Feature Dimensionality
+To evaluate whether dimensionality reduction benefits
+the pipeline, we compared all eight classifiers on PCA-reduced 100 components (explaining 88.6%
+of total variance) versus raw 576-dimensional features. Table 3 presents the results.
+Table 3: Accuracy comparison: PCA Top-100 vs All 576 features.
+Method
+PCA-100
+All 576
+Diff
+Winner
+Random Forest
+0.758
+0.732
+−0.026
+PCA-100
+SVM (RBF)
+0.832
+0.818
+−0.013
+PCA-100
+Ridge
+0.781
+0.781
+0.000
+Tied
+Lasso
+0.792
+0.785
+−0.008
+PCA-100
+Elastic Net
+0.796
+0.772
+−0.024
+PCA-100
+XGBoost
+0.773
+0.794
++0.021
+All-576
+Jacobi-DMR
+0.781
+0.787
++0.006
+All-576
+Jacobi-GP
+0.848
+0.861
++0.013
+All-576
+It is evident that the accuracy difference between the top 100 principal components and all 576
+features is marginal (1-2%). Moreover, PCA requires storing a 576 × 100 projection matrix (450 KB)
+on the device. At inference, predicting with all 576 raw features requires only 1,728 multiplications
+per image (576 features × 3 classes), compared to 57,900 for PCA (576×100 projection + 100×3
+classification). We therefore recommend using all 576 features directly.
+6.2
+Edge Device Feasibility
+Table 4 summarises the deployment profile.
+Table 4: Edge deployment profile for the TinyBayes pipeline.
+Component
+Size / Time
+YOLOv8-Nano (detection)
+5.9 MB
+MobileNetV3-Small (features)
+3.5 MB
+Jacobi-DMR (classifier)
+13.5 KB
+Total pipeline
+9.5 MB
+CPU inference (Intel Xeon, Colab)
+150 ms/image
+Estimated mobile ARM CPU
+300-450 ms/image
+The complete pipeline fits in under 10 MB and delivers real-time inference on a single CPU core.
+On a mobile ARM processor, we estimate 2-3 times higher latency due to architectural differences,
+remaining within real-time bounds (< 500 ms). The Jacobi-DMR classifier itself contributes only
+13.5 KB; making it negligible relative to the shared feature extraction pipeline.
+Discussion
+Closed-form Bayesian inference for edge-deployable agricultural systems.
+Existing edge-
+deployable agricultural systems [Malche et al., 2026] and[Khan et al., 2023] provide point predictions
+without uncertainty estimates. Bayesian methods that quantify uncertainty-MC-Dropout [Gal and
+Ghahramani, 2016], Bayes-by-Backprop [Blundell et al., 2015], variational inference [Blei et al.,
+2017]-require iterative inference incompatible with edge constraints. Hardware-level Bayesian
+inference operates in a different domain entirely. TinyBayes occupies a distinct point in this design
+space: analytical Bayesian inference at kilobyte scale (13.5 KB, zero iterative computation), inte-
+grated with an edge-deployable pipeline. To our knowledge, this combination has not been previously
+demonstrated for edge-device classification, particularly in agricultural disease detection.
+What happens when a farmer photographs a leaf.
+At inference, the pipeline operates entirely
+on-device with no internet connectivity. The farmer captures a photograph of a cocoa leaf using their
+smartphone camera. YOLOv8-Nano processes the image (∼111 ms on CPU) and outputs a bounding
+box around the disease-affected region. The cropped region is resized to 224×224 and passed through
+MobileNetV3-Small (∼39 ms), producing a 576-dimensional feature vector. Finally, Jacobi-DMR
+computes three dot products; λk = exp(x′ˆβk) for k ∈{healthy, CSSVD, anthracnose}; and returns
+argmaxk λk as the prediction (∼0.01 ms). The entire process completes in ∼150 ms. Crucially,
+the YOLO and MobileNetV3 components account for 99.99% of inference time; the Jacobi-DMR
+classifier contributes effectively zero latency. This means that any improvement to the shared feature
+extraction pipeline (e.g., faster hardware, model quantisation) directly reduces end-to-end latency,
+while the Bayesian classifier remains a negligible overhead.
+Jacobi-DMR vs Jacobi-GP: the deployment trade-off.
+Jacobi-GP achieves the highest accuracy
+(86.1%) but is unsuitable for edge deployment: it requires storing all n = 2,000 training points
+(∼27 MB) and ∼3.5 million operations per image, versus 13.5 KB and 1,728 multiplications for
+Jacobi-DMR. Both methods share the same Bayesian foundation (closed-form ˆη via the Jacobi
+prior), differing only in projection: linear (DMR) versus nonparametric (GP). Jacobi-GP serves as a
+theoretical upper bound, whereas Jacobi-DMR is the practical deployment choice.
+Why not Ridge, Lasso, or Elastic Net?
+These methods achieve comparable accuracy (77-78%)
+and similar classifier sizes (∼7 KB), but have three disadvantages. First, they do not offer uncer-
+tainty quantification; Jacobi-DMR supports posterior sampling via an efficient parallel Monte Carlo
+algorithm [Das and Sardar, 2025] without iterative optimisation. Second, they require feature stan-
+dardisation at inference which requires storage of scaling parameters, whereas Jacobi-DMR operates
+on raw features directly. Third, Lasso and Elastic Net require iterative SAGA optimisation (83 s and
+82 s respectively) versus Jacobi-DMR’s single matrix operation (0.06 s).
+Rapid retraining for evolving diseases.
+While training time does not affect edge inference,
+Jacobi-DMR’s sub-second training enables rapid model updates; a critical advantage for agricultural
+deployment. When new labelled samples become available for existing disease categories, only the
+Jacobi coefficient vectors require recomputation via the closed-form projection ˆβ = (X′X)−1X′ˆη,
+while the feature extraction pipeline (YOLOv8-Nano and MobileNetV3) remains fixed. For entirely
+new disease categories, a single additional coefficient vector is computed without modifying any
+other component. This modularity makes TinyBayes uniquely suited to agricultural settings where
+new disease variants, regional variations, or seasonal changes demand frequent model updates with
+minimal computational overhead.
+Extending the Jacobi prior to edge-deployable systems.
+Das and Sardar [2025] demonstrated the
+Jacobi prior on server-grade pipelines with no deployment constraints, demonstrating the Jacobi prior
+on SDSS astronomical data, US SBA loan defaults, and RSNA lumbar spine MRI classification using
+ResNet-50 features. The cocoa leaf disease task differs in domain (agriculture), imaging modality
+(field photographs), and deployment constraints (edge devices); to our knowledge, no prior work
+integrates these aspects within a Bayesian closed form solution framework.
+Related Work
+Plant disease detection on edge.
+Khan et al. [2023] deployed MobileNetV3 for plant disease
+classification on the PlantVillage dataset, achieving strong accuracy but without any Bayesian
+component. The MSDFEN framework [Dai et al., 2025] combines dynamic multi-scale feature
+extraction with lightweight architectures, but does not explicitly model predictive uncertainty.
+Bayesian methods for classification.
+The Horseshoe prior [Carvalho et al., 2010] and Bayesian
+Lasso [Park and Casella, 2008] require MCMC sampling. Variational inference [Blei et al., 2017]
+and MC-Dropout [Gal and Ghahramani, 2016] offer faster alternatives but still involve iterative
+computation. UniLasso [Chatterjee et al., 2025] provides a novel approach to sparse regression but
+does not natively support multinomial classification. The Jacobi prior is unique in providing a non-
+iterative, closed-form Bayesian estimator for multinomial classification via the DMR decomposition.
+Efficient classifiers on deep features.
+Using pretrained CNNs as feature extractors followed by
+classical classifiers is well-established [Razavian et al., 2014]. Our contribution is demonstrating that
+the Jacobi prior provides the best accuracy-efficiency trade-off in this paradigm for edge-deployable
+agricultural imaging, with the added benefit of Bayesian uncertainty quantification.
+9
+Limitations
+The validation set (500 samples) is relatively small; larger-scale evaluation would strengthen the
+conclusions. The Jacobi-GP’s O(n3) complexity limits its use to server-side inference. We used
+pretrained (non-fine-tuned) MobileNetV3 features; domain-specific fine-tuning would likely improve
+all classifiers. CPU inference was benchmarked on an Intel Xeon (Colab); actual mobile inference
+assumed to be 2-3 times slower (see Table 4). The dataset contains only three classes; extending to
+finer-grained severity grading remains future work.
+Conclusion
+We have introduced TinyBayes, a complete edge-deployable pipeline for cocoa disease classification
+that combines YOLOv8-Nano (5.9 MB), MobileNetV3-Small (3.5 MB), and the Jacobi-DMR clas-
+sifier (13.5 KB) into a 9.5 MB system that runs in 150 ms on a single CPU core. The Jacobi-DMR
+achieves 78.7% accuracy while being the fastest classifier to train (0.06 s) and the smallest to store;
+yet it is the only method in our comparison that supports Bayesian uncertainty quantification, via the
+closed-form Monte Carlo algorithm of Das and Sardar [2025], without iterative computation. The
+Jacobi-GP variant achieves the highest accuracy (86.1%), demonstrating that the Jacobi framework’s
+capacity extends to nonlinear decision boundaries when server-side resources are available.
+Three properties distinguish TinyBayes from existing approaches. First, its modularity: only the
+13.5 KB coefficient vectors require updating when new disease samples or categories arise, while
+the detection and feature extraction stages remain fixed, unless absolutely required. Second, its
+hyperparameter invariance: the classifier requires no tuning, a practical advantage over Ridge, Lasso,
+and Elastic Net which demand cross-validation. Third, its Bayesian foundation: unlike all frequentist
+alternatives of comparable size, Jacobi-DMR provides calibrated prediction intervals that inform
+downstream decision-making; critical in agricultural contexts where a misclassification can trigger
+unnecessary or delayed intervention.
+Beyond cocoa, the TinyBayes architecture generalises to any image classification task where a
+lightweight detector, a pretrained feature extractor, and a linear Bayesian classifier can be composed.
+We believe this paradigm; a closed-form Bayesian inference under 10 MB total size; opens a practical
+path toward uncertainty-aware AI on commodity devices in resource-constrained settings worldwide.
+Broader Impact
+Cocoa farming sustains the livelihoods of approximately two million smallholder families in West
+Africa, many of whom lack access to trained agricultural extension officers for timely disease
+diagnosis. TinyBayes addresses this gap by enabling real-time, on-device disease detection that
+requires no internet connectivity and runs on entry-level smartphones - the most widely available
+computing platform in rural Sub-Saharan Africa. Early identification of CSSVD and anthracnose can
+prompt targeted intervention before disease spreads to neighbouring trees, potentially reducing crop
+losses that currently cost the industry billions of dollars annually.
+By replacing server-dependent pipelines with a 9.5 MB on-device solution, TinyBayes eliminates
+cloud inference energy costs-a meaningful saving when scaled to millions of daily classifications
+across farming cooperatives.
+We identify two risks: over-reliance on automated predictions (e.g., destroying a healthy tree mis-
+classified as CSSVD-infected), mitigated by using TinyBayes as a decision-support tool alongside
+agricultural extension officers; and limited generalisation beyond the specific dataset of West African
+cocoa training region, mitigated by Jacobi-DMR’s sub-second retraining capability for regional
+adaptation.
+References
+Amini and Zindi.
+Amini cocoa contamination challenge.
+
+competitions/amini-cocoa-contamination-challenge, 2024.
+David M. Blei, Alp Kucukelbir, and Jon D. McAuliffe. Variational inference: A review for statisticians.
+Journal of the American Statistical Association, 112(518):859-877, 2017.
+Charles Blundell, Julien Cornebise, Koray Kavukcuoglu, and Daan Wierstra. Weight uncertainty in
+neural networks. In International Conference on Machine Learning (ICML), pages 1613-1622,
+2015.
+Carlos M. Carvalho, Nicholas G. Polson, and James G. Scott. The horseshoe estimator for sparse
+signals. Biometrika, 97(2):465-480, 2010.
+Sourav Chatterjee, Trevor Hastie, and Robert Tibshirani.
+Univariate-guided sparse regression.
+Harvard Data Science Review, 7(3), 2025.
+Zhiyuan Dai, Yuyang Jiang, Laiyuan Cao, Xiaojun Zhang, and Zhi Tao. Msdfen: Multi-scale dynamic
+feature extraction network for pathological voice detection. Applied Acoustics, 2025.
+Sourish Das. Generalized Linear Models and Beyond: An Innovative Approach from Bayesian
+Perspective. PhD thesis, University of Connecticut, 2008.
+Sourish Das and Dipak K. Dey. On Bayesian analysis of generalized linear models using the Jacobian
+technique. The American Statistician, 60(3):264-268, 2006.
+Sourish Das and Shouvik Sardar. Jacobi prior: An alternative Bayesian method for supervised
+learning. arXiv preprint arXiv:2404.11345, 2025. Under review.
+G. A. Dzahini-Obiatey, O. Domfeh, and F. M. Amoah. Over seventy years of a viral disease of cocoa
+in Ghana: From researchers’ perspective. African Journal of Agricultural Research, 5(7):476-485,
+2010.
+Yarin Gal and Zoubin Ghahramani. Dropout as a Bayesian approximation: Representing model
+uncertainty in deep learning. In International Conference on Machine Learning (ICML), pages
+1050-1059, 2016.
+Andrew Howard, Mark Sandler, Grace Chu, Liang-Chieh Chen, Bo Chen, Mingxing Tan, Weijun
+Wang, Yukun Zhu, Ruoming Pang, Vijay Vasudevan, Quoc V. Le, and Hartwig Adam. Searching
+for MobileNetV3. In IEEE/CVF International Conference on Computer Vision (ICCV), pages
+1314-1324, 2019.
+International Cocoa Organization. Quarterly bulletin of cocoa statistics. ICCO, 2023.
+Glenn Jocher, Ayush Chaurasia, and Jing Qiu. Ultralytics YOLOv8. 
+ultralytics/ultralytics, 2023.
+Ameer Tamoor Khan, Signe Marie Jensen, Abdul Rehman Khan, and Shuai Li. Plant disease detection
+model for edge computing devices. Frontiers in Plant Science, 2023.
+Timothy Malche, Mukesh Joshi, Govind Murari Upadhyay, and Pramod Kumar Soni. Automated
+tomato leaf disease detection and alert system using internet of things and tinyml. Discover Internet
+of Things, 2026.
+J. P. Marelli, D. R. Guest, B. A. Bailey, H. C. Evans, J. K. Brown, M. Goss, A. Crozier, and
+N. Bainbridge. Chocolate under threat from old and new cacao diseases. Phytopathology, 109(8):
+1331-1343, 2019.
+Sharada P. Mohanty, David P. Hughes, and Marcel Salathé. Using deep learning for image-based
+plant disease detection. Frontiers in Plant Science, 7:1419, 2016.
+Trevor Park and George Casella. The Bayesian Lasso. Journal of the American Statistical Association,
+103(482):681-686, 2008.
+Ali Sharif Razavian, Hossein Azizpour, Josephine Sullivan, and Stefan Carlsson. CNN features
+off-the-shelf: An astounding baseline for recognition. In IEEE Conference on Computer Vision
+and Pattern Recognition Workshops, pages 806-813, 2014.
+Matt Taddy. Distributed multinomial regression. The Annals of Applied Statistics, 9(3):1394-1414,
+2015.
+Appendix
+Proof of Theorem 1. : Fix k ∈{1, . . . , K}. Following the construction of Das and Sardar [2025,
+Theorem 2.3], define the per-class objective in βk-space by
+Qn,k(βk) = 1
+n
+n
+X
+i=1
+ℓk
+ Yik, x⊤
+i βk
+
++ 1
+n log π(k)
+J (βk),
+so that ˜β
+(n)
+k
+= arg maxβk Qn,k(βk), and the per-class objective in ηk-space by
+Rn,k(ηk) = 1
+n
+n
+X
+i=1
+ℓk(Yik, ηik) + 1
+n log π(k)
+n (ηk),
+so that the per-observation maximisers ˆηik = arg maxηik log π(k)
+n (ηik | Yik) together form ˆηk =
+arg maxηk Rn,k(ηk), with ˆβ
+(n)
+k
+= (X⊤X)−1X⊤ˆηk.
+Step 1 (vanishing prior contribution). By Assumption (B2), log π(k)
+J
+is continuous on Bε(β0,k).
+For any compact K1
+⊂
+Bε(β0,k), continuity yields a finite constant MK1
+<
+∞with
+supβk∈K1 log π(k)
+J (βk) ≤MK1, hence
+sup
+βk∈K1
+n
+ log π(k)
+J (βk)
+ ≤MK1
+n
+n→∞
+−−−−→0.
+(2)
+For the conjugate Gamma(an, bn) prior on λik in rate form, the change of variables ηik = log λik
+together with the Jacobian dλik/dηik = eηik yields the induced per-coordinate prior
+π(k)
+n (ηik) ∝exp
+
+an ηik −bn eηik	
+,
+(3)
+up to an ηik-free normalising constant. By independence across i,
+n log π(k)
+n (ηk) = an
+n
+n
+X
+i=1
+ηik −bn
+n
+n
+X
+i=1
+eηik + const.
+For any compact K2
+⊂
+Bε(η0,k) there exist finite constants M1, M2
+<
+∞such that
+supηk∈K2 maxi |ηik| ≤M1 and supηk∈K2 maxi eηik ≤M2.
+Hence under Assumption (B5)
+(an = bn = 1/n),
+sup
+ηk∈K2
+n log π(k)
+n (ηk)
+ ≤an M1 + bn M2 = M1 + M2
+n
+n→∞
+−−−−→0,
+(4)
+matching the prior-vanishing identity used in Equations (2.5)-(2.6) of Das and Sardar [2025] (cf.
+Remark 3.1 there).
+Step 2 (uniform convergence of objectives). Combining (B3) with (2) and (4),
+sup
+βk∈B
+Qn,k(βk) −Qk(βk)
+
+P−→0,
+sup
+ηk∈H
+Rn,k(ηk) −Rk(ηk)
+
+P−→0,
+where H = {Xβk : βk ∈B}.
+Step 3 (argmax continuous mapping). By Assumption (B4), Qk and Rk have unique maximisers at
+β0,k and η0,k respectively. Applying the argmax continuous mapping theorem to the convergence in
+Step 2 yields
+˜β
+(n)
+k
+P−→β0,k,
+ˆηk
+P−→η0,k = Xβ0,k.
+Step 4 (continuous projection).
+By (B1), X has full column rank, so the linear map η 7→
+(X⊤X)−1X⊤η is well-defined and continuous. The continuous mapping theorem then gives
+ˆβ
+(n)
+k
+= (X⊤X)−1X⊤ˆηk
+P−→(X⊤X)−1X⊤η0,k = β0,k.
+Combined with ˜β
+(n)
+k
+P−→β0,k from Step 3, this proves part (i).
+Step 5 (asymptotic equivalence). Both ˆβ
+(n)
+k
+and ˜β
+(n)
+k
+converge in probability to the same limit β0,k.
+By the triangle inequality, for every ε > 0,
+ˆβ
+(n)
+k
+−˜β
+(n)
+k
+ ≤
+ˆβ
+(n)
+k
+−β0,k
+ +
+˜β
+(n)
+k
+−β0,k
+,
+so for every δ > 0,
+P
+ˆβ
+(n)
+k
+−˜β
+(n)
+k
+ > ε
+
+≤P
+ˆβ
+(n)
+k
+−β0,k
+ > ε/2
+
++ P
+˜β
+(n)
+k
+−β0,k
+ > ε/2
+
+.
+Each summand is below δ/2 for n ≥Nk(ε, δ) by part (i), establishing part (ii).
+Step 6 (joint statement). By Assumption (B6), the per-class statements in (i)-(ii) are simultaneous.
+Using the Euclidean norm ∥ˆβ
+(n) −˜β
+(n)∥2 = PK
+k=1 ∥ˆβ
+(n)
+k
+−˜β
+(n)
+k ∥2, the event {∥ˆβ
+(n) −˜β
+(n)∥> ε}
+is contained in SK
+k=1{∥ˆβ
+(n)
+k
+−˜β
+(n)
+k ∥> ε/
+√
+K}, so a union bound gives
+P
+ˆβ
+(n) −˜β
+(n) > ε
+
+≤
+K
+X
+k=1
+P
+ˆβ
+(n)
+k
+−˜β
+(n)
+k
+ > ε/
+√
+K
+
+.
+Applying part (ii) with δ/K to each summand yields the joint asymptotic equivalence in (iii). The
+joint convergence ˆβ
+(n)
+P−→β0 follows from (i) and the continuous mapping theorem applied to the
+stacking map.
+Proof of Corollary 1. We show that the prediction rule is invariant to (a, b) by explicitly decomposing
+the transformed response and tracking its effect through the estimator.
+Step 1: Response decomposition.
+For Yik ∈{0, 1},
+ˆηik(a, b) = log Yik + a
+1 + b
+= log(Yik + a) −log(1 + b).
+We now express log(Yik + a) in a form linear in Yik. Since Yik ∈{0, 1},
+log(Yik + a) =
+log(1 + a),
+if Yik = 1,
+log(a),
+if Yik = 0.
+Hence,
+log(Yik + a) = log(a) + Yik · log
+1 + a
+a
+
+.
+Define
+γ(a) := log
+1 + a
+a
+
+> 0.
+Then
+ˆηik(a, b) =
+ log(a) −log(1 + b)
+
+|
+{z
+}
+=:c(a,b)
++γ(a) Yik.
+In vector form,
+ˆηk(a, b) = c(a, b) 1n + γ(a) Yk.
+Step 2: Projection.
+Applying the closed-form estimator,
+ˆβk(a, b) = (X⊤X)−1X⊤ˆηk(a, b),
+we obtain
+ˆβk(a, b) = c(a, b) v + γ(a) wk,
+where
+v := (X⊤X)−1X⊤1n,
+wk := (X⊤X)−1X⊤Yk.
+Step 3: Effect on prediction.
+For any x ∈Rp,
+x⊤ˆβk(a, b) = c(a, b) x⊤v + γ(a) x⊤wk.
+The first term does not depend on k and therefore cancels in the arg max. Since γ(a) > 0 for all
+a > 0, multiplication by γ(a) preserves ordering across k. Hence,
+arg max
+k
+x⊤ˆβk(a, b) = arg max
+k
+x⊤wk,
+which is independent of (a, b).
+Proof of Theorem 2. : Fix k ∈{1, . . . , K}. Write η0,ik = x⊤
+i β0,k, λ0,ik = eη0,ik, and Tik :=
+(Yik −λ0,ik)/λ0,ik, so that E[Tik] = 0 and Var(Tik) = 1/λ0,ik = e−η0,ik. Then
+ˆηik −η0,ik = log
+Yik + an
+(1 + bn) λ0,ik
+= log
+
+1 + Tik +
+an
+λ0,ik
+
+−log(1 + bn).
+Step 1 (Taylor expansion on a high-probability event). By Assumption (C1), λ0,ik ≥λmin,n →∞
+uniformly in i, k. By Bernstein concentration for centred Poisson variables, P(|Tik| > 1/2) ≤
+2 exp
+ −c λ0,ik
+
+≤2 exp
+ −c λmin,n
+
+for an absolute constant c > 0. Letting En =
+
+maxi,k |Tik| ≤
+1/2
+	
+∩
+
+an/λmin,n ≤1/4
+	
+, a union bound gives P(Ec
+n) ≤2nK exp
+ −c λmin,n
+
+= o(n−1/2)
+under (C1). On En, the second-order Taylor expansion of u 7→log(1 + u) around u = 0 yields
+ˆηik −η0,ik = Tik +
+an
+λ0,ik
+−bn
+|
+{z
+}
+=: r(1)
+ik
+−1
+
+Tik +
+an
+λ0,ik
+2
++ r(2)
+ik ,
+where |r(2)
+ik | ≤C
+Tik + an/λ0,ik
+3 + C b2
+n for an absolute constant C.
+Step 2 (bias is asymptotically negligible). Taking expectations,
+E[ˆηik −η0,ik] = −
+2 λ0,ik
++
+an
+λ0,ik
+−bn + O
+λ2
+0,ik
++ a2
+n + b2
+n
+!
+.
+Under (C1) and (C2),
+√n X⊤E
+ˆηk −η0,k
+  = O
+ √n
+λmin,n
+
++ O
+ √n (an + bn)
+
+= o(1),
+since λmin,n = ω(√n) by (C1) and √n (an + bn) →0 by (C2).
+Step 3 (leading stochastic term). The leading stochastic term in the expansion of Step 1 is Tik, with
+E[Tik] = 0 and Var(Tik) = e−η0,ik. By Assumption (C4) and the Lindeberg-Feller central limit
+theorem applied to the triangular array {xi Tik}n
+i=1,
+√n X⊤Tk =
+√n
+n
+X
+i=1
+xi Tik
+d−→N
+ 0, Vk
+
+,
+Vk = lim
+n
+n
+n
+X
+i=1
+xix⊤
+i e−x⊤
+i β0,k.
+Step 4 (remainders are negligible). The centred fluctuation of the second-order Taylor term has
+variance O(λ−2
+0,ik) = o(λ−2
+min,n), so by Chebyshev’s inequality
+√n
+n
+X
+i=1
+xi
+h
+2
+
+Tik +
+an
+λ0,ik
+2
+−1
+2 E
+
+Tik +
+an
+λ0,ik
+2 i
+= oP (1),
+where the mean has been absorbed into the bias of Step 2. Similarly, the cubic remainder satisfies
+n−1/2 P
+i xi r(2)
+ik = oP (1) on En. Since P(Ec
+n) = o(n−1/2), the contribution off En is also oP (1).
+Step 5 (combining and projecting). Steps 1-4 give the linearisation
+√n X⊤ ˆηk −η0,k
+
+=
+√n X⊤Tk + oP (1)
+d−→N
+ 0, Vk
+
+.
+By (C3), (n−1X⊤X)−1 →Q−1, and Slutsky’s theorem yields
+√n
+ ˆβ
+(n)
+k
+−β0,k
+
+=
+X⊤X
+n
+−1
+·
+√n X⊤ ˆηk −η0,k
+
+d−→N
+ 0, Q−1VkQ−1
+.
+Step 6 (joint distribution). By the cross-class independence in (B6), the per-class score vectors
+n−1/2X⊤Tk are mutually independent across k. Hence the joint limit is the product Gaussian,
+equivalent to N(0, Σ) with Σ block-diagonal and k-th block Q−1VkQ−1.

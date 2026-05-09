@@ -1,0 +1,1250 @@
+Prediction and Empowerment: A Theory of
+Agency through Bridge Interfaces
+Richard Csaky
+richard.csaky@gmail.com
+Abstract
+We study agency under partial observability in deterministic physical or simu-
+lated worlds, where apparent randomness arises from uncertainty over initial
+conditions, fixed law bits, and unrolled exogenous noise. We model sensing
+and actuation as bridge interfaces split between agent-controlled parameters
+and environment-controlled channel state, inducing a deterministic POMDP
+through a prior over latent microstates and many-to-one observation coars-
+ening. Within this framework, we prove a separation between prediction,
+compression, and empowerment. Perfect prediction can be achieved either by
+identifying the hidden quotient relevant to the target family or by overwrite
+control that makes the future target action-determined; high empowerment
+alone is insufficient. Under refinable interfaces and sufficient memory, action-
+conditioned observation-compression progress reduces posterior uncertainty
+about the latent quotient, and when refinement requires steering world-side
+channel conditions, this creates target-conditioned interface empowerment.
+A bit-string specialization with a conserved information budget makes the
+resulting tradeoff explicit: prediction by identification requires internal
+capacity at least the relevant latent entropy, whereas overwrite control
+requires terminal action capacity over the controlled quotient. For modern
+AI agents, the results suggest a design principle rather than a theorem
+of inevitability: objectives should distinguish hidden-state identification,
+interface refinement, task-relevant controllability, and mere overwrite or dis-
+tractor control. Human-AI alignment is partly an interface-design problem,
+where the relevant bridge is between human intent, agent internal state,
+external tools, and world-side channel conditions1.
+Introduction
+A general agent (e.g. human) observes and controls the world through bridges (interfaces).
+These include sensors, grippers, cameras, retrieval systems, prompts, API permissions, social
+protocols, and memory. Each bridge has an agent-owned side, such as a query, actuator
+mode, prompt, or protocol. It also has an environment-owned side, such as occlusion, contact
+geometry, authorization, rate limits, or human context. Both sides determine whether the
+agent can learn or control a hidden variable. Standard POMDP notation represents this
+dependence in a kernel. It leaves the interface variables implicit, which makes failures of
+prediction, control, and empowerment harder to diagnose.
+The motivating hypotheses are H1 and H2. H1 says future-observation compression, hidden-
+state compression, observation control, state control, and empowerment become aligned. H2
+says this alignment drives an agent toward a lossless interface or absorption of the relevant
+environment. These hypotheses require explicit qualifications. Empowerment can be spent
+1This is a working draft. Feedback and criticism is most welcome.
+Preprint.
+arXiv:2605.06346v1 [cs.AI] 7 May 2026
+
+on a settable distractor. Prediction can succeed by erasing latent distinctions. Observation
+control can diverge from state control through a lossy display. A strong version must specify
+the conditions under which one objective can substitute for another in decision making.
+Pointwise closeness of two information quantities supplies too little information.
+This paper makes H1 a decision-theoretic statement. For any option class, the obstruction
+to using one H1 objective as a surrogate for another is the oscillation of their difference
+over that class. Bridge-gap components bound this oscillation in bits. A small pointwise
+gap at a single policy gives too little control. The gap must be uniformly small over the
+policies being optimized. This correction turns entropy bookkeeping into a guarantee about
+optimizer transfer.
+Contributions.
+The paper represents any finite-horizon stochastic POMDP as a determin-
+istic latent bridge-POMDP by including exogenous noise in the latent variable (Section 2).
+It proves universal bridge-gap inequalities and the tight uniform regret-transfer theorem
+(Section 3). It proposes Bridge-Gap Pursuit (BGP), a model-based intrinsic-control algorithm
+whose reward is the decrease of a bridge potential. Exact finite-horizon BGP minimizes termi-
+nal bridge gap by dynamic programming (Section 5). The paper also implements exact finite
+benchmarks showing arbitrary separations from ungated empowerment, one-step information
+gain/EFE, prediction-loss optimization, and coarse training return (Section 10). It formalizes
+H2 as a prediction-absorption bound and derives implications for human intelligence and
+AGI interfaces (Sections 7 and 8).
+Bridge-interface POMDPs
+Fix a horizon T. Let
+Z = (X0, Λ, Ξ0:T ) ∈Z
+(1)
+be the latent environment variable, including the initial environment state, optional law
+bits, and any exogenous transition/observation noise needed over the horizon. A prior
+p0 over Z is the source of uncertainty. A randomized policy may also use a private seed
+Σ, sampled independently of Z. All deterministic-map statements below are interpreted
+either for deterministic policies or conditional on a realized seed Σ = s. Equivalently, the
+closed-loop history is a deterministic function of (Z, Σ), but losslessness for environment
+quotients is always about Z and never requires recovering the agent’s private randomization.
+The finite deterministic model below covers finite stochastic POMDPs at a fixed horizon
+by unrolling their random seeds. Targets may quotient out future exogenous noise if only
+predictable structure is relevant.
+The timing convention is observe-act-observe. The decision-time history is
+Ht = (O0, A0, O1, A1, . . . , At−1, Ot),
+t = 0, . . . , T,
+(2)
+and the agent state Mt is an Ht-measurable retained state. At decision time t < T, the
+policy maps Mt to the intended action At and the agent-owned bridge settings used for the
+ensuing transition and observation. Sensing and actuation pass through bridge variables
+ϕt+1 = (ϕS
+t+1, ϕX
+t+1),
+κt = (κS
+t , κX
+t ).
+(3)
+The superscript S denotes agent-owned settings. The superscript X denotes environment-
+owned channel conditions determined by the current or next world state and law/noise bits.
+With an initial observation O0 generated by a fixed initial sensor setting, the closed-loop
+step is
+κX
+t = kX
+t (Xt, Λ, Ξt),
+Ut = αt(At, κS
+t , κX
+t ),
+Xt+1 = ft(Xt, Ut, Λ, Ξt),
+ϕX
+t+1 = ℓX
+t+1(Xt+1, Λ, Ξt+1),
+(4)
+Ot+1 = ht+1(Xt+1, ϕS
+t+1, ϕX
+t+1, Ξt+1),
+Mt+1 = gt(Mt, At, Ot+1).
+(5)
+The transcript is
+TT = (O0, A0, O1, A1, . . . , AT −1, OT ).
+(6)
+For every deterministic policy, and for every randomized policy conditional on Σ = s, there
+are deterministic maps
+TT = Gπ
+T,s(Z),
+XT = F π
+T,s(Z),
+MT = Sπ
+T,s(Z).
+(7)
+When the seed is irrelevant or the policy is deterministic, the subscript s is omitted.
+Definition 1 (Target quotient and losslessness). For a family R of deterministic targets
+R : Z →YR, define z ∼R z′ iff R(z) = R(z′) for all R ∈R. Let QR = qR(Z) be the
+quotient. A transcript is lossless for Q if H(Q | TT ) = 0. It is microstate-lossless if Q = Z
+on supp(p0).
+This quotient notation prevents overclaiming. An agent should identify the authorized
+distinctions needed for a target family. A default demand for every microscopic or private
+fact would overreach. The limiting case, used for absorption statements, is a task-separating
+family whose quotient equals the latent environment bits under consideration.
+The bridge-gap theorem
+Let Q be a hidden-state quotient and W a future-observation quotient. Let V be a terminal
+environment quotient and eV the terminal observation quotient through which control is
+evaluated. For control-capacity statements, condition on a fully specified deterministic rollout
+context χ containing the initial physical state and all law/noise bits that must be fixed for
+deterministic reachability. If one conditions only on the physical state X0, the same mutual-
+information inequalities hold for the induced stochastic channel, but the log-reachability
+identity in Lemma 1 should be read with χ in place of X0. Write
+CV (χ) =
+max
+p(a0:T −1) I(A0:T −1; V | χ),
+Ce
+V (χ) =
+max
+p(a0:T −1) I(A0:T −1; eV | χ).
+(8)
+These are open-loop action-sequence capacities. Closed-loop variants can be obtained by
+replacing action sequences with admissible policies or policy seeds; the bridge-gap inequalities
+below are unchanged. Define the bridge-gap components
+∆QW = max{H(Q | W), H(W | Q)},
+∆sense = H(Q | TT ),
+(9)
+∆V e
+V (χ) = sup
+p max{Hp(V | eV , χ), Hp(eV | V, χ)},
+∆act(χ) = log | supp(V | χ)| −CV (χ).
+(10)
+The supremum ranges over action-sequence distributions under context χ. The total bridge
+gap is any nonnegative weighted sum of these components. Positive weights leave the zero
+set invariant.
+Theorem 1 (Universal bridge-gap bounds). For any finite bridge-POMDP, deterministic
+policy or policy seed, horizon, transcript, and quotients as above,
+−H(W | Q) ≤I(Q; TT ) −I(W; TT ) ≤H(Q | W),
+(11)
+−sup
+p Hp(eV | V, χ) ≤CV (χ) −Ce
+V (χ) ≤sup
+p Hp(V | eV , χ).
+(12)
+Moreover,
+1 −I(Q; TT )
+H(Q)
+= ∆sense
+H(Q) ,
+1 −
+CV (χ)
+log | supp(V | χ)| =
+∆act(χ)
+log | supp(V | χ)|
+(13)
+whenever the denominators are nonzero. If the relevant bridge-gap components vanish, the
+corresponding normalized quantities-future-observation compression, hidden-state compres-
+sion, observation control, state control, and deterministic empowerment on V -attain their
+lossless or full-capacity value. Conversely, joint maximality on the evaluated quotients forces
+the associated nonnegative deficits in Equations (9) and (10) to vanish.
+The theorem is pointwise. It describes how two quantities differ at a fixed policy or action
+distribution. Optimization requires a uniform statement. Let U be any finite policy or
+option class and let Ji, Jj : U →[0, 1] be any two normalized H1 objectives, for example
+normalized hidden-state compression, future-observation compression, state-control capacity,
+observation-control capacity, or quotient empowerment. Define the objective-difference
+oscillation
+Ωij(U) = sup
+u,v∈U
+
+(Ji(u) −Jj(u)) −(Ji(v) −Jj(v))
+
+.
+(14)
+Theorem 2 (Tight uniform regret transfer). If ˆu is η-optimal for Ji over U, then its regret
+for Jj is at most
+max
+u∈U Jj(u) −Jj(ˆu) ≤η + Ωij(U).
+(15)
+The bound is tight for arbitrary finite objective pairs. Thus the exact obstruction to surrogate
+optimization is Ωij(U). Bridge-gap bounds are sufficient diagnostics: if they imply a uniform
+absolute bound |Ji(u) −Jj(u)| ≤ε over U, then Ωij(U) ≤2ε; if they directly bound the range
+width of Ji −Jj by ε, then Ωij(U) ≤ε.
+This theorem addresses a common overclaim. A small gap at the selected policy gives too
+little support for surrogate optimization. The whole option class must have small objective-
+difference oscillation. Zero bridge gap for every option in U implies Ωij = 0 and exact
+optimizer transfer. If the uniform normalized absolute gap is at most ε, an η-optimizer of
+one H1 objective is an (η + 2ε)-optimizer of the other; if the bridge gap bounds the range
+width by ε, the regret transfer is (η + ε). A large component identifies a specific failure mode.
+The possibilities are wrong quotient, insufficient evidence, lossy observation of controlled
+state, or insufficient authority.
+Prediction, identification, and empowerment separations
+Theorem 3 (Prediction is fiber collapse). Fix π, T and either assume π is deterministic
+or condition on a realized private seed Σ = s. Let Y = Rπ
+T,s(Z) be any finite deterministic
+target. The Bayes-optimal log-loss for predicting Y from TT is H(Y | TT , Σ = s). Perfect
+prediction holds exactly when Rπ
+T,s is constant on every positive-prior fiber of Gπ
+T,s. Microstate-
+losslessness holds exactly when Gπ
+T,s is injective on supp(p0).
+Corollary 1 (General prediction pressure). Perfect prediction for all targets in a family R
+is equivalent to H(QR | TT ) = 0. If R is task-separating, perfect prediction for all targets
+implies microstate-losslessness.
+For a fully specified deterministic rollout context χ, deterministic horizon-T open-loop
+empowerment over quotient V is
+EmpV
+T (χ) =
+max
+p(a0:T −1) I(A0:T −1; V | χ).
+(16)
+Let ReachV
+T (χ) be the set of reachable values of V under action sequences from that context.
+Lemma 1 (Empowerment equals log reachability). If V is a deterministic function of the
+action sequence conditional on χ, then EmpV
+T (χ) = log2 | ReachV
+T (χ)|.
+Proposition 1 (Arbitrary separations). For any integers m, n ≥1, finite bridge-POMDPs
+can realize each of the following separations.
+(i) Zero empowerment with perfect identification of a uniform n-bit latent.
+(ii) m bits of empowerment with I(Z; T1) = 0.
+(iii) Perfect prediction of a terminal target with I(Z; MT ) = 0 because the policy overwrites
+the target before predicting it.
+These examples are common reasons intrinsic rewards fail. A camera can classify its own
+display and leave the task object unseen. A robot can control a light switch and leave the
+hidden latch state unresolved. A language agent can make a later answer predictable by
+forcing the user into a narrow protocol that bypasses intent inference. The bridge gap says
+which of these happened in bits.
+Refinement and Bridge-Gap Pursuit
+The gap also gives minimal resource requirements. Let B be any additional transcript
+generated by a refined sensor, query, tool call, or experiment after the current transcript T .
+Theorem 4 (Exact missing sensing bits). If H(Q | T , B) = 0, then H(B | T ) ≥H(Q | T ).
+This lower bound is tight. The sufficient statistic B = Q has conditional entropy H(Q | T )
+and closes the sensing gap.
+Thus H(Q | T ) is both a diagnostic and the exact number of additional transcript bits any
+lossless refinement must supply. The analogous outward deficit in a deterministic rollout
+context χ is ∆act(χ) = log | supp(V | χ)| −CV (χ). A deterministic controller with capacity
+CV (χ) can realize only 2CV (χ) terminal values of V , and full authority requires the missing
+capacity.
+A deterministic sensing design η induces an experiment Gη : Z →Oη. With actions and
+private seed conditioned on, Oη = Gη(Z).
+Theorem 5 (Refinement converts observation entropy into latent information). For any
+deterministic experiment,
+I(Z; Oη) = H(Oη) = H(Z) −H(Z | Oη).
+(17)
+If η′ refines η in the Blackwell sense, Gη = r ◦Gη′ on supp(p0), then I(Z; Oη′) ≥I(Z; Oη),
+with strict inequality under positive-mass strict refinement.
+The conditioning clause prevents private randomization from masquerading as discovery.
+Refinement may itself require control. The agent must reach channel states such as line of
+sight, contact, authorization, or a useful tool state before the informative experiment exists.
+Algorithm 1 (Bridge-Gap Pursuit (BGP)). Maintain a posterior model over the authorized
+quotient Q, world-side bridge states C = (ϕX, κX), controllable factors Y1, . . . , Yd, observed
+terminal quotient eV , and task value. Define the bridge potential
+Φ(h) = bH(Q | h) + λC[log |C⋆
+Q| −bCC(h)]+ + λV [log |VQ| −bCVQ(h)]+
++ λO bH(VQ | eV , h) + λD
+X
+i
+(1 −bgi(h)) bCYi(h),
+(18)
+where C⋆
+Q are channel states enabling informative experiments about Q, and VQ is the task-
+relevant controlled quotient. The counterfactual relevance gate is defined from intervention
+value rather than from the assigned variable as evidence:
+b∆Q
+i (h) = sup
+y∈Yi
+h
+bH(Q | h) −bE
+bH(Q | HT ) | h, do(Yi = y)
+i
++,
+b∆R
+i (h) =
+sup
+y,y′∈Yi
+bE[Rt:T | h, do(Yi = y)] −bE[Rt:T | h, do(Yi = y′)]
+ ,
+bgi(h) = 1{b∆Q
+i (h) + b∆R
+i (h) > τ}.
+(19)
+The intervention do(Yi = y) does not make the assigned value Yi evidence about Q; it is
+relevant only if changing Yi causally improves future evidence about Q or changes future task
+value. Plan over options with reward
+rBGP
+t
+= rtask
+t
++ β
+ Φ(Ht) −Φ(Ht+1)
+
+.
+(20)
+The last term assigns opportunity cost to controllable factors that are independent of the
+target quotient and downstream value, especially under scarce control budget. The channel
+term gives delayed interface actions value before they reveal information. The observation-loss
+term prevents hidden state control from being mistaken for verifiable control.
+Theorem 6 (BGP is exact bridge-potential shaping). For any finite-horizon bridge-POMDP
+with exact Φ, every policy π satisfies
+Eπ
+T −1
+X
+t=0
+ Φ(Ht) −Φ(Ht+1)
+
+= Φ(H0) −EπΦ(HT ).
+(21)
+Thus, when rtask = 0, an optimal finite-horizon BGP policy is exactly a policy minimizing
+expected terminal bridge gap.
+With task reward, BGP solves the Lagrangian objective
+E[P
+t rtask
+t
+−βΦ(HT )] up to the constant βΦ(H0). If a zero-gap terminal history is reachable
+within horizon T, exact dynamic-programming BGP reaches one whenever doing so is optimal
+under this Lagrangian.
+BGP’s substantive algorithmic claim is the choice of potential and its decomposition into
+bridge deficits. It can be implemented by dynamic programming in exact finite domains, by
+model-predictive control or tree search in learned world models, or by training a policy on
+the shaped reward. Approximate implementations require separate assumptions about the
+learned estimators. The learnable losses are
+LBGP = Lworld + αQLQ + αCLC + αV LV + αRLrel,
+(22)
+where the heads estimate posterior ambiguity, channel reachability, controllability, observation
+loss, and counterfactual relevance. The algorithm changes what the agent models and rewards.
+It uses the existing outer RL optimizer.
+Proposition 2 (Algorithmic separations with arbitrary gaps). For every n, m ≥1, finite
+deterministic bridge-POMDPs can realize each of the following failures.
+(i) Ungated empowerment chooses an m-bit settable distractor and leaves H(Q | HT ) = n.
+(ii) One-step information gain or one-step expected-free-energy assigns equal value to
+the unique preliminary channel action needed for later sensing and can leave H(Q |
+HT ) = n.
+(iii) Terminal prediction loss chooses overwrite, predicts its terminal target perfectly, and
+leaves H(Q | MT ) = n.
+(iv) Coarse training return leaves a refined quotient with n unresolved bits.
+Exact BGP selects the zero-gap option in all four families when it is reachable.
+Bridge budget for evidence, influence, and plasticity
+The bridge gap measures whether the same quotient is available to prediction and control.
+A separate issue is whether a finite interface can simultaneously carry evidence inward and
+influence outward. Empowerment measures how much future state can be influenced by
+action [Klyubin et al., 2005]. Plasticity is the inward mirror and measures how much future
+action can be influenced by observation [Abel et al., 2025]. When both flows use a shared
+finite bridge transcript, they obey a capacity budget.
+For this section only, use the standard feedback-channel indexing AT = (A1, . . . , AT ) and
+OT = (O1, . . . , OT ), where At is chosen after Ot−1 and before Ot; the initial observation
+in the POMDP convention can be absorbed into the initial condition. Define directed
+information
+I(AT →OT ) =
+T
+X
+t=1
+I(At; Ot | Ot−1),
+(23)
+I(OT −1 →AT ) =
+T
+X
+t=1
+I(Ot−1; At | At−1).
+(24)
+The first term measures realized outward influence through the interface.
+The second
+measures realized inward evidence that changes action.
+Theorem 7 (Finite shared-bridge budget). Assume the joint law is causal and all statistical
+dependence between AT and OT is mediated by a specified finite bridge transcript B satisfying
+H(B) ≤b, so AT ⊥OT | B. The variable B is the physical or informational interface
+transcript being bounded; it should not include arbitrary agent memory or private randomness
+unless those degrees of freedom are actually transmitted through the interface. Then
+I(AT →OT ) + I(OT −1 →AT ) = I(AT ; OT ) ≤b.
+(25)
+This theorem is a bottleneck theorem for a specified bridge. It is relevant for H1 and BGP
+because a narrow interface can spend capacity on easy outward control, leaving little capacity
+for evidence. It can also spend capacity on passive evidence, leaving little realized influence.
+A unified agent must widen the bridge, split inward and outward channels, or internalize the
+relevant state. This is why BGP rewards channel reachability over raw empowerment. A
+controllable bit is useful when it reduces the bridge gap for the target quotient or opens a
+better experiment.
+7
+H2: unification and absorption from prediction
+Definition 2 (Unification). For latent quotient Q, terminal state quotient V , and observed
+terminal quotient eV , a policy is unified at horizon T if the bridge gap for (Q, V, eV ) is zero.
+Equivalently, Q is transcript-identifiable, V is fully controllable, and eV is lossless for V on
+the reachable set.
+The earlier absorption statement can be strengthened and made less assumption-heavy by
+stating what prediction forces into agent-owned state. Let MT be all retained agent-owned
+state, including memory, parameters updated during the episode, scratchpad, owned interface
+settings, and any maintained external memory counted as part of the agent.
+Theorem 8 (Prediction-absorption bound). Fix a deterministic policy or condition on a
+realized private seed Σ = s. Let Q = q(Z) be an initial environment quotient and V = F π
+T,s(Z)
+a terminal quotient. If V is perfectly predictable from agent state, H(V | MT ) = 0, then
+I(Q; MT ) ≥I(Q; V ),
+H(Q | MT ) ≤H(Q | V ).
+(26)
+The bound leaves three canonical, possibly overlapping mechanisms. Identification. If V
+preserves Q (H(Q | V ) = 0), then H(Q | MT ) = 0 and the agent has absorbed Q. Over-
+write/collapse. If the policy maps many Q values to the same V , the unabsorbed part is at
+most the collapsed entropy H(Q | V ). Omission. If the target quotient omits some distinctions
+in Q, prediction can ignore those distinctions.
+Corollary 2 (Memory and empowerment consequences). If H(Q | MT ) = 0, then log |MT | ≥
+H(Q). If V has m reachable terminal values under deterministic authority from context χ,
+then deterministic empowerment over V is log m. Full authority over V is equivalent to
+EmpV
+T (χ) = log | supp(V | χ)|.
+This is the operational H2 used here. Joint maximization of the H1 objectives can drive the
+bridge gap to zero when zero gap is feasible and the optimized objectives have small difference
+oscillation over the relevant policy class. Zero gap is unification. Absorption follows when the
+unified target family is task-separating or when the terminal quotient preserves the relevant
+environment distinctions. Overwrite can make prediction perfect with unresolved latent
+distinctions. Task omission makes absorption unnecessary and potentially undesirable. When
+MT contains the target quotient and the law bits needed for future rollout, the future coupled
+trajectory under a deterministic policy is a function of agent-owned state. Observations then
+add zero information about that quotient beyond the self-model.
+Implications for human intelligence and AGI design
+The theory leaves human objective functions open. It predicts a developmental invariant.
+Intelligence expands the class of task quotients for which bridge gap can be reduced. Gaze,
+posture, reaching, locomotion, haptic exploration, tool use, imitation, language, and social
+protocol learning are ways to make better experiments and control channels reachable. In
+the notation above, development should increase I(QR; MT )/H(QR), increase reachability
+of informative channel states C ∈C⋆
+Q, and close relevance gates on controllable variables
+that are causally unrelated to the task. This aligns with active perception, sensorimotor
+contingencies, active inference, and developmental robotics [Bajcsy, 1988, O’Regan and
+Noë, 2001, Friston, 2010, Cangelosi and Schlesinger, 2015]. It also gives a sharper empirical
+question. Which latent distinctions still lie in the same transcript fiber, and which bridge
+state would separate them?
+The resulting account of human intelligence is boundary management. Organisms learn
+outward regularities of the actuation bridge, including the motor commands, gestures, and
+utterances that reliably change the world. They use that authority to reach channel states
+with higher sensing value, such as line of sight, contact, shared attention, or clarification.
+They compress task quotients into memory, skills, and concepts. They externalize stable
+bridge components through tools, writing, institutions, and social conventions. This ordering
+is testable. Each stage predicts changes in transcript ambiguity, channel reachability, and
+controllability under ablations.
+Bridge variable Human examples
+AI design examples
+ϕS
+gaze, questioning, exploratory touch
+prompt/query format, camera pose,
+retrieval schema
+ϕX
+occlusion, lighting, social attention
+permission state, tool visibility, database
+access
+κS
+grip, posture, practiced motor mode
+controller mode, API choice, tool
+adapter
+κX
+contact, friction, norm/affordance state
+authorization, rate limits, simulator
+preconditions
+Q
+distinctions needed for perception, skill,
+social action
+authorized latent factors needed for
+robust downstream tasks
+Table 1: Human development and AI design use the same bridge decomposition.
+For AGI design, BGP suggests an explicit interface layer between a world model and a
+policy. The layer contains a quotient posterior for authorized task distinctions Q, a bridge-
+state model for world-side channel conditions C, a controllability estimator for terminal
+quotients VQ, and a counterfactual relevance gate that suppresses empowerment over factors
+independent of Q or future value. A bridge-aware world model represents the source of
+uncertainty. It distinguishes hidden state, unavailable experiments, unwritable actuator
+conditions, and distractor variables. This differs from training a monolithic predictor and
+hoping that useful exploration emerges from prediction error.
+For tool-using and language agents, prompts, retrieval schemas, clarifying questions, API
+permissions, memory writes, tool states, and user feedback are bridge variables. Questions,
+tool calls, authorization requests, and memory writes have value when they reduce H(Q |
+H), change channel reachability, remove an authorization bottleneck, or prevent recurring
+quotient ambiguity. Approval and engagement signals should be ignored or penalized when
+they are controllable and conditionally independent of user intent. A practical evaluation
+follows directly. Specify the target quotient, inventory bridge ownership, measure transcript
+ambiguity and terminal control capacity, vary hidden initial state with the transcript fixed,
+and ablate action bandwidth to distinguish identification from overwrite.
+Related work
+Bridge interfaces sit between POMDPs and controlled sensing [Kaelbling et al., 1998,
+Krishnamurthy, 2016, Hero and Cochran, 2011], active perception [Bajcsy, 1988, Aloimonos
+et al., 1988], Blackwell experiment refinement [Blackwell, 1953], information bottlenecks
+[Tishby et al., 2000], empowerment [Klyubin et al., 2005], plasticity [Abel et al., 2025], active
+inference [Friston et al., 2015, Millidge et al., 2021], and world models [Ha and Schmidhuber,
+2018].
+The refinement order is the deterministic special case of comparing statistical experiments
+by informativeness [Blackwell, 1953]. The information-gain and compression statements are
+related to classical information theory and information bottleneck ideas [Shannon, 1948,
+Cover and Thomas, 2006, Tishby et al., 2000]. Active inference and expected free energy
+combine extrinsic and epistemic terms under stochastic generative models [Friston, 2010,
+Friston et al., 2015, 2016, 2017, Parr and Friston, 2019, Da Costa et al., 2020, Millidge et al.,
+2021]. The present paper isolates deterministic identifiability and resource lower bounds.
+Empowerment was introduced as an agent-centric control capacity [Klyubin et al., 2005].
+Directed information and transfer entropy provide feedback-aware measures of information
+flow [Marko, 1973, Massey, 1990, Schreiber, 2000, Jiao et al., 2013]. Recent work on plasticity
+studies the observation-to-action mirror of empowerment [Abel et al., 2025], and the Artificial
+Agency Program connects curiosity, compression, empowerment, and interface quality as
+a research agenda [Csaky, 2026]. The finite bridge budget here is narrower. It is an exact
+capacity statement when action-observation dependence is mediated by a finite transcript.
+Benchmark
+Failing objective
+Baseline success / H(Q | HT ) BGP success / H(Q | HT )
+Settable distractor ungated
+empowerment
+controls irrelevant D
+6.2% / 4
+100% / 0
+Delayed sensor
+one-step IG/EFE
+sees zero immediate
+information
+6.2% / 4
+100% / 0
+Inspect-overwrite
+terminal prediction
+loss chooses
+overwrite
+6.2% / 4
+100% / 0
+Quotient transfer
+coarse return
+ignores refined bits
+25.0% / 2
+100% / 0
+Table 2: Exact finite benchmark results for n = 4, m = 8. The comparison uses exact
+optimizers for the stated baseline objectives. The failures reflect objective misspecification.
+Search error is ruled out.
+Discussion
+The four benchmark families from Proposition 2 are exact finite enumerations. The default
+instances use a uniform n = 4 bit task quotient and an m = 8 bit distractor. Metrics are
+terminal transfer success and remaining ambiguity H(Q | HT ), both computed exactly from
+the finite state spaces.
+The gaps can be made arbitrarily large by increasing m to make irrelevant empowerment
+dominate or by increasing n to make the transfer success of a non-identifying policy 2−n.
+A full long-horizon active-inference planner with the correct hidden quotient and interface
+states can match BGP on some instances. The claim is sharper. Standard epistemic or
+control objectives need an explicit channel-reachability term, relevance gate, and absorption
+diagnostic to distinguish policies that differ in bridge gap. BGP adds those missing terms.
+For scalable experiments, BGP should be evaluated as an intrinsic reward in a learned
+latent model. A recurrent world model or transformer summarizes ht. Auxiliary heads
+estimate qθ(Q | ht), bridge reachability qθ(C | ht, u), controllability of VQ, observation loss,
+and counterfactual relevance of factors Yi. The theorem dictates the primary ablations.
+Removing the relevance gate should reproduce empowerment traps. Removing the channel
+term should reproduce delayed-sensor failures. Removing the observation-loss term should
+confuse hidden state control with observable control. Removing the absorption diagnostic
+should make overwrite and understanding indistinguishable.
+Limitations.
+The exact theorems are finite-horizon and finite-state. Continuous systems
+require rate-distortion quotients or discretization. The exact benchmark uses known models.
+Scalable BGP needs learned estimators of entropy, capacity, relevance, and observation loss.
+Choosing the authorized quotient Q is a normative task-design problem. These restrictions
+keep the claim narrow. Agents become more general when they reduce the missing sensing
+bits, missing authority bits, and quotient mismatch that prevent prediction and control from
+referring to the same part of the world. A decisive negative result would be an interface-
+bottleneck benchmark in which the bridge-gap heads are accurate, the target quotient is
+correctly specified, and BGP systematically underperforms a simpler curiosity, empowerment,
+or active-inference objective for reasons outside the gap terms. A positive scalable result
+should report more than return. It should show that the learned policy reduces the predicted
+and measured bridge gap, that each ablation reintroduces the corresponding failure mode,
+and that transfer to refined quotients improves because unresolved transcript fibers shrink.
+A brittle shortcut would fail this check.
+This also clarifies the intended empirical impact. BGP is most useful in domains where
+valuable actions first improve access to experiments, such as moving a camera, obtaining
+contact, asking a clarifying question, retrieving a document, requesting permission, or
+configuring a tool. These actions often have low immediate novelty and low immediate
+reward. They have high value as bridge refinements. The algorithmic claim is that modeling
+this value explicitly should improve exploration and transfer in such domains and reduce
+reward hacking through irrelevant controllable variables. For a top-level learning system,
+this suggests a concrete benchmark criterion. The agent should solve the current task and
+expose which bridge variable made the task solvable. That requirement is operational.
+The experimenter can randomize bridge conditions, hide or reveal permissions, alter action
+bandwidth, and refine the target quotient after training.
+LLM disclosure.
+Large language model assistance was used during the development and
+writing of this paper. The authors provided the motivating hypotheses, modeling choices,
+target claims, examples, and technical direction, and used an LLM interactively to propose
+formal theorem statements, organize definitions, and draft candidate proofs. The final
+mathematical statements, assumptions, proofs, experiments, references, and interpretation
+were checked, revised, and accepted by the authors, who take full responsibility for their
+correctness and presentation.
+References
+David Abel, Michael Bowling, André Barreto, Will Dabney, Shi Dong, Steven Hansen, Anna
+Harutyunyan, Khimya Khetarpal, Clare Lyle, Razvan Pascanu, Georgios Piliouras, Doina
+Precup, Jonathan Richens, Mark Rowland, Tom Schaul, and Satinder Singh. Plasticity as
+the mirror of empowerment. In Advances in Neural Information Processing Systems, 2025.
+URL 
+John Aloimonos, Isaac Weiss, and Amit Bandyopadhyay. Active vision. International Journal
+of Computer Vision, 1(4):333-356, 1988. doi: 10.1007/BF00133571.
+Ruzena Bajcsy. Active perception. Proceedings of the IEEE, 76(8):966-1005, 1988. doi:
+10.1109/5.5968.
+David Blackwell.
+Equivalent comparisons of experiments.
+The Annals of Math-
+ematical Statistics, 24(2):265-272, 1953.
+doi:
+10.1214/aoms/1177729032.
+URL
+
+volume-24/issue-2/Equivalent-Comparisons-of-Experiments/10.1214/aoms/
+1177729032.full.
+Angelo Cangelosi and Matthew Schlesinger.
+Developmental Robotics: From Babies to
+Robots. MIT Press, 2015. ISBN 9780262028011. URL 
+9780262028011/developmental-robotics/.
+Thomas M. Cover and Joy A. Thomas. Elements of Information Theory. Wiley-Interscience,
+2 edition, 2006. ISBN 9780471241959.
+Richard Csaky. Artificial agency program: Curiosity, compression, and communication
+in agents. arXiv preprint arXiv:2602.24100, 2026. URL 
+24100.
+Lancelot Da Costa, Thomas Parr, Noor Sajid, Sebastijan Veselic, Victorita Neacsu,
+and Karl Friston.
+Active inference on discrete state-spaces:
+A synthesis.
+Journal
+of Mathematical Psychology, 99:102447, 2020. doi: 10.1016/j.jmp.2020.102447. URL
+
+Karl Friston. The free-energy principle: a unified brain theory? Nature Reviews Neuroscience,
+11(2):127-138, 2010. doi: 10.1038/nrn2787. URL 
+nrn2787.
+Karl Friston, Francesco Rigoli, Dimitri Ognibene, Christoph Mathys, Thomas FitzGerald,
+and Giovanni Pezzulo. Active inference and epistemic value. Cognitive Neuroscience, 6(4):
+187-214, 2015. doi: 10.1080/17588928.2015.1020053. URL 
+nih.gov/25689102/.
+Karl Friston, Thomas FitzGerald, Francesco Rigoli, Philipp Schwartenbeck, John O’Doherty,
+and Giovanni Pezzulo. Active inference and learning. Neuroscience & Biobehavioral
+Reviews, 68:862-879, 2016. doi: 10.1016/j.neubiorev.2016.06.022.
+Karl Friston, Thomas FitzGerald, Francesco Rigoli, Philipp Schwartenbeck, and Giovanni
+Pezzulo. Active inference: A process theory. Neural Computation, 29(1):1-49, 2017. doi:
+10.1162/NECO_a_00912.
+David Ha and Jürgen Schmidhuber. Recurrent world models facilitate policy evolution.
+In Advances in Neural Information Processing Systems, pages 2451-2463, 2018. URL
+
+Alfred O. III Hero and Douglas Cochran. Sensor management: Past, present, and future.
+IEEE Sensors Journal, 11(12):3064-3075, 2011. doi: 10.1109/JSEN.2011.2167964.
+Jiantao Jiao, Haim H. Permuter, Lei Zhao, Young-Han Kim, and Tsachy Weissman. Universal
+estimation of directed information. IEEE Transactions on Information Theory, 59(10):6220-
+6242, 2013. doi: 10.1109/TIT.2013.2267934. URL 
+Leslie Pack Kaelbling, Michael L. Littman, and Anthony R. Cassandra. Planning and
+acting in partially observable stochastic domains. Artificial Intelligence, 101(1-2):99-134,
+1998. doi: 10.1016/S0004-3702(98)00023-X. URL 
+papers/aij98-pomdp.pdf.
+Alexander S. Klyubin, Daniel Polani, and Chrystopher L. Nehaniv. Empowerment: A
+universal agent-centric measure of control. In Proceedings of the 2005 IEEE Congress
+on Evolutionary Computation, volume 1, pages 128-135, 2005. doi: 10.1109/CEC.2005.
+1554676. URL 
+Vikram
+Krishnamurthy.
+Partially
+Observed
+Markov
+Decision
+Processes:
+From
+Filtering
+to
+Controlled
+Sensing.
+Cambridge
+University
+Press,
+2016.
+ISBN
+9781107134607.
+doi:
+10.1017/CBO9781316471104.
+URL
+
+cambridge.org/core/books/partially-observed-markov-decision-processes/
+505ADAE28B3F22D1594F837DEAFF1E0C.
+Hans Marko. The bidirectional communication theory-a generalization of information
+theory. IEEE Transactions on Communications, 21(12):1345-1351, 1973. doi: 10.1109/
+TCOM.1973.1091610.
+James L. Massey. Causality, feedback and directed information. In Proceedings of the
+International Symposium on Information Theory and its Applications (ISITA), Waikiki,
+Hawaii, November 1990. URL 
+pdf/BI532.pdf.
+Beren Millidge, Alexander Tschantz, and Christopher L. Buckley. Whence the expected free
+energy? Neural Computation, 33(2):447-482, 2021. doi: 10.1162/neco_a_01354.
+J. Kevin O’Regan and Alva Noë. A sensorimotor account of vision and visual consciousness.
+Behavioral and Brain Sciences, 24(5):939-973, 2001. doi: 10.1017/S0140525X01000115.
+URL 
+Thomas Parr and Karl J. Friston. Generalised free energy and active inference. Biological
+Cybernetics, 113(5-6):495-513, 2019. doi: 10.1007/s00422-019-00805-w. URL https:
+//link.springer.com/article/10.1007/s00422-019-00805-w.
+Thomas Schreiber. Measuring information transfer. Physical Review Letters, 85(2):461-464,
+2000. doi: 10.1103/PhysRevLett.85.461. URL 
+Claude E. Shannon. A mathematical theory of communication. The Bell System Technical
+Journal, 27(3):379-423, 1948. doi: 10.1002/j.1538-7305.1948.tb01338.x. URL https:
+//onlinelibrary.wiley.com/doi/abs/10.1002/j.1538-7305.1948.tb01338.x.
+Naftali Tishby, Fernando C. Pereira, and William Bialek. The information bottleneck method,
+2000. URL 
+A
+Complete proofs for the main text
+A.1
+Finite stochastic unrolling
+Any finite stochastic transition or observation kernel over a finite horizon can be realized by
+sampling independent exogenous variables and applying deterministic inverse-CDF maps.
+Collecting all environment variables with the initial state and law bits gives Z = (X0, Λ, Ξ0:T ).
+Conditional on Z and on a realized private policy seed Σ = s, the trajectory is deterministic
+and has the same marginal law over histories as the original stochastic process after marginal-
+izing over (Z, Σ). The seed is conditioned on in deterministic-map claims. If the target
+quotient excludes future exogenous noise, that noise is quotient-collapsed. If it includes
+future noise, residual uncertainty is correctly counted as an irreducible prediction gap.
+A.2
+Proof of Theorem 1
+The compression bound follows from the chain rule.
+I(Q, W; T ) = I(W; T ) + I(Q; T | W) = I(Q; T ) + I(W; T | Q).
+(27)
+Therefore
+I(Q; T ) −I(W; T ) = I(Q; T | W) −I(W; T | Q),
+(28)
+which is at most H(Q | W) and at least −H(W | Q). For control, fix an action-sequence
+distribution p and condition throughout on the deterministic rollout context χ. The same
+identity gives
+I(A; V | χ) −I(A; eV | χ) = I(A; V | eV , χ) −I(A; eV | V, χ),
+(29)
+which lies between −H(eV | V, χ) and H(V | eV , χ). Taking p that approaches the capacity
+for one variable and upper-bounding the other by its capacity gives Equation (12). The
+normalized identities are definitions of conditional entropy and capacity deficit. Vanishing
+bridge components give mutual recoverability of the quotients, transcript-identification of
+Q, lossless observation of V , and full reachability/capacity for V . Under these conditions
+the corresponding objectives attain their normalized maxima. Conversely, if the evaluated
+normalized objectives are jointly maximal, each nonnegative deficit in Equations (9) and (10)
+must vanish.
+A.3
+Proof of Theorem 2
+Let u⋆
+j ∈arg maxu∈U Jj(u). Since ˆu is η-optimal for Ji,
+Jj(u⋆
+j) −Jj(ˆu) = [Jj(u⋆
+j) −Ji(u⋆
+j)] + [Ji(u⋆
+j) −Ji(ˆu)] + [Ji(ˆu) −Jj(ˆu)]
+(30)
+≤η + sup
+u∈U
+(Jj(u) −Ji(u)) + sup
+u∈U
+(Ji(u) −Jj(u))
+(31)
+= η + Ωij(U).
+(32)
+The bound is tight. Take two options a, b with Ji(b) = 1, Jj(b) = 1 and Ji(a) = 1−η, Jj(a) =
+1 −η −Ω, with the remaining values adjusted to keep objectives in [0, 1]. Then a is η-optimal
+for Ji, the oscillation of Ji −Jj is Ω, and a has Jj regret η + Ωwhenever the parameters
+lie in the feasible range. If bridge-gap inequalities imply |Ji(u) −Jj(u)| ≤ε for all u, then
+Ji −Jj ∈[−ε, ε] pointwise and hence Ωij ≤2ε. If they instead bound the range width of
+Ji −Jj by ε, then directly Ωij ≤ε.
+A.4
+Proof of Theorem 3
+Condition on a realized private seed Σ = s, or take the policy to be deterministic. For
+log loss, the Bayes predictor is the posterior distribution p(Y | TT , Σ = s) and its risk is
+H(Y | TT , Σ = s). Because Y = Rπ
+T,s(Z) and TT = Gπ
+T,s(Z) are deterministic functions of Z
+under this conditioning, zero conditional entropy holds exactly when Y is constant on every
+positive-prior fiber of Gπ
+T,s. Taking Y = Z gives microstate-losslessness exactly when Gπ
+T,s is
+injective on supp(p0).
+A.5
+Proof of Corollary 1
+The quotient QR is the coarsest variable that determines every target in R. Thus all
+targets in R are perfectly predictable from TT iff QR is. If QR = Z on the support, this is
+microstate-losslessness.
+A.6
+Proof of Lemma 1
+For fixed deterministic rollout context χ, V is a deterministic function of the action sequence.
+Hence I(A; V | χ) ≤H(V | χ) ≤log | ReachV
+T (χ)|. Equality is achieved by choosing an
+action-sequence distribution whose induced distribution over the reachable values of V is
+uniform, selecting one representative action sequence for each reachable value.
+A.7
+Proof of Proposition 1
+For (i), let Z be a uniform n-bit latent observed directly at t = 0, and let actions have
+no effect. Identification is perfect and empowerment is zero. For (ii), let Z be a uniform
+n-bit latent never observed, and let action set {0, 1}m set an independent terminal distractor
+D = A. The transcript has zero information about Z. Empowerment over D is m bits. For
+(iii), let Z be any latent, let the action overwrite the terminal target to a constant V = 0,
+and let the agent remember only that it executed the overwrite. Then H(V | MT ) = 0 and
+I(Z; MT ) = 0.
+A.8
+Proof of Theorem 4
+If H(Q | T , B) = 0, then
+H(Q | T ) = I(Q; B | T ) ≤H(B | T ).
+(33)
+For tightness, choose B to be the posterior-fiber label Q itself. Then H(Q | T , B) = 0 and
+H(B | T ) = H(Q | T ).
+A.9
+Proof of Theorem 5
+Since Oη is a deterministic function of Z once actions and private seed are conditioned on,
+H(Oη | Z) = 0 and I(Z; Oη) = H(Oη) = H(Z) −H(Z | Oη). If η′ refines η, then Oη = r(Oη′),
+so Z →Oη′ →Oη is a Markov chain and data processing gives I(Z; Oη′) ≥I(Z; Oη). Strict
+refinement on positive mass increases the induced partition entropy.
+A.10
+Proof of Theorem 6
+The intrinsic reward telescopes pathwise.
+T −1
+X
+t=0
+ Φ(Ht) −Φ(Ht+1)
+
+= Φ(H0) −Φ(HT ).
+(34)
+Taking expectation gives Equation (21). If task reward is zero, maximizing the left-hand side
+is equivalent to minimizing EΦ(HT ) because Φ(H0) is fixed. With task reward, the same
+identity gives
+E
+X
+t
+rBGP
+t
+= E
+X
+t
+rtask
+t
++ βΦ(H0) −βEΦ(HT ),
+(35)
+which is the stated Lagrangian up to a constant. Finite-horizon dynamic programming
+returns an optimal policy for this additive reward. If a terminal zero-gap history is reachable
+and every higher-task-reward alternative remains below the chosen Lagrangian value, an
+optimal policy reaches zero gap.
+A.11
+Proof of Proposition 2
+For (i), let Q be a uniform n-bit latent that is hidden from the distractor action, and let
+an action sequence set an independent m-bit terminal variable D. Ungated empowerment
+over all terminal observations is m bits for setting D. It leaves H(Q | HT ) = n. A zero-gap
+option that inspects Q has H(Q | HT ) = 0. The relevance gate closes for D because D ⊥Q
+and D has zero effect on task value.
+For (ii), let one first action enter a channel state C⋆and let the other stay outside it.
+First-step observations are independent of Q, so every first action has one-step information
+gain and one-step epistemic value zero. The second action reveals Q only after the policy
+reaches C⋆. The BGP channel term decreases when the policy reaches C⋆, so exact BGP
+chooses the unique preliminary action that permits the later lossless experiment.
+For (iii), let Q be uniform and let the target for terminal prediction be V . One action reveals
+Q and leaves V = Q. Another overwrites V := 0 and leaves Q unrevealed. Both yield zero
+terminal log-loss for V , and a cost-tie-break can select overwrite. The overwrite policy has
+H(Q | MT ) = n and falls into the collapse branch of Theorem 8. BGP selects inspection
+when the target quotient is Q or when transfer to a Q-preserving target is evaluated.
+For (iv), let Q = (Qc, Qf) with Qf a uniform n-bit refinement independent of Qc. A coarse
+training objective rewards only Qc. Inspecting Qc achieves maximal training return and
+leaves H(Qf | HT ) = n. BGP evaluated on the refined quotient includes these missing bits
+in Φ and selects the refined inspection when reachable.
+A.12
+Proof of Theorem 7
+Massey’s conservation law for causal sequence distributions gives
+I(AT →OT ) + I(OT −1 →AT ) = I(AT ; OT ).
+If AT ⊥OT | B, then AT →B →OT is a Markov chain. Data processing gives I(AT ; OT ) ≤
+I(AT ; B) ≤H(B) ≤b.
+A.13
+Proof of Theorem 8
+If H(V | MT ) = 0, then V is a deterministic function of MT . Hence Q →MT →V is a
+Markov chain and data processing gives I(Q; MT ) ≥I(Q; V ). Also,
+H(Q | MT ) ≤H(Q, V | MT ) = H(V | MT ) + H(Q | V, MT ) ≤H(Q | V ),
+(36)
+where the first term is zero. If H(Q | V ) = 0, then H(Q | MT ) = 0. The overwrite/collapse
+and omission cases occur when V fails to preserve some distinctions in Q. The cause can be
+policy collapse or target-quotient omission.
+A.14
+Proof of Corollary 2
+If H(Q | MT ) = 0, then H(Q) = I(Q; MT ) ≤H(MT ) ≤log |MT |. The empowerment
+statement is Lemma 1. Full authority from context χ means | ReachV
+T (χ)| = | supp(V | χ)|.
+B
+Directed-information bridge budget
+Use the same feedback-channel indexing as in Section 6: AT = (A1, . . . , AT ) and OT =
+(O1, . . . , OT ), where At is chosen after Ot−1 and before Ot. Define
+I(AT →OT ) =
+T
+X
+t=1
+I(At; Ot | Ot−1),
+(37)
+I(OT −1 →AT ) =
+T
+X
+t=1
+I(Ot−1; At | At−1).
+(38)
+The first term is realized outward influence. The second is observation-to-action plasticity.
+Theorem 9 (Finite bridge budget). Assume the joint law is causal and all statistical
+dependence between AT and OT is mediated by a specified finite bridge transcript B satisfying
+H(B) ≤b, so AT ⊥OT | B. The variable B is the interface transcript being bounded. Then
+I(AT →OT ) + I(OT −1 →AT ) = I(AT ; OT ) ≤b.
+(39)
+Proof. Massey’s conservation law for causal sequence distributions states the displayed
+decomposition of mutual information. If AT ⊥OT | B, then AT →B →OT is a Markov
+chain. By data processing, I(AT ; OT ) ≤I(AT ; B) ≤H(B) ≤b.
+C
+Expanded deterministic bridge-interface model
+Finite deterministic microdynamics.
+The finite-state assumption avoids measure-
+theoretic pathologies of deterministic maps on continuous spaces and makes each bottleneck
+countable in bits. The environment microstate Xt is a finite string or symbolic state. The
+law bits Λ index a deterministic transition family,
+Xt+1 = Ft(Xt, Ut, Λ),
+Λt+1 = Λt = Λ.
+(40)
+The prior over Z = (X0, Λ) is epistemic; exogenous stochasticity can be included by enlarging
+Z to (X0, Λ, Ξ0:T ). Once Z and a realized private policy seed are fixed, the trajectory is
+deterministic. Ordinary stochastic POMDP kernels can be recovered by marginalizing over
+the environment variables and the policy seed. The deterministic refinement keeps track of
+which uncertainty could in principle be removed by a better transcript.
+Actuation as a bridge.
+The intended action can differ from the realized physical control.
+Let Ax
+t denote the intended environment-targeting component of the action, and split the
+actuation bridge as
+κt = (κS
+t , κX
+t ),
+κS
+t = kS
+t (Mt),
+κX
+t = kX
+t (Xt, Λ).
+(41)
+The realized control is
+U x
+t = Γt(Ax
+t , κS
+t , κX
+t ).
+(42)
+Improving actuation can mean changing an agent-owned actuator setting, reaching a different
+world-side contact or permission condition, or identifying κX
+t well enough that the realized
+control is predictable. A deterministic actuator can still be lossy from the agent’s perspective
+when κX
+t is hidden.
+Sensing as a bridge.
+The observation map also depends on bridge state. Under the
+observe-act-observe timing convention, the agent chooses the next agent-owned sensor setting
+after Ot, and the world contributes the next channel state:
+Ot+1 = ht+1(Xt+1, ϕS
+t+1, ϕX
+t+1),
+ϕS
+t+1 = qS
+t (Mt, At),
+ϕX
+t+1 = qX
+t+1(Xt+1, Λ).
+(43)
+The initial observation O0 is generated by a fixed initial setting or by a setting chosen before
+the episode. The same camera, probe, prompt, or API call can induce different experiments
+depending on line of sight, lighting, object pose, authorization, contact geometry, social
+context, or remote tool state. Losslessness is a property of the closed-loop transcript over a
+horizon. A pointwise property of ht alone is insufficient.
+Finite-memory agent and learning.
+The agent-owned state Mt includes fast state,
+persistent parameters, scratch memory, and any interface settings it can reliably maintain.
+The finite-capacity condition is
+|Mt| ≤2ns(t),
+H(Mt) ≤ns(t).
+(44)
+Learning is modeled as internal dynamics,
+Mt+1 = Gt(Mt, At, Ot+1),
+(45)
+This convention keeps learning inside the agent state and prevents an unbounded parameter
+store from bypassing the memory lower bounds. In the bit-budget specialization, all retained
+agent-owned degrees of freedom count toward ns(t).
+Random variables and realizations.
+Uppercase symbols denote random variables
+induced by the prior over Z and any private policy seed. Lowercase symbols denote realized
+values. Conditional on a realized z and seed s, the full trajectory is deterministic. Entropies
+such as H(Z | TT , Σ = s) are posterior uncertainties over possible deterministic worlds. They
+carry no implication of objective randomness in the world dynamics.
+D
+Lossiness, coverage, and action-conditioned information gain
+Instantaneous and horizon lossiness.
+The bridge model has two distinct bottlenecks.
+The instantaneous sensing loss is
+Lsense
+t
+= H(Xt | Ot, ϕS
+t , ϕX
+t ).
+(46)
+The online actuation loss is
+Lact
+t
+= H(Ut | Ht, At, κS
+t ),
+(47)
+where Ht is the agent’s decision-time information. This positivity can occur with a deter-
+ministic Equation (42) because the environment-owned component κX
+t may be hidden at
+decision time. For identifiability, the relevant object is the horizon loss
+L(T ) = H(Z | O0:T , A0:T −1, ϕS
+0:T , κS
+0:T −1).
+(48)
+This is the entropy form of microstate-losslessness in Definition 1. Every per-step sensor
+may be individually lossy, and the full sequence can still be jointly separating.
+Assumption 1 (Interface coverage / refinability). For every ε > 0 there exist a horizon T
+and an admissible closed-loop design of actions and bridge settings such that L(T ) ≤ε.
+This is an achievability assumption. It applies to interface families with separating experi-
+ments and policy classes that can execute them under memory and viability constraints.
+Action-conditioned information gain.
+A raw objective that maximizes observation
+entropy is degenerate because the agent can create entropy by randomizing actions or
+injecting private randomness. The non-degenerate quantity conditions on the agent’s chosen
+action and seed. For decision history Ht, define
+IGt = I(Z; Ot+1 | Ht, At).
+(49)
+Lemma 2 (Information gain telescopes). Let Ht+1 = (Ht, At, Ot+1). Then
+IGt = H(Z | Ht, At) −H(Z | Ht+1).
+(50)
+If At is a deterministic function of Ht, then H(Z | Ht, At) = H(Z | Ht), and the cumulative
+gain satisfies
+T −1
+X
+t=0
+IGt = H(Z | H0) −H(Z | HT ).
+(51)
+Proof. The first identity is the definition of conditional mutual information. If At is Ht-
+measurable, conditioning additionally on At leaves the posterior over Z unchanged. Summing
+the one-step posterior drops gives the telescoping identity.
+Proposition 3 (Observation-compression progress equals hidden-state compression). In
+the deterministic bridge model, with actions and private seed conditioned on, maximizing
+cumulative action-conditioned observation novelty over a refinement-closed experiment class
+is equivalent to maximizing I(Z; HT ) and minimizing H(Z | HT ). If Assumption 1 holds and
+the agent has sufficient memory to retain the latent-relevant posterior statistic, the optimum
+can approach microstate-losslessness.
+Proof. Conditioning on actions and seed makes the transcript a deterministic function of Z.
+Hence Theorem 5 applies to each experiment and Lemma 2 identifies cumulative information
+gain with posterior entropy reduction. Sufficient memory allows the final agent state to
+preserve the same posterior partition as the history.
+Target quotients and safety-relevant ambiguity.
+For a target family R, define z ∼R z′
+if R(z) = R(z′) for every R ∈R. Robust prediction often needs the quotient Z/∼R. The
+full microstate appears only in the limiting case where the target family is task-separating.
+This distinction is important for privacy and resource constraints. Bridge refinement should
+stay limited to authorized and task-relevant latent distinctions.
+E
+Interface empowerment, bottlenecks, and state-mediated
+observation control
+Observation, state, and interface empowerment.
+The main text uses terminal-state
+empowerment. The same deterministic capacity form applies to any finite future variable.
+Here x denotes a fully specified deterministic rollout context, including the law and exogenous
+bits needed for deterministic reachability. For a future variable YT induced by an action
+sequence from x, define
+EmpY
+T (x) =
+max
+p(a0:T −1) I(A0:T −1; YT | x).
+(52)
+If YT is a deterministic function of the action sequence conditional on x, this capacity equals
+the log-size of the reachable image of YT . We use three special cases,
+EmpO
+T (x) = log2 |{OT (a0:T −1; x) : a0:T −1 ∈AT }|,
+(53)
+EmpX
+T (x) = log2 | ReachT (x)|,
+(54)
+EmpC
+T (x) = log2 |{c(x′) : x′ ∈ReachT (x)}|.
+(55)
+The last quantity is interface empowerment. It measures authority over world-side channel
+states.
+Lemma 3 (Observation empowerment is bottlenecked by sensing). Let OT = hT (XT , ϕS
+T , ϕX
+T )
+be deterministic given XT and bridge state. Then, for fixed initial x and fixed admissible
+bridge schedule,
+EmpO
+T (x) ≤EmpX
+T (x).
+(56)
+Equality requires the observation map to be injective on the reachable terminal states used by
+a capacity-achieving action distribution.
+Proof. The deterministic channel from action sequences to OT factors through XT and bridge
+state. Under a fixed bridge schedule, the image of OT has cardinality at most the image of
+XT . The capacity form as log image size gives the result.
+State-mediated observation control.
+Directly writing an observation register gives
+poor evidence about the world. Define state-mediated observation control as the portion
+of observation reachability that passes through a change in environment state. A bypass
+channel is excluded by the Markov factorization
+A0:T −1 −→XT −→OT
+(57)
+conditional on initial state and known bridge settings. Under this condition, data processing
+gives
+I(A0:T −1; OT | x) ≤I(A0:T −1; XT | x).
+(58)
+Thus progress in controllable observations can come from enlarging the reachable set of
+relevant world states or refining the sensing bridge so that distinctions in XT survive into
+OT .
+Why interface empowerment is necessary when refinement requires steering.
+Suppose there is a set C⋆of world-side channel states in which the sensing experiment is
+lossless for the target quotient, and outside C⋆every admissible experiment leaves posterior
+entropy at least ℓ> 0. If EmpC
+T (x) = 0 and the current channel state is outside C⋆, every
+policy lacks guaranteed access to a lossless experiment by horizon T. A design sequence
+that drives H(Z | TT ) →0 in environments where losslessness is possible only after entering
+C⋆must make Ct action-dependent along the relevant histories. This is the formal sense in
+which prediction pressure creates target-conditioned interface empowerment.
+Proposition 4 (Compression pressure implies interface empowerment under steering-only
+refinability). Assume Assumption 1. Further assume that every sequence of experiments
+with H(Z | TT ) →0 must reach a set of world-side channel states C⋆from which lossless
+or asymptotically lossless experiments are available. If the uncontrolled channel process
+stays outside C⋆on the relevant support, then any admissible design sequence achieving
+H(Z | TT ) →0 must have nonzero interface empowerment EmpC
+T (x) > 0 for the corresponding
+initial states.
+Proof. If EmpC
+T (x) = 0, varying the action sequence leaves the reachable channel-state value
+unchanged. Starting outside C⋆, all reachable experiments are bounded away from lossless
+by assumption, so terminal posterior entropy remains positive. This contradicts the assumed
+achievement of H(Z | TT ) →0.
+F
+Full authority, overwrite, and conditional absorption
+Full authority requires target reachability.
+A deterministic action consequence means
+H(Xt+1 | Xt, At, κt, Λ) = 0. Determinism alone can still give small empowerment if all
+actions map to the same next state. Authority requires a large reachable set.
+Definition 3 (State-conditioned full authority). For fixed law bits and horizon T, the
+actuator has state-conditioned full authority if for every x0 ∈X and every target x⋆∈X
+there exists an action sequence a0:T −1 such that FT (x0, a0:T −1, Λ) = x⋆.
+Definition 4 (Strong overwrite authority). The actuator has strong overwrite authority if for
+every target x⋆∈X there exists an action sequence a0:T −1 such that FT (x0, a0:T −1, Λ) = x⋆
+for every x0 in the prior support.
+State-conditioned authority is ordinary reachability conditional on knowing the state. Strong
+overwrite authority makes the terminal microstate independent of the unknown initial state.
+Using state-conditioned authority requires identification.
+Let Bt = supp(Xt | Ht)
+be the set of current states compatible with the agent’s information. State-conditioned
+authority becomes unusable when different states in Bt require different action sequences.
+Proposition 5 (Usable state-conditioned authority requires eliminating control-separating
+ambiguity). Assume state-conditioned full authority. If there exist x, x′ ∈Bt and a target x⋆
+such that every admissible action sequence fails to drive at least one of x or x′ to x⋆, then
+an agent whose policy depends only on Ht lacks a guarantee of reaching x⋆. Agent-level full
+authority therefore requires identifying the control-separating component of Xt or possessing
+strong overwrite authority.
+Proof. The policy must choose the same action sequence on histories with the same Ht.
+By assumption, that sequence fails for at least one of the two possible states. Hence the
+guarantee fails for at least one state in Bt.
+Bit-string specialization.
+Assume a finite conserved bit representation
+ns(t) + nx(t) = ntot,
+|Mt| ≤2ns(t),
+|Xt| = 2nx(t).
+(59)
+All retained agent-owned bits count toward ns(t), including parameters, scratch memory,
+externalized memory under the agent’s control, and agent-owned bridge settings.
+Assumption 2 (Ownership/writability convention). When a degree of freedom is counted
+as agent-owned, it is treated as writable and maintainable by the agent’s internal transition
+dynamics. Boundary shift is therefore an architectural assumption about which bits the
+agent can reliably retain and reuse. Observation alone leaves physical objects outside the
+controllable set.
+Theorem 10 (Conditional absorption and unification). Assume the deterministic bridge
+model, the conserved bit budget (59), and Assumption 2. Consider an ideal sequence of agents
+and horizons.
+1. If the identification route achieves H(Z | MT ) = 0, then ns(T) ≥H(Z). If Z =
+(X0, Λ) has entropy ntot −o(ntot) and ns(0) = o(ntot), then nx(T) = ntot −ns(T) =
+o(ntot).
+2. If the overwrite route achieves strong authority over XT with |XT | = 2nx(T ) and
+per-step action alphabet size at most 2bt, then P
+t<T bt ≥nx(T) and deterministic
+empowerment over XT equals nx(T).
+3. In both routes, the remaining effective bridge bottleneck must vanish relative to the
+target quotient. Identification requires a transcript map injective on the quotient.
+Overwrite requires an action channel spanning the quotient’s terminal degrees of
+freedom.
+Proof. The first item is the memory lower bound in Corollary 2. Under the stated entropy
+and initial-budget conditions, ns(T) = ntot −o(ntot). The environment allocation is o(ntot).
+The second item is the action-counting lower bound in Corollary 2 and the deterministic
+reachability-capacity identity in Lemma 1. The third item restates the necessary bottlenecks
+exposed by the two lower bounds. The transcript must distinguish the relevant latent
+quotient, or the action channel must set the terminal quotient directly.
+Remark 1 (Scope of the absorption statement). The theorem is intentionally conditional. The
+result requires a conserved bit budget, boundary-shift architecture, and ownership/writability
+convention to support an absorption conclusion. It remains a memory or action-capacity
+lower bound under less restrictive assumptions. It is a resource statement and carries no
+claim of physical inevitability. Its role is to show that exact microstate prediction and exact
+overwrite control have microstate-scale resource requirements.
+Self-modeling limit and plasticity.
+In the boundary-collapse limit of Theorem 10,
+the latent state is a function of the agent-owned state. If the policy and update rule are
+deterministic, the coupled system can be represented as a closed map Mt+1 = U(Mt).
+Observations then add zero novel information relative to Mt. The incremental observation-
+to-action plasticity associated with novel evidence vanishes. It concerns novelty rate and
+leaves responsiveness to already-internalized state as a distinct property.
+G
+Empirical instantiations, expanded related work, and broader
+impacts
+Exact benchmark instantiations.
+The exact benchmark in Table 2 enumerates the four
+option families. In the settable-distractor benchmark, Q ∼Unif({0, 1}n) and an independent
+D ∈{0, 1}m is writable. Ungated empowerment chooses D. BGP closes the relevance gate
+and inspects Q. In the delayed-sensor benchmark, the first action only changes channel
+reachability.
+Immediate information gain is zero for all first actions.
+BGP values the
+transition to C⋆. In the inspect-overwrite benchmark, terminal log-loss for V is zero under
+inspection and under overwrite. Inspection preserves Q. In quotient transfer, training on Qc
+hides the missing Qf bits until the refined target is evaluated.
+Useful metrics are transcript ambiguity H(Z | TT ), target ambiguity H(Y | TT ), reachability
+| ReachT (x)|, interface reachability |{c(x′) : x′ ∈ReachT (x)}|, and the directed-information
+split in Equation (39). Reporting return or prediction loss alone hides the mechanism of
+success.
+Evaluation probes.
+A bridge-aware evaluation should include counterfactual probes. Hold
+the transcript fixed and vary latent state when possible. Vary world-side channel conditions
+with the agent-side query fixed. Remove settable distractors. Make informative channel
+states harder to reach. Restrict action bandwidth to test whether predictive competence
+collapses when overwrite control is unavailable.
+In learned systems where exact fibers
+are unavailable, contrastive latent probes, intervention tests, and bandwidth ablations are
+empirical approximations to the finite quantities in the theorems.
+Broader impacts.
+The positive use of the theory is diagnostic. It asks whether an
+agent’s control authority is over task-relevant variables, whether its sensors can identify
+safety-relevant hidden state, and whether the bridge between human intent, internal state,
+tools, and external world is auditable. The same concepts could be misused to design
+agents that more effectively acquire information, obtain permissions, or manipulate interfaces.
+Practical deployments should therefore pair interface-refinement objectives with access
+control, monitoring of tool use, privacy constraints, and limits on control over sensitive
+world-side channel conditions.

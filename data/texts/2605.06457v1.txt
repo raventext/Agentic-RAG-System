@@ -1,0 +1,362 @@
+Beyond Task Success: Measuring Workflow
+Fidelity in LLM-Based Agentic Payment Systems
+Donghao HUANG1,2[0009-0005-6767-4872], Joon Kiat
+CHUA1[0009-0001-8333-9792], and Zhaoxia WANG1,⋆[0000-0001-7674-5488]
+1 School of Computing and Information Systems, Singapore Management University,
+80 Stamford Rd, Singapore 178902, Singapore
+2 Research and Development, Mastercard, 4250 Fairfax Dr, Arlington, VA 22203,
+USA
+Abstract. LLM-based multi-agent systems are increasingly deployed
+for payment workflows, yet prevailing metrics-Task Success Rate (TSR)
+and Agent Handoff F1-Score (HF1)-capture only final outcomes or un-
+ordered routing decisions. We introduce the Agentic Success Rate (ASR),
+a trajectory-fidelity metric that compares observed and expected agent
+execution sequences at the transition (bigram) level, decomposing per-
+formance into Transition Recall (completeness) and Transition Precision
+(efficiency). Applied to the Hierarchical Multi-Agent System for Pay-
+ments (HMASP) across 18 LLMs and 90,000 task instances (5 repeats
+per model-scenario pair), ASR reveals that 10 of 18 models systemati-
+cally skip a confirmation checkpoint during payment checkout-invisible
+to both TSR and HF1-while 8 models enforce the checkpoint perfectly.
+Notably, GPT-4.1 exhibits hidden workflow shortcuts despite achieving
+perfect TSR and HF1, while GPT-5.2 achieves perfect ASR. Prompt re-
+finements and deterministic routing guards guided by ASR diagnostics
+yield substantial TSR improvements, with gains up to +93.8 pp for previ-
+ously struggling models, demonstrating that trajectory-level evaluation
+is essential in regulated domains.
+Keywords: Agentic Success Rate · Agentic Payments · LLM Multi-
+Agent Systems · Evaluation Metrics · Digital Finance
+Introduction
+The emergence of autonomous LLM-based agents has fueled rapid adoption of
+agentic payments-using LLM agents to automate end-to-end payment work-
+flows [16]. Major payment networks have launched agentic capabilities: Master-
+card’s Agent Pay [12] and Visa’s Intelligent Commerce [17], with projections
+reaching $1.7 trillion by 2030 [16]. In research, frameworks like HMASP [5] have
+demonstrated the feasibility of hierarchical multi-agent systems for payments.
+⋆Corresponding author: zxwang@smu.edu.sg
+Donghao HUANG1,2, Joon Kiat CHUA1, and Zhaoxia WANG1
+1 School of Computing and Information Systems, Singapore Management University,
+80 Stamford Rd, Singapore 178902, Singapore
+2 Research and Development, Mastercard, 4250 Fairfax Dr, Arlington, VA 22203,
+USA
+D. Huang, J.K. Chua, and Z. Wang
+Despite these deployments, current evaluation frameworks remain inade-
+quate. HMASP, for example, relies on Task Success Rate (TSR) and Agent
+Handoff F1-Score (HF1). However, TSR captures only final outcomes, and HF1
+evaluates routing in a bag-of-edges fashion, ignoring temporal order. Neither
+captures workflow fidelity-the agent’s adherence to the expected sequence of
+steps. In payment systems, auditability is critical [14], and the sequential path
+to the result is as important as the outcome itself [4, 3].
+Drawing on process mining conformance checking [1, 2], we propose the Agen-
+tic Success Rate (ASR), a trajectory-level metric that compares agent-to-
+agent transitions (consecutive handoff pairs) between observed and expected
+workflows. Our contributions are: (1) ASR as a multi-agent payment metric;
+(2) evaluation of 18 LLMs on 90,000 instances; (3) discovery of workflow short-
+cuts invisible to TSR/HF1; and (4) demonstration that ASR-guided engineering
+yields dramatic TSR improvements for previously struggling models.
+Related Work
+LLM-Based MAS for Payments. Multi-agent systems have been applied to
+software engineering [8], trading [18], and investment [20]. In payments, prior
+work addressed process automation [7] and fraud detection [6] but not end-
+to-end agentic workflows. HMASP [5] filled this gap with a hierarchical agent
+framework.
+Evaluating Agentic Systems. Standard evaluation focuses on task comple-
+tion [10, 9], but binary metrics obscure behavioral nuances. AgentBoard [11]
+introduced Progress Rate; WorFEval [15] uses subsequence matching for work-
+flow planning; τ-bench [19] proposed passk for reliability; and Chen et al. [4]
+argued standard benchmarks underestimate financial risks. ASR builds on this
+line of work [13], grounding trajectory evaluation in process mining conformance
+checking [1, 2].
+Methodology
+3.1
+Agentic Success Rate (ASR)
+ASR compares the full ordered trajectory against the expected one at the tran-
+sition level, drawing on the conformance checking paradigm from process min-
+ing [1, 2]. Each consecutive pair of agents in a trajectory is a transition (bigram);
+for example, the trajectory [A, B, C] yields the transition multiset {(A,B), (B,C)}.
+Given expected trajectory E = [e1, . . . , en] and observed trajectory O = [o1, . . . , om],
+let BE and BO denote their respective transition multisets:
+TR = |BE ∩BO|
+|BE|
+,
+TP = |BE ∩BO|
+|BO|
+,
+ASR = F1(TR, TP)
+(1)
+An ASR of 100% indicates perfect transition alignment. Low Transition Recall
+(TR) signals skipped handoffs ("model moves" in process mining terminology);
+
+Title Suppressed Due to Excessive Length
+low Transition Precision (TP) signals redundant ones ("log moves"). Because
+ASR operates on transitions rather than individual agent visits or unordered
+edge sets, it directly measures whether each agent handed off control to the
+correct next agent-precisely the property needed for compliance auditing-and
+generalizes to arbitrary agentic architectures.
+3.2
+Evaluation Setup
+Models. We evaluated 18 models spanning both open-weight and proprietary
+LLMs. From the original HMASP study [5], we include Qwen3 (8B, 14B, 32B),
+Qwen2.5 (7B, 14B, 32B), Mistral-Small-3.2 (24B), Magistral (24B), Llama 3.1
+(8B, 70B), and GPT-4.1. Additionally, we evaluated seven models not included
+in the original study: GPT-5.2, GPT-OSS (20B, 120B), and Gemma4 (E2B,
+E4B, 26B, 31B). Proprietary models (GPT-4.1, GPT-5.2) are accessed via the
+official OpenAI API, while all open-weight models are run locally using Ollama
+v0.20.0 on an Apple M5 Max with 128 GB unified memory and 4-bit quantization
+(MXFP4 for GPT-OSS models; Q4_K_M for all others).
+Dataset and Repeat Protocol. We use the HMASP evaluation dataset of
+1,000 data points across four scenarios (250 each): T1 (card registration; e.g.,
+"Add a new card"), T2 (card retrieval; e.g., "Show my saved cards"), T3 (payment
+processing; e.g., "Complete my purchase"), and T4 (irrelevant input rejection;
+e.g., "What’s the weather today?"). Each model-scenario pair is evaluated 5 times
+independently, yielding 90,000 total instances. We report the mean and standard
+deviation across the 5 repeats.
+Metrics. We report three metrics, the first two from the original HMASP eval-
+uation [5]: (1) Task Success Rate (TSR): the proportion of runs completing
+the correct workflow with correct information saved or retrieved; (2) Agent
+Handoff F1-Score (HF1): the F1-score comparing actual vs. expected agent-
+to-agent handoffs; and (3) Agentic Success Rate (ASR): trajectory-level
+workflow fidelity as defined above.
+System Engineering. We improve the HMASP system through two comple-
+mentary techniques, both guided by ASR diagnostics. (i) Prompt engineer-
+ing: agent prompts are refined iteratively to better specify roles, expected hand-
+offs, and task boundaries. (ii) Deterministic routing guards: a cart-items
+guard in the payment supervisor suppresses the payment-review path when
+cart_items is empty, and card-view pattern matching in the CPA provides
+keyword-based fallback routing for ambiguous card intents.
+Results and Discussion
+4.1
+Effectiveness of System Engineering
+Table 1 compares TSR between HMASP [5] and our system for the three most-
+improved models (ranked by average ∆across all tasks). The gains are striking:
+Llama3.1:8b improves by an average of +67.9 pp, Magistral:24b by +54.2 pp, and
+Llama3.1:70b by +33.5 pp-confirming that failures were addressable through
+engineering rather than model replacement.
+D. Huang, J.K. Chua, and Z. Wang
+Table
+1. HMASP vs. Ours: TSR (%) for the three most-improved models.
+H = HMASP, O = Ours (mean over 5 repeats), ∆= O - H. Bold: ≥20 pp gains.
+T1
+T2
+T3
+T4
+Model
+H
+O
+∆
+H
+O
+∆
+H
+O
+∆
+H
+O
+∆
+Llama3.1:8b
+6.0
+99.8 +93.8
+10.4
+98.8 +88.4
+4.0
+93.4 +89.4
+100 +0.0
+Magistral:24b
+44.0
+90.0 +46.0
+18.4
+97.7 +79.3
+3.2
+94.7 +91.5
+100 +0.0
+Llama3.1:70b
+66.0
+100 +34.0
+74.0
+100 +26.0
+26.0
+98.9 +72.9
+98.8
+100 +1.2
+4.2
+ASR Reveals Hidden Workflow Deviations
+Table 2 reports T3 metrics (mean ± std over 5 repeats) and average across T1-
+T4 for all 18 models, sorted by average ASR. Eight models achieve a perfect
+100% on all three T3 metrics: all four Gemma4 variants, both GPT-OSS models,
+MSmall3.2:24b, and GPT-5.2. Among the 10 models that exhibit a T3 ASR
+gap, the range spans from 0.01% (Qwen2.5:32b) to 5.45% (Qwen2.5:7b). The
+highlighted cells are the sharpest examples: Qwen2.5:32b, GPT-4.1, Qwen3:32b,
+and Qwen3:8b achieve T3 TSR = HF1 = 100% yet ASR < 100%, exposing skipped
+confirmation checkpoints invisible to conventional metrics.
+Table 2. T3 (Payment) results (%, mean ± std over 5 repeats) and average across
+T1-T4 for all 18 models. Sorted by Avg ASR desc. Yellow : TSR = HF1 = 100% but
+ASR < 100%.
+T3 (Payment)
+Avg (T1-T4)
+Model
+TSR
+HF1
+ASR
+TSR
+HF1
+ASR
+8 models†
+100
+100
+100
+Qwen2.5:32b
+100
+99.99±0.02
+100
+100.00±0.00
+GPT-4.1
+100
+99.96±0.03
+100
+99.99±0.01
+Qwen3:32b
+100
+99.97±0.04
+99.98±0.04 99.99±0.02
+99.97±0.05
+Qwen3:14b
+99.68±0.33
+99.84±0.17
+99.64±0.31
+99.92±0.08 99.96±0.04
+99.91±0.08
+Qwen3:8b
+100
+99.97±0.02
+99.90±0.07 99.95±0.04
+99.89±0.08
+Llama3.1:70b
+98.88±1.21
+98.78±1.09
+98.81±1.17
+99.72±0.30 99.69±0.27
+99.70±0.29
+Qwen2.5:14b
+99.76±0.22
+99.80±0.20
+99.56±0.16
+99.32±0.39 99.64±0.22
+99.56±0.23
+Llama3.1:8b
+93.44±0.92
+96.05±0.72
+93.31±0.97
+98.02±0.41 98.81±0.28
+98.03±0.36
+Magistral:24b
+94.72±1.18
+97.05±0.63
+93.88±1.04
+95.60±1.01 97.65±0.54
+95.52±0.95
+Qwen2.5:7b
+53.28±2.05
+64.16±2.28
+47.83±1.96
+77.54±0.91 85.12±0.79
+77.09±0.71
+†Gemma4:e4b/26b/31b, GPT-OSS:20b/120b, MSmall3.2:24b, GPT-5.2.
+The root cause is consistent across all 10 models exhibiting a T3 ASR gap.
+The expected T3 trajectory has 11 agent hops (10 transitions), including an in-
+termediate return to the CPA for explicit user confirmation before payment pro-
+cessing. For direct payment phrases (e.g., "Process my payment"), models infer
+unambiguous intent and skip this checkpoint, executing 9 hops (8 transitions).
+Of 10 expected transitions, 8 appear: TR = 8/10 = 80%, TP = 8/8 = 100%,
+ASR = F1(80%, 100%) = 88.9% per affected sample. Crucially, every single hid-
+den deviation across all affected models follows this identical 9-step shortcut-
+there is exactly one deviant trajectory pattern, reflecting a systematic interaction
+between input phrasing and model reasoning rather than stochastic variation.
+
+Title Suppressed Due to Excessive Length
+This has regulatory significance: PCI-DSS [14] requires auditable workflows, and
+bypassing confirmation checkpoints creates gaps in the audit trail even when
+outcomes are correct.
+Conclusion
+We introduced ASR as a trajectory-level evaluation metric for LLM-based multi-
+agent payment systems. Across 18 LLMs and 90,000 instances, ASR exposes a
+systematic procedural deviation: 10 of 18 models skip a CPA-mediated confirma-
+tion checkpoint during payment checkout (T3 ASR gaps of 0.01-5.45%) despite
+near-perfect TSR and HF1, while 8 models enforce the checkpoint perfectly. No-
+tably, GPT-4.1 exhibits hidden workflow shortcuts despite achieving perfect TSR
+and HF1, while GPT-5.2 achieves perfect ASR. ASR-guided system engineering
+yields dramatic improvements for previously struggling models (up to +93.8 pp).
+As payment networks deploy agentic capabilities at scale [12, 17], ASR provides
+the visibility needed to ensure procedural fidelity-essential where compliance,
+auditability, and liability attribution are at stake. Future work includes vali-
+dating ASR in production systems, weighted variants for security-critical tran-
+sitions, architectural enforcement of the T3 checkpoint, and cross-architecture
+evaluations [17].
+References
+1. van der Aalst, W.M.P., Adriansyah, A., van Dongen, B.F.: Replaying history on
+process models for conformance checking and performance analysis. WIREs Data
+Mining and Knowledge Discovery 2(2), 182-192 (2012)
+2. Carmona, J., van Dongen, B., Solti, A., Weidlich, M.: Conformance Checking:
+Relating Processes and Models. Springer (2018)
+3. Cemri, M., Pan, M.Z., Yang, S., Agrawal, L.A., Chopra, B., Tiwari, R., Keutzer,
+K., Parameswaran, A., Klein, D., Ramchandran, K., et al.: Why do multi-agent
+LLM systems fail? (2025)
+4. Chen, Z., Bhatia, A., Zhang, S.L., Choi, S., Saar-Tsechansky, M., Ghassemi, M.:
+Standard benchmarks fail - auditing LLM agents in finance must prioritize risk.
+arXiv preprint arXiv:2502.15865 (2025)
+5. Chua, J.K., Huang, D., Wang, Z.: A novel hierarchical multi-agent system for pay-
+ments using LLMs. Proceedings of the 30th Pacific-Asia Conference on Knowledge
+Discovery and Data Mining (PAKDD) (2026), main Conference
+6. Dahiphale, D., Madiraju, N., Lin, J., Karve, R., Agrawal, M., Modwal, A., Bal-
+akrishnan, R., Shah, S., Kaushal, G., Mandawat, P., et al.: Enhancing trust and
+safety in digital payments: An LLM-powered approach. In: 2024 IEEE Interna-
+tional Conference on Big Data (BigData). pp. 4854-4863. IEEE (2024)
+7. Guan, Y., Wang, D., Chu, Z., Wang, S., Ni, F., Song, R., Zhuang, C.: In-
+telligent agents with LLM-based process automation. In: Proceedings of the
+30th ACM SIGKDD Conference on Knowledge Discovery and Data Min-
+ing. pp. 5018-5027. KDD ’24, Association for Computing Machinery (2024).
+
+D. Huang, J.K. Chua, and Z. Wang
+8. Hong, S., Zhuge, M., Chen, J., Zheng, X., Cheng, Y., Wang, J., Zhang, C., Wang,
+Z., Yau, S.K.S., Lin, Z., Zhou, L., Ran, C., Xiao, L., Wu, C., Schmidhuber, J.:
+MetaGPT: Meta programming for a multi-agent collaborative framework. In: The
+Twelfth International Conference on Learning Representations (2024), https://
+openreview.net/forum?id=VtmBAGCN7o
+9. Kapoor, S., Narayanan, A., et al.: AI agents that matter. arXiv preprint
+arXiv:2407.01502 (2024)
+10. Liu, X., Yu, H., Zhang, H., Xu, Y., Lei, X., Lai, H., Gu, Y., Ding, H., Men,
+K., Yang, K., et al.: AgentBench: Evaluating LLMs as agents. arXiv preprint
+arXiv:2308.03688 (2023)
+11. Ma, C., Zhang, J., Long, Z., Xie, Z., Chen, J., Zheng, J., et al.: AgentBoard:
+An analytical evaluation board of multi-turn LLM agents. In: Advances in Neural
+Information Processing Systems 37 (NeurIPS 2024), Datasets and Benchmarks
+Track (2024)
+12. Mastercard: Mastercard agent pay - powering the next frontier of commerce. ht
+tps://www.mastercard.com/global/en/business/artificial-intelligence/
+mastercard-agent-pay.html (2025), accessed: 2025-11-15
+13. Mohammadi, M., Rahmani, H.A., Nguyen, T.T., Ranasinghe, T., Macdonald, C.,
+Ounis, I.: Evaluation and benchmarking of LLM agents: A survey. In: Proceedings
+of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining
+(2025). 
+14. PCI Security Standards Council: Ai principles: Securing the use of ai in payment
+environments. 
+ing-the-use-of-ai-in-payment-environments (2025), accessed: 2025-11-15
+15. Qiao, S., Fang, R., Qiu, Z., Liu, X., Cheng, J., Chen, H., Zhang, N.: Benchmark-
+ing agentic workflow generation. In: The Thirteenth International Conference on
+Learning Representations (ICLR) (2025), 
+nPXOFmoi
+16. Schumacher, K., Roberts, R., Giebel, K.: The agentic commerce opportunity: How
+AI agents are ushering in a new era for consumers and merchants. 
+mckinsey.com/capabilities/quantumblack/our-insights/the-agentic-comme
+rce-opportunity-how-ai-agents-are-ushering-in-a-new-era-for-consume
+rs-and-merchants (2025), accessed: 2025-11-15
+17. Visa: Enabling AI agents to buy securely and seamlessly. 
+sa.com/en/products/intelligent-commerce.html (2025), accessed: 2025-11-15
+18. Xiao, Y., Zhao, M.K., Zhou, R., Boen, J.: TradingAgents: Multi-agents LLM fi-
+nancial trading framework. arXiv preprint arXiv:2412.20138 (2024)
+19. Yao, S., Narang, R., Bhatt, A., Chen, W., Bisk, Y.: τ-bench: A benchmark for
+tool-agent-user interaction in real-world domains. arXiv preprint arXiv:2406.12045
+(2024)
+20. Yu, Y., Yao, Z., Li, H., Deng, Z., Jiang, Y., Cao, Y., Chen, Z., Suchow, J., Cui,
+Z., Liu, R., et al.: Fincon: A synthesized llm multi-agent system with conceptual
+verbal reinforcement for enhanced financial decision making. Advances in Neural
+Information Processing Systems 37, 137010-137045 (2024)

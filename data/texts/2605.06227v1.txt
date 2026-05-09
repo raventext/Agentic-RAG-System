@@ -1,0 +1,1619 @@
+Price of Fairness in Short-Term and Long-Term
+Algorithmic Selections
+Shahin Jabbari∗, Chen Wang†
+Abstract
+Algorithmic decision-making in high-stakes settings can have profound impacts on individuals and
+populations. While much prior work studies fairness in static settings, recent results show that enforcing
+static fairness constraints may exacerbate long-run disparities. Motivated by this tension, we study a
+stylized sequential selection problem in which a decision-maker repeatedly selects individuals, affecting
+both immediate utility and the population distribution over time. We introduce notions of group fairness
+for both the short and long term and theoretically analyze the trade-off between fairness and utility
+via the Price of Fairness (PoF). We characterize optimal and fair policies in the short term and show
+that the PoF can be large even when group distributions are nearly identical. In contrast, we show
+that long-term disparities can vanish under simple investment policies that achieve a low PoF. We also
+empirically validate these theoretical observations using both synthetic and real datasets.
+Introduction
+Motivated by the societal impact of algorithmic decision-making, prior work has documented discriminatory
+behaviors and proposed mitigatory and fairness-imposing algorithms across classification [5, 6], resource
+allocation [22, 26, 55], and sequential decision-making [49]. However, this literature largely focuses on static
+or short-horizon settings, emphasizing immediate impacts while abstracting away long-term consequences.
+In their seminal work, Liu et al. [39] showed that repeatedly enforcing static group-fairness notions from
+classification, such as demographic parity [9] or equality of opportunity [29], can lead to stagnation and
+exacerbate group disparities when decisions influence the environment, sometimes even performing worse than
+simple utility maximization. Since then, various long-term fairness notions and algorithms-including those
+based on reinforcement learning-have been proposed to mitigate these effects [13, 57]. However, existing
+results either establish strong impossibility or incompatibility results for jointly achieving fairness and high
+utility [24, 35], or lack theoretical guarantees for optimal fair policies and thus offer no formal characterization
+of the fairness-utility tradeoff [34, 57].
+Our Results and Contributions. Motivated by this gap, we study a stylized selection problem in which a
+decision-maker (e.g., a financial institution) sequentially selects a set of individuals (e.g., to lend money) in
+each round. In our model, individuals belong to different groups and are represented by single-dimensional
+features (e.g., credit score). These decisions and their consequences (e.g., default or full payback) affect the
+decision-maker’s utility and the distribution of individuals for future rounds. Given the potential disparity
+in the distributions, the decision-maker’s selection policy can favor specific groups or individuals, raising
+concerns about unfairness and disparate treatment or impact. Furthermore, these disparities can worsen over
+time as population distribution evolves. We propose a new notion of group fairness, both for the short and
+the long terms, requiring the group difference between the means of score distributions to be bounded.
+Our primary goal is to understand the theoretical foundation of the trade-off between fairness violations
+and utility maximization in both the short and long terms. To this end, we define the notion of Price of
+∗Drexel University, shahin@drexel.edu
+†Rensselaer Polytechnic Institute, wangc33@rpi.edu
+arXiv:2605.06227v1 [cs.AI] 7 May 2026
+
+Fairness (PoF) for this domain, which captures the cost of utility due to fairness constraints. We characterize
+optimal and fair selection policies in the short term, and show that threshold-based policies can achieve
+optimal utilities. We then show that in the short term, the PoF can be arbitrarily high even when the groups
+have very similar initial distributions.
+The characterization of optimal and fair policies becomes significantly more complex in the long term,
+where current decisions interfere with future states of the population. In the single-step setting, fairness
+constraints often force a strict trade-off between utility and equity. However, we show that in the multi-step
+setting, this trade-off is largely an artifact of the short horizon. We analyze a class of long-term investment
+policies, i.e., simple investment strategies that prioritize score improvement and prove that they guarantee a
+low PoF. We also empirically validate these theoretical observations using both synthetic data and real-world
+FICO credit score datasets.
+Related Work
+Fairness in Sequential Decision-Making. Fairness in dynamic and repeated decision-making has been
+widely studied; see [49]. Early work considers stationary bandit settings [36, 42]. In general MDPs, Jabbari
+et al. [35] formalize meritocratic fairness and show its incompatibility with utility maximization, a phenomenon
+also noted in [24]. Subsequent work on fair reinforcement learning imposes population-level constraints on
+average reward or return [13, 34, 57], emphasizing allocative equality. Instead, we focus on restorative justice
+and substantive equality (see Remarks 1-2). Other related approaches include state-visit constraints [27],
+minimax fairness [25], and welfare-based objectives [16]; see also [19, 51, 59, 60]. Our notion of fairness is
+inspired by state-based constraints [27], but we focus on characterizing optimal fair policies and analyzing
+the fairness-utility tradeoff. Unlike intervention-based approaches in dynamical systems [48], we quantify the
+Price of Fairness in a fixed environment and show it vanishes under a class of investment policies. Our work
+is distinct from fair division [40, 50, 53].
+Fairness in Stylized Dynamic Settings. Fairness has also been studied in stylized dynamic models.
+Arunachaleswaran et al. [4] analyzes a multi-layer life-stage model with costly interventions in transition
+dynamics (see also [1]). Intergenerational dynamics driven by wealth and talent are studied in [31]. In
+a continuous-time model, Mouzannar et al. [45] characterizes when affirmative action constraints improve
+long-run outcomes despite short-term costs. Simulation-based studies appear in [17], while causal distribution
+shifts are modeled in [34]. Finally, Wu et al. [58] identifies conditions under which Rawlsian policies outperform
+utilitarian policies in the long run.
+Static Fairness Notions in Repeated Settings. Liu et al. [39] and Zhang et al. [60] study a simple
+dynamic model and show that repeated application of myopic fair policies, such as demographic parity [9]
+and equality of opportunity [29], can cause stagnation and can further exacerbate the disparities between
+different populations over harm. In contrast, the optimal policy that ignores fairness at least does not cause
+stagnation, though it cannot always rectify the disparities. While our stylized formulation is inspired by prior
+work such as [39], we aim to study a new notion of short- and long-term fairness (similar to works in fair
+reinforcement learning) instead of showing notions from classification can cause harm in dynamic settings.
+Constrained MDPs and Safe Reinforcement Learning.
+Since most fairness definitions can be
+written as a constraint, our framework is closely connected to the literature on constrained MDPs and
+POMPDPs [2, 3, 56]. However, these approaches primarily focus on constraints restricting a state-dependent
+cost function. In contrast, fairness constraints specifically aim to equalize statistics across different groups in
+some manner. There has also been significant recent interest from the reinforcement learning community
+to enforce safety constraints. Most model-free approaches require access to simulators to generate samples
+from arbitrary state-action pairs [20]. Model-based approaches are generally less efficient in space and time
+complexity [21, 41]. More recently, Calvo-Fullana et al. [10], Müller et al. [46] studied a setting with multiple
+reward functions and optimized the cumulative reward subject to a lower bound on the value of each reward
+function. These approaches study POMDPs/MDPs in full generality. Our goal is to gain a deeper theoretical
+understanding of the properties of fair interventions and their long-term effects through our stylized model.
+Recent studies investigate the trade-off between simple policies and optimality from a theoretical angle, but
+for simple MDPs [12, 43, 52]. Our work contributes to this emerging body of work.
+Single-step Setting
+3.1
+Model and Notation
+We start by presenting our stylized model of sequential decision-making, which mainly follows the model
+proposed in the seminal work of [39]. We assume the information about each individual is aggregated using a
+one-dimensional score x in a bounded range X (e.g., X can be the credit scores in lending). The score can be
+interpreted as an indication of an individual’s perceived ability, with higher scores being more desirable. We
+assume individuals belong to two groups: g ∈{A, B}. We use DA and DB to denote the distributions over
+scores for each group, capturing the variation in scores within each group. We use µA and µB to denote the
+mean score for each group. Without loss of generality, we assume µA ≥µB and, hence, group A to have an
+advantage over group B. We use wg to denote the fraction of the population that belongs to group g, so
+wA + wB = 1.
+We assume the decision-maker deploys a group-dependent policy π : X×g →[0, 1] to select individuals with
+a given score from each group, interpreted as the selection probability of an individual with a score x within
+each group. We use πA and πB to denote the policies corresponding to each group, hence, π = {πA, πB}. When
+selected, each individual with a score x has a group-agnostic probability of success denoted by p : X →[0, 1].
+Similar to [39], we make the following assumption on p, demonstrating that success probabilities are positively
+correlated with the scores.
+Assumption 1 ([39]). p : X →[0, 1] is a monotonically increasing function of the score x.
+When an individual with score x is selected, the decision-maker receives a fixed profit of U + ≥0 if the
+individual succeeds (which happens with probability p(x)). Otherwise, the decision-maker incurs a cost of
+U −< 0 (which happens with probability 1 −p(x)). Thus, for a selected individual with score x, the expected
+utility u : X →R of the decision-maker can be written as E [u(x)] = p(x)U + + (1 −p(x)) U −. The success of
+the individual can also impact their score. In particular, we assume, upon success, the score increases by
+C+ ≥0 (which happens with probability p(x)). Otherwise, the score decreases by C−< 0 (which happens
+with probability 1 −p(x)).1 Thus, the expected change ∆: X →R in score for an individual with score x
+can be written as E[∆(x)] = p(x)C+ + (1 −p(x))C−. For individuals who are not selected, we assume the
+score to remain the same and the decision-maker to receive 0 utility.
+By Assumption 1, both the expected utility and the expected score change are monotone functions of the
+score. Similar to [39], we assume the utility function for individuals is stricter than the score change function.
+Assumption 2 ([39]). U +/U −≥C+/C−.
+Assumption 2 implies that if E[u(x)] ≥0 then E[∆(x)] ≥0, which is an important property for the
+non-existence of extractive (exploitative) outcomes, where the decision-maker can profit from the long-term
+decrement of the individual scores. We study the relaxation of this assumption in Section 5. See Definition 2
+and Observation 1 for more details.
+Assumption
+Justification
+Assumption 1
+Same as [39], higher score individuals have higher chances to succeed.
+Assumption 2
+Same as [39], the utility function for individuals is stricter than the score change function.
+Table 1: Justification of assumptions in the single-step setting.
+1Since the scores are bounded, the updated scores should be projected/clipped to guarantee that they fall inside of X.
+An instance I of the selection problem is determined by the description of X, DA, DB, wA, wB, p, U +, U −, C+,
+and C−. The expected utility for any selection policy π is defined as
+V (π, I) =
+X
+g∈{A,B}
+wg
+X
+x∈X
+πg(x)Dg(x)E[u(x)].
+(1)
+The decision-maker’s goal in the single-step setting is to compute an optimal policy π maximizing the total
+expected utility:
+OPT(I) :=
+max
+π={πA,πB},V (π,I)≥0 V (π, I),
+(2)
+where OPT(I) denotes the utility of the optimal policy.
+3.2
+Fairness Definition
+The groups start with different distributions of scores, and the decision-maker’s policy can further exacerbate
+this difference, raising concerns about disparate impact and unfairness of the selection policy. It is well
+known that static intervention policies such as equal selection rates (statistical parity) or equal selection rates
+conditioned on qualification status (equality of opportunity) can further worsen the discrepancies between
+the groups [39, 60]. To alleviate this, inspired by [39], we define a fairness constraint on the decision-maker’s
+policy requiring the difference between the means of the distributions for different groups after deploying the
+policy to be bounded by a parameter α ≥0. Formally, let δ = µA −µB ≥0 denote the mean score difference
+between the two groups, capturing the initial disparity. Also let
+µ′
+g(πg) = µg +
+X
+x∈g
+πg(x)Dg(x)E [∆(x)] ,
+(3)
+for g ∈{A, B} to denote the mean after deploying π. Therefore, δ′(π) = |µ′
+A(πA) −µ′
+B(πB)| represents the
+post-deployment difference in the means. We next propose our fairness definition in the single-step setting.
+Definition 1. A policy π = {πA, πB} satisfies α-fairness for some α ≥0 if δ′(π) ≤α.
+The parameter α controls the degree of mean disparity after policy deployment, and smaller α values
+correspond to more restrictive policies. When it is clear from the context, we drop the dependency of µ′
+g(πg)
+on πg and simply write µ′
+g.
+Remark 1. Our notion of fairness focuses on the states (scores) as opposed to outcomes (utilities) [13],
+preventing negative feedback loops that [39] have warned about. It also enforces restorative justice [18] and
+substantive equality of opportunity [32], requiring the decision-maker to invest in the group with a lower
+average score. See Section 4.
+Remark 2. Given Assumption 1 on the direct correlation of scores and qualification status, the closeness of
+average scores, indirectly, enforces the closeness of average qualification status between the groups. Similar
+to [39], we define fairness using the scores, i.e., the scores are changing, and the score-dependent qualification
+scores remain fixed. See [60] that takes the alternative approach, where scores are fixed, and the qualification
+statuses are changing.
+An optimal fair policy, for instance I in the single-step setting, is a policy π that maximizes the decision-
+maker’s expected utility subject to satisfying the fairness constraint in Definition 1. Formally, this can be
+written as follows:
+Fair-OPT(I) :=
+max
+π={πA,πB},V (π,I)≥0 V (π, I), s.t. π is α −fair.
+(4)
+We use Fair-OPT(I) to denote the utility of the optimal fair policy. In the multi-step setting, the decision-
+maker selects individuals repeatedly over rounds, causing the scores to change in each step. We discuss that
+setting in Section 4.
+3.3
+Characterization of the Optimal Policies
+To study the short-term effects of selection policy, in this section, we start by characterizing the optimal
+policy (Proposition 1) and optimal fair policies (Theorem 1) in the single-step setting. We first define the
+categories of the individual scores based on the expected utility and score change.
+Definition 2. For any score x ∈X, we say x is in one of the following categories:
+• Profitable and Improving: We say x is in category 1, denoted as x ∈C1, if E [∆(x)] ≥0 and
+E [u(x)] ≥0.
+• Extractive Candidates: We say x is in category 2, denoted as x ∈C2, if E [∆(x)] < 0 and E [u(x)] ≥0.
+• Investment Candidates: We say x is in category 3, denoted as x ∈C3, if E [∆(x)] ≥0 and
+E [u(x)] < 0.
+• Unprofitable and Degrading: We say x is in category 4, denoted as x ∈C4, if E [∆(x)] < 0 and
+E [u(x)] < 0.
+Our first crucial observation is that under Assumption 2, the exploitative outcomes do not exist, i.e., we
+do not have category 2 with E [∆(x)] < 0 and E [u(x)] ≥0. See Appendix A.
+Observation 1. Under Assumption 2, the set of Extractive Candidates (C2) is empty, i.e., C2 = ∅.
+We want to argue that the optimal (utility-maximizing) policy has to be a threshold policy. To this end,
+we start by formally defining threshold policies.
+Definition 3 (Threshold policy). A policy π is a threshold policy if there exists x∗∈X and ω ∈[0, 1] such
+that
+π(x) =
+
+
+
+
+
+1,
+if x > x∗,
+ω,
+if x = x∗,
+0,
+if x < x∗.
+In Definition 3, x∗represents the threshold score, and ω is the fraction of selected individuals at
+the threshold score. Threshold policies are desirable since they offer simplicity and interpretability [15].
+Proposition 1 states that the optimal policy selects only individuals with positive expected utility, exactly
+characterized by category 1.
+Proposition 1 ([39]). Under Assumption 1, the optimal policy in the single step is a group-agnostic
+threshold policy that selects all the individuals in category 1, i.e., individuals with score x such that p(x) ≥
+−U −/(U + −U −).
+We next show that optimal fair policies, when they exist, are also thresholding policies. However, unlike
+optimal policies, the threshold can be different for each group.
+Theorem 1. Suppose the optimization problem in Equation 4 has a feasible solution. Under Assumptions 1
+and 2, in the single-step setting, there exists an optimal fair policy that is a threshold policy for each group.
+This observation is also consistent with prior work [15]. See Appendix A for proof.
+3.4
+Price of Fairness
+We next study the relationship between the expected utility of optimal and optimal fair policies in the
+single-step setting. We measure the cost of enforcing the fairness constraint as the fraction of expected utility
+retained by the optimal fair policy compared to the optimal policy in the worst case over all instances. In
+line with prior work studying fairness in different decision-making settings [7, 22, 26, 44], we call this notion
+price of fairness.
+Definition 4. The Price of Fairness (PoF) is defined as:
+PoF = max
+I
+
+1 −Fair-OPT(I)
+OPT(I)
+
+.
+(5)
+The PoF is in [0, 1], and higher PoF values mean that enforcing fairness requires a higher degree of utility
+degradation. Hence, lower values of the price of fairness are more desirable. In Theorem 2, an α-dependent
+lower bound on PoF indicates that in the worst-case, the PoF can get arbitrarily close to 1 in the single-step
+setting when α goes to 0.
+Theorem 2. Suppose X = [0, 1]. Then, in the single-step setting, PoF ≥1 −O(α).
+The proof relies on creating a family of instances I and a characterization of the optimal and optimal
+fair policies for this family. We defer the proof to Appendix A. To show a large PoF, the proof relies on
+constructing an instance in which the population distributions are very different (i.e., the total variation
+distance of the two distributions is 1). This raises a natural question: can high PoF be avoided if the
+distributions are more similar (e.g., have a smaller total variation distance)? Before answering this question,
+we require the following definition.
+Definition 5. A policy π is non-degrading if π(x) = 0, ∀x ∈C4, i.e., no allocation to individuals in C4
+category.
+Recall that an individual x belongs to category 4 if E[u(x)] < 0, E[∆(x)] < 0. A population-degrading
+policy selects individuals that not only impose negative expected utility but also degrade population scores. It is
+known that equality-enforcing fairness notions (such as our notion) can lead to population degradation [47, 54].
+Our next result shows that it is not possible to avoid high PoFs for all non-degrading policies.
+Theorem 3. For any ϵ > 0, in the single-step setting, there exists an instance such that the total variation
+distance between DA and DB is at most ϵ, but the PoF is 1 −O(α).
+See Appendix A for proof. Finally, in Proposition 3 (Appendix A), we provide sufficient conditions where
+more favorable PoFs are achievable. These results indicate that for the single-step setting, in general, the
+PoF can be quite large.
+Multi-step Setting
+We now focus on the long-term effects of the selection policy by studying the multi-step setting. In this
+setting, the decision-maker makes selections sequentially for T rounds. The decisions in the previous steps
+1, . . . , t −1 will affect the distribution at time step t. The decision-maker likes to maximize the total utility
+over all time steps. We show that, unlike in the single-step setting, where the PoF could be high, we can
+obtain a low PoF using simple investment policies.
+4.1
+Model and Notation
+For simplicity, we assume the scores are integers from 0 to xmax. We work extensively with the categories
+of the scores as defined in Definition 2. For convenience, we use g ∈{A, B} and c ∈{1, 3, 4} to refer to
+individuals in each group and category, respectively. For example, we use A ∩C1 to denote individuals from
+group A that belong to category C1. For each category c and group g, we define Γc
+g and µc
+g as the total and
+average scores of the specific category c and group g, i.e.,
+Γc
+g =
+X
+x∈g∩c
+x;
+µc
+g =
+|g ∩c| · Γc
+g.
+Let T be the total number of time steps. We use D(t)
+g
+to denote the distribution of the scores for group
+g ∈{A, B} at step t. The multi-step allocation model is a stochastic process, where the decision maker selects
+a sequence of policies ΠT = {π(t)}T
+t=1. We also track the change of scores during the stochastic process: let x
+be any score at time step 1, the notation G(x)t is defined as the set of scores after evolving for t steps2. The
+multi-step utility can be written as follows.
+max
+ΠT E
+
+
+T
+X
+t=1
+X
+g∈A,B
+wg
+X
+x∈X
+D(t)
+g (x)π(t)
+g (x)u(x)
+
+
+= max
+ΠT
+T
+X
+t=1
+X
+g∈A,B
+wg
+X
+x∈X
+D(t)
+g (x)π(t)
+g (x)E [u(x)] ,
+(6)
+where the equality holds due to the linearity of expectation. However, note that the random variables in
+different steps are not independent since the past realization will affect πt and Dt (see Appendix B.1 for
+more insight about the dependency).
+To define a multi-step analog of Definition 1 for fairness, we could similarly define µ′
+g(Πt) as the expected
+average score for group g ∈{A, B} for the t-th time step, and δ′(Πt, t) = |µ′
+A(Πt) −µ′
+B(Πt)|.
+We restrict our attention to rational (non-degrading) policies and introduce the multi-step version of the
+non-degrading policy, which generalizes Definition 5.
+Assumption 3. A policy π is rational (non-degrading) in the multi-step setting, if for all t ∈[T], g ∈{A, B}
+and x ∈C4, π(t)
+g (x) = 0.
+Assumption 3 says that no policy will allocate resources to an individual expected to be unprofitable in
+both the short and long terms, implying that the decision-maker is rational. Our next assumption characterizes
+the advantage group A over B.
+Assumption 4. We assume that the scores for group A in categories C1 and C3 are greater than the scores
+from the same categories for group B by a positive value β > 0, i.e.,
+ΓC1
+A + ΓC3
+A
+|A|
+−ΓC1
+B + ΓC3
+B
+|B|
+> β.
+Assumption
+Setting
+Justification
+Assumption 3
+Single & Multi-
+opportunity
+The decision-maker is rational and avoids individuals expected to yield net
+utility losses in both the short and long term.
+Assumption 4
+Single & Multi-
+opportunity
+Ensures Group A’s advantage stems from potentially profitable candidates
+rather than simply having fewer unprofitable ones.
+Assumption 5
+Single-
+opportunity
+Models "stability" where profitable candidates are trustworthy, effectively con-
+trolling the variance of the score trajectory.
+Assumption 6
+Single-
+opportunity
+Aligns with natural distributions (e.g., logistic) where success probability im-
+proves rapidly in low-to-mid score ranges.
+Assumption 7
+Multi-
+opportunity
+Reflects real-world scoring systems (e.g., FICO) where scores are treated as
+discrete integers and updates occur in integer increments.
+Table 2: Justification of assumptions in the multi-step setting.
+2More formally, G(x)t is a realization of the random variable denoting the set of score. See Appendix B.1 for a rigorous
+definition.
+Assumption 4 states that the advantage of group A is not due to a strange scenario where the group has
+no "real advantage" among the individuals who could get allocations, and it simply has a smaller number of
+individuals with very bad scores.
+We consider two settings for multi-step allocation: the single-opportunity setting, where the decision-
+maker adjusts scores based on a single outcome, and the multi-opportunity setting, where the decision-maker
+modifies scores only after the outcomes of multiple independent decisions. Table 2 provides a summary of the
+assumptions used in this section.
+Technical Overview. At a high level, the reason we can obtain low PoF is due to the positive drift for
+individuals in categories C1 and C3 and the existence of the xmax score. If we only look at the expectation,
+the intuition for low PoF is straightforward and clean: for any score x ∈C1 ∪C3, we have E [∆(x)] > 0 then,
+when T →∞, the scores for both advantaged and disadvantaged groups are expected to hit xmax. Therefore,
+unless the gap between the groups is induced by C4 (which is a very strange situation since the advantaged
+group has no "real advantage"), the gap between the mean scores should decrease. Furthermore, for the utility,
+the decision-maker only pays the "burn-in" part for individuals in C1 ∪C3 to reach xmax; and afterwards, the
+decision-maker is expected to get the maximum possible utility. This summarizes the intuitive reason for the
+PoF to be low.
+The actual analysis, however, is much more challenging and complicated. The challenge lies in the
+expectation vs. realization. Since multi-step allocation is a stochastic process, the realization of the randomness
+in the previous steps interferes with the current and future steps. An adversarial case can be as follows: in
+one step, many scores in C3 drop to C4, and the high expected score and utility can never materialize.
+We overcome the challenge in two ways: i) for the single-opportunity setting, we introduce additional
+realistic assumptions to bound the variance of the scores; and ii) in the multi-opportunity setting, we directly
+leverage the multiple trials to introduce concentration. The analysis in the single-opportunity setting is
+perhaps more intellectually stimulating. Here, we only assume the failure probability for individuals in C1 ∪C3
+is bounded, and the success probability increases fast in the low-to-mid score ranges-both are considered
+common in practice. We explicitly track the change of scores by bounding the probability of "failure to
+increase", and we prove that the set of scores that cannot increase forms a geometrically decreasing series
+with high probability. Hence, we can "peel off" this small fraction of "bad scores", and use the scores that
+kept increasing to argue both improved fairness and low PoFs.
+4.2
+Price of Fairness
+Single-opportunity Setting.
+In the single-opportunity setting, the decision-maker adjusts scores every
+time after an individual succeeds or fails. In this setting, with specific but natural assumptions, we can
+achieve fairness low PoF as T increases. We first introduce the following assumptions used exclusively for the
+single-opportunity setting.
+Assumption 5. For any x ∈C1 ∪C3, we assume the probability of failure is at most
+β
+N·xmax for sufficiently
+large constant N, i.e., 1−p(x) ≤
+β
+N·xmax . Here, β is the parameter in Assumption 4, and xmax is the maximum
+score.
+Furthermore, in the single-opportunity setting, we control the variance of the realization of the score by
+adding another assumption on the failure probability.
+Assumption 6. We assume for any score x ∈X, 1 −p(x + C+) ≤1
+3 · (1 −p(x)). Furthermore, we assume
+the individuals with the maximum score always succeed, i.e., p(xmax) = 1.
+In practice, Assumption 6 holds when the probability of success increases drastically during the low-to-mid
+score ranges. One natural family of distributions in this regime is logistic distributions, and we provide a
+justification in Appendix B.2. We show a structural lemma that, if we keep selecting individuals in C1 ∪C3,
+we will have a good probability to receive a "cascading" effect for a majority of such individuals. This is
+stated in Lemma 2 (proof in Appendix B). Recall that G(x)t is the set of scores starting from x and evolving
+till t-th step.
+Lemma 2. Suppose for any x ∈C1 ∪C3, the success probability p(x) satisfies p(x) ≥1 −pfail. Then, under
+Assumption 6, with probability at least 99/100, for all but at most O(pfail) fraction of scores in G(x)(t), we
+have
+x(t) −E
+h
+x(t)i ≤
+√
+t · (C+ −C−) polylog(t · |C1 ∪C3|).
+Therefore, when t →∞, we have
+{x ∈G(x)t | x = xmax}
+ ≥(1 −O(pfail)) ·
+G(x)t .
+We now introduce the main results for the multi-step single-opportunity setting. We argue that, unlike
+the single-step setting, for the multi-step setting, if the number of steps is sufficiently large, we could use the
+following simple long-term investment policy to simultaneously satisfy fairness and obtain low PoF. This is
+stated in Theorem 4 (proof in Appendix B).
+A simple long-term investment policy.
+• Select individuals in both A and B groups who have always succeeded in the previous round (with
+Assumption 3, this is a subset of individuals in C1 and C3).
+Theorem 4. Assume Assumptions 3, 4, 5, and 6 hold. Then, with probability at least 99/100, for sufficiently
+large T, the long-term investment policy guarantees δ′(T) < |µA −µB| −β/2, where |µA −µB| is the initial
+gap of the mean scores of the groups, and β is the parameter in Assumptions 4 and 5.
+Furthermore, we have that limT →∞PoF = O(pfail) as long as α ≥max{ ΓC4
+A
+|A| , ΓC4
+B
+|B| } + β
+The conditions in Theorem 4 implies that the statement holds for α ≥max{µC4
+A , µC4
+B }+β as well, although
+the statement is much weaker.
+Multi-opportunity Setting.
+We further investigate a different setting, where the decision-maker will keep
+selecting for multiple times before committing to a decision that would be used for the rest of the time steps.
+We will show that in this setting, the PoF goes to 0 with high probability with assumptions much weaker
+than Assumptions 5 and 6. First, we formally define the multi-opportunity setting in the multi-step setting.
+Definition 6. Let x(t) be any score at time step t. In the multi-step setting with number of opportunities m,
+the decision-maker selects an individual m times, and makes selection decisions after observing all outcomes
+of the m selections.
+Let gsuccess be the fraction of the times the individual succeeds.
+∆(x(t)) = gsuccess · C+ + (1 −gsuccess) · C−.
+Note that the expected score change remains the same:
+E
+h
+∆(x(t))
+i
+= E
+
+gsuccess · C+ + (1 −gsuccess) · C−
+= E [gsuccess] · C+ + (1 −E [gsuccess]) · C−
+= p(x) · C+ + (1 −p(x)) · C−.
+We also introduce a much milder assumption about the expectation of the change of score.
+Assumption 7. For any score x ∈X, the expectation of the change of scores, i.e., E [∆(x)], is a positive
+integer.
+In the multi-opportunity setting, we could simply select all individuals in C1 and C3 to get a low PoF.
+An even simpler long-term investment policy.
+• Select individuals from categories C1 and C3 in both groups A and B.
+We formally show the guarantees for the "even simpler investment policy" as follows. Note that the
+quantifiers here are different from those of Theorem 4: we first fix the time horizon T before giving the
+parameters for the multi-opportunity setting. We defer the proof to Appendix B.
+Theorem 5. Assume Assumptions 3, 4, and 7 hold. For any sufficiently large T and δ > 0, suppose we have
+m ≥5(C+ −C−) · log T in the multi-opportunity setting. Then, with probability at least 99/100, the even
+simpler long-term investment policy guarantees δ′(T) < δ and PoF = 0 as long as α ≥max{µC4
+A , µC4
+B }.
+Figure 1: PoF for different datasets and parameters.
+Experiments
+Dataset and Implementation Details.3 We experimented on two datasets. One is a synthetic dataset
+with scores drawn from two Gaussian distributions with different means but the same variance, post-processed
+to integers in 0 to 100. The other is a real-world dataset of FICO credit scores [8], also used in [29, 39].
+We selected individuals labeled as White or Black to form groups A and B. We used different parameter
+choices to define instances, and these choices are described in each experiment. In all experiments, the p(x)
+increases linearly in the range of scores from 0 to 1. To solve for the optimal fair policy in the single-step, we
+used an LP solver since the optimization in Equation 4 is linear in π. Motivated by Proposition 1, we also
+implemented an algorithm that searches over all possible thresholds for each group. See Appendix C for more
+details.
+Single-step Results. As our first experiment, we study the PoF on our two datasets. For each dataset, we
+use a baseline set of parameters to generate an instance. For the synthetic experiments, we also generate an
+3Our code is available on 
+instance with high cost and risk, which, compared to the baseline, has a higher U −and C−but the same U +
+and C+. All instances satisfy Assumption 2. See Appendix C for more details. Figure 1 plots the PoF for each
+choice as a function of α times the range of the score. So α = 0 corresponds to enforcing exact mean-equality
+and α = 1 corresponds to no constraints on the means. If for any given α, no fair policy is found, there are
+no corresponding points on the curves. We observe that a lower α is required for synthetic data compared to
+real data to achieve 0 PoF. In Appendix C.2, we show that the simple thresholding algorithm is also effective
+when Assumption 2 is violated.
+(a) The average gap between group means over time
+(b) The avarege utility over time
+Figure 2: The Multi-step experiments: left and right panels track the average fairness and utility of each of
+the policies over time.
+Multi-step Results. We investigate the long-term dynamics of fairness and utility in a sequential selection
+process, modeled as a feedback loop where algorithmic decisions influence future population states. For this
+experiment, we sample a population of N = 1, 000, 000 agents divided from the baseline synthetic distribution
+and analyze how the scores evolve over a horizon of T = 100 steps under different policies. At each time step,
+a policy selects a subset of agents, who then succeed or fail. We evaluate four distinct policies: a myopic
+policy maximizing immediate utility, our investment policy maximizing expected score growth, a threshold
+policy constrained by a relaxed fairness gap (α = 0.01), and a zero-gap LP policy enforcing strict equality of
+expected future means via linear programming. The myopic and investment policies prioritize aggregate utility
+and capability growth, respectively, without explicit distributional constraints. In contrast, the threshold
+policy introduces a soft constraint, optimizing utility while bounding the expected inter-group mean score
+difference. The zero-gap LP approach represents a hard constraint, solving for selection probabilities πg(x)
+that strictly force the expected fairness gap to zero at each step. These policies allow for an analysis of the
+trade-offs between maximizing total utility and achieving fairness in the multi-step setting.
+Results are summarized in Figure 2: left and right panels track the difference between the mean of the
+groups and total utility obtained by each of the policies, averaged over 5 runs.4 We observe that our proposed
+investment policy is not only effective in reducing unfairness but also achieves higher utility compared to all
+the baselines. The experiments also show that our theory is fairly robust, as the p(x) distribution does not
+satisfy Assumption 6, yet the empirical PoF is still small.
+4The error bars are included, but they are so small that they are invisible due to the large population size. See Appendix C.3
+for error bars on a smaller population.
+6
+Discussion and Future Work
+A central contribution of our framework is reframing the price of fairness (PoF) from a static penalty to a
+dynamic investment. Whereas prior work (e.g., [7]) views PoF as an inherent utility loss, our multi-step
+analysis shows that this loss is largely transient, i.e., a down payment that rehabilitates the score distribution
+of the disadvantaged group. Our theorems formalize the resulting patience premium, indicating that the
+apparent conflict between fairness and utility is partly driven by short horizons: under long-term greedy
+policies, fairness constraints eventually align with profit maximization, provided the allocator can absorb the
+initial loss. Our fairness notion minimizes gaps between group means. While analytically convenient, such
+mean-based metrics capture only average outcomes and do not ensure individual-level fairness, nor do they
+preclude fairness gerrymandering.
+There are several directions to extend our work. First, individuals are often represented by high-dimensional
+features with unobservable attributes, and deployable policies may be significantly more complex. Moreover,
+feature changes may arise not only from practice but also from improvement [33, 38] or manipulation and
+gaming [23, 28]. Second, stronger notions of fairness could require closeness of entire distributions (e.g.,
+via total variation or earth mover’s distance) or enforce fairness at every time step rather than only at the
+end [35]. Third, we assume the decision-maker can use sensitive attributes, although optimal fair threshold
+policies may be group-specific when feature distributions differ [14]. In practice, sensitive attributes may be
+unavailable or prohibited [11], and populations often consist of multiple, intersecting protected groups [30, 37].
+Finally, many applications face resource constraints (e.g., college admissions) not captured by our model. We
+leave these questions for future work.
+Acknowledgement
+We thank Alvand Vahediahmar for discussion on the earlier stages of this work. The authors used Gemini
+Pro as an aid in writing code. All LLM-produced content was reviewed and edited by the authors.
+References
+[1] Krishna Acharya, Eshwar Ram Arunachaleswaran, Sampath Kannan, Aaron Roth, and Juba Ziani.
+Wealth dynamics over generations: Analysis and interventions. In SATML, pages 42-57, 2023.
+[2] Joshua Achiam, David Held, Aviv Tamar, and Pieter Abbeel. Constrained policy optimization. In ICML,
+pages 22-31, 2017.
+[3] Eitan Altman. Constrained Markov Decision Processes. CRC Press, 1999.
+[4] Eshwar Arunachaleswaran, Sampath Kannan, Aaron Roth, and Juba Ziani. Pipeline interventions. In
+ITCS, pages 8:1-8:20, 2021.
+[5] Solon Barocas, Moritz Hardt, and Arvind Narayanan. Fairness and Machine Learning: Limitations and
+Opportunities. fairmlbook.org, 2019.
+[6] Richard Berk, Hoda Heidari, Shahin Jabbari, Michael Kearns, and Aaron Roth. Fairness in criminal
+justice risk assessments: The state of the art. Sociological Methods & Research, 50(1):3-44, 2021.
+[7] Dimitris Bertsimas, Vivek Farias, and Nikolaos Trichakis. The price of fairness. Operations Research, 59
+(1):17-31, 2011.
+[8] Board of Governors of the Federal Reserve System. Report to the congress on credit scoring and its
+effects on the availability and affordability of credit, 2007.
+[9] Toon Calders and Sicco Verwer. Three naive bayes approaches for discrimination-free classification. Data
+Mining and Knowledge Discovery, 21(2):277-292, 2010.
+[10] Miguel Calvo-Fullana, Santiago Paternain, Luiz Chamon, and Alejandro Ribeiro. State augmented con-
+strained reinforcement learning: Overcoming the limitations of learning with rewards. IEEE Transactions
+on Automatic Control, 69(7):4275-4290, 2024.
+[11] Elisa Celis, Anay Mehrotra, and Nisheeth Vishnoi. Fair classification with adversarial perturbations. In
+NeurIPS, pages 8158-8171, 2021.
+[12] Zelei Cheng, Jiahao Yu, and Xinyu Xing. A survey on explainable deep reinforcement learning. CoRR,
+abs/2502.06869, 2025.
+[13] Jianfeng Chi, Jian Shen, Xinyi Dai, Weinan Zhang, Yuan Tian, and Han Zhao. Towards return parity in
+markov decision processes. In AISTATS, pages 1161-1178, 2022.
+[14] Sam Corbett-Davies, Emma Pierson, Avi Feller, Sharad Goel, and Aziz Huq. Algorithmic decision
+making and the cost of fairness. In KDD, pages 797-806. ACM, 2017.
+[15] Sam Corbett-Davies, Johann D. Gaebler, Hamed Nilforoshan, Ravi Shroff, and Sharad Goel. The
+measure and mismeasure of fairness. Journal of Machine Learning Research, 24:312:1-312:117, 2023.
+[16] Cyrus Cousins, Kavosh Asadi, Elita Lobo, and Michael Littman. On welfare-centric fair reinforcement
+learning. Reinforcement Learning Journal, 3:1124-1137, 2024.
+[17] Alexander D’Amour, Hansa Srinivasan, James Atwood, Pallavi Baljekar, D. Sculley, and Yoni Halpern.
+Fairness is not static: Deeper understanding of long term fairness via simulation studies. In FAccT,
+pages 525-534, 2020.
+[18] Jenny Davis, Apryl Williams, and Michael Yang. Algorithmic reparation. Big Data & Society, 8(2),
+2021.
+[19] Zhun Deng, He Sun, Steven Wu, Linjun Zhang, and David Parkes. Reinforcement learning with stepwise
+fairness constraints. In AISTATS, volume 206, pages 10594-10618, 2023.
+[20] Dongsheng Ding, Kaiqing Zhang, Tamer Basar, and Mihailo Jovanovic. Natural policy gradient primal-
+dual method for constrained markov decision processes. In NeurIPS, 2020.
+[21] Dongsheng Ding, Xiaohan Wei, Zhuoran Yang, Zhaoran Wang, and Mihailo Jovanovic. Provably efficient
+safe exploration via primal-dual policy optimization. In AISTATS, pages 3304-3312, 2021.
+[22] Kate Donahue and Jon Kleinberg. Fairness and utilization in allocating resources with uncertain demand.
+In FAccT, pages 658-668, 2020.
+[23] Jinshuo Dong, Aaron Roth, Zachary Schutzman, Bo Waggoner, and Zhiwei Steven Wu. Strategic
+classification from revealed preferences. In EC, pages 55-70, 2018.
+[24] Shayan Doroudi, Philip Thomas, and Emma Brunskill. Importance sampling for fair policy selection. In
+UAI, 2017.
+[25] Eric Eaton, Marcel Hussing, Michael Kearns, Aaron Roth, Sikata Bela Sengupta, and Jessica Sor-
+rell. Intersectional fairness in reinforcement learning with large state and constraint spaces. CoRR,
+abs/2502.11828, 2025.
+[26] Hadi Elzayn, Shahin Jabbari, Christopher Jung, Michael Kearns, Seth Neel, Aaron Roth, and Zachary
+Schutzman. Fair algorithms for learning in allocation problems. In FAccT, pages 170-179, 2019.
+[27] Ganesh Ghalme, Vineet Nair, Vishakha Patil, and Yilun Zhou. Long-term resource allocation fairness in
+average markov decision process (AMDP) environment. In AAMAS, pages 525-533, 2022.
+[28] Moritz Hardt, Nimrod Megiddo, Christos Papadimitriou, and Mary Wootters. Strategic classification.
+In Madhu Sudan, editor, ITCS, pages 111-122, 2016.
+[29] Moritz Hardt, Eric Price, and Nathan Srebro. Equality of opportunity in supervised learning. In NeurIPS,
+pages 3315-3323, 2016.
+[30] Úrsula Hébert-Johnson, Michael Kim, Omer Reingold, and Guy Rothblum. Multicalibration: Calibration
+for the (computationally-identifiable) masses. In ICML, pages 1944-1953, 2018.
+[31] Hoda Heidari and Jon Kleinberg. Allocating opportunities in a dynamic model of intergenerational
+mobility. In FAccT, pages 15-25, 2021.
+[32] Hoda Heidari, Michele Loi, Krishna Gummadi, and Andreas Krause. A moral framework for understanding
+fair ML through economic models of equality of opportunity. In FAccT, pages 181-190, 2019.
+[33] Hoda Heidari, Vedant Nanda, and Krishna Gummadi. On the long-term impact of algorithmic decision
+policies: Effort unfairness and feature segregation through social learning. In ICML, pages 2692-2701,
+2019.
+[34] Yaowei Hu and Lu Zhang. Achieving long-term fairness in sequential decision making. In AAAI, pages
+9549-9557, 2022.
+[35] Shahin Jabbari, Matthew Joseph, Michael Kearns, Jamie Morgenstern, and Aaron Roth. Fairness in
+reinforcement learning. In ICML, pages 1617-1626, 2017.
+[36] Matthew Joseph, Michael Kearns, Jamie Morgenstern, and Aaron Roth. Fairness in learning: Classic
+and contextual bandits. In NeurIPS, pages 325-333, 2016.
+[37] Michael Kearns, Seth Neel, Aaron Roth, and Zhiwei Wu. Preventing fairness gerrymandering: Auditing
+and learning for subgroup fairness. In ICML, pages 2569-2577, 2018.
+[38] Jon Kleinberg and Manish Raghavan. How do classifiers induce agents to invest effort strategically? In
+EC, pages 825-844, 2019.
+[39] Lydia Liu, Sarah Dean, Esther Rolf, Max Simchowitz, and Moritz Hardt. Delayed impact of fair machine
+learning. In ICML, pages 3156-3164, 2018.
+[40] Qingsong Liu and Mohammad Hajiesmaili. Online fair allocation of reusable resources. Proceedings of
+the ACM on Measurement and Analysis of Computing Systems, 9(2):1-46, 2025.
+[41] Tao Liu, Ruida Zhou, Dileep Kalathil, Panganamala Kumar, and Chao Tian. Learning policies with
+zero or bounded constraint violation for constrained MDPs. In NeurIPS, pages 17183-17193, 2021.
+[42] Yang Liu, Goran Radanovic, Christos Dimitrakakis, Debmalya Mandal, and David C. Parkes. Calibrated
+fairness in bandits. CoRR, abs/1707.01875, 2017.
+[43] Yishay Mansour, Michal Moshkovitz, and Cynthia Rudin. There is no accuracy-interpretability tradeoff
+in reinforcement learning for mazes. CoRR, abs/2206.04266, 2022.
+[44] Aditya Menon and Robert Williamson. The cost of fairness in binary classification. In FAccT, pages
+107-118, 2018.
+[45] Hussein Mouzannar, Mesrob Ohannessian, and Nathan Srebro. From fair decision making to social
+equality. In FAccT, pages 359-368, 2019.
+[46] Adrian Müller, Pragnya Alatur, Volkan Cevher, Giorgia Ramponi, and Niao He. Truly no-regret learning
+in constrained mdps. In ICML, 2024.
+[47] Aida Rahmattalabi, Shahin Jabbari, Himabindu Lakkaraju, Phebe Vayanos, Max Izenberg, Ryan Brown,
+Eric Rice, and Milind Tambe. Fair influence maximization: A welfare optimization approach. In AAAI,
+pages 11630-11638, 2021.
+[48] Miriam Rateike, Isabel Valera, and Patrick Forré. Designing long-term group fair policies in dynamical
+systems. In FAccT, pages 20-50, 2024.
+[49] Anka Reuel and Devin Ma. Fairness in reinforcement learning: A survey. In AIES, pages 1218-1230.
+AAAI Press, 2024.
+[50] Tareq Si Salem, Georgios Iosifidis, and Giovanni Neglia. Enabling long-term fairness in dynamic resource
+allocation. In SIGMETRICS, pages 31-32, 2023.
+[51] Harsh Satija, Alessandro Lazaric, Matteo Pirotta, and Joelle Pineau. Group fairness in reinforcement
+learning. Transaction Machine Learning Research, 2023.
+[52] Andrew Silva, Rohit Chopra, and Matthew Gombolay. Cross-loss influence functions to explain deep
+network representations. In AISTATS, volume 151, pages 1-17, 2022.
+[53] Abhishek Sinha, Ativ Joshi, Rajarshi Bhattacharjee, Cameron Musco, and Mohammad Hajiesmaili.
+No-regret algorithms for fair resource allocation. In NeurIPS, 2023.
+[54] Ana-Andreea Stoica, Jessy Xinyi Han, and Augustin Chaintreau. Seeding network influence in biased
+networks and the benefits of diversity. In WWW, pages 2089-2098, 2020.
+[55] Alan Tsang, Bryan Wilder, Eric Rice, Milind Tambe, and Yair Zick.
+Group-fairness in influence
+maximization. In IJCAI, pages 5997-6005, 2019.
+[56] Min Wen and Ufuk Topcu. Constrained cross-entropy method for safe reinforcement learning. In
+NeurIPS, pages 7461-7471, 2018.
+[57] Min Wen, Osbert Bastani, and Ufuk Topcu. Algorithms for fairness in sequential decision making. In
+AISTATS, pages 1144-1152, 2021.
+[58] Jiduan Wu, Rediet Abebe, Moritz Hardt, and Ana-Andreea Stoica. Policy design in long-run welfare
+dynamics. In ICLR, 2025.
+[59] Tongxin Yin, Reilly Raab, Mingyan Liu, and Yang Liu. Long-term fairness with unknown dynamics.
+CoRR, abs/2304.09362, 2023.
+[60] Xueru Zhang, Ruibo Tu, Yang Liu, Mingyan Liu, Hedvig Kjellström, Kun Zhang, and Cheng Zhang.
+How do fair decisions fare in long-term qualification? In NeurIPS, 2020.
+A
+Omitted Details from Section 3
+A.1
+Proof of Observation 1 (No C2 category)
+Proof. We prove this by showing that the probability threshold required for positive utility is strictly higher
+than the threshold required for positive score change.
+Recall that for an individual with score x, the expected utility is E[u(x)] = p(x)U + + (1 −p(x))U −and
+the expected score change is E[∆(x)] = p(x)C+ + (1 −p(x))C−. An individual qualifies for C2 if and only if
+they satisfy the following two inequalities regarding their success probability p(x):
+p(x) ≥
+−U −
+U + −U −;
+(Profitability)
+p(x) <
+−C−
+C+ −C−.
+(Score Degradation)
+However, Assumption 2 states that U +/U −> C+/C−. Since U −and C−are negative, we can manipulate
+this inequality to compare the thresholds:
+U +
+U −> C+
+C−=⇒U +
+U −−1 > C+
+C−−1
+=⇒U + −U −
+U −
+> C+ −C−
+C−
+=⇒
+U −
+U + −U −<
+C−
+C+ −C−
+(Taking the inverse flips the inequality)
+=⇒
+−U −
+U + −U −>
+−C−
+C+ −C−.)
+(Multiplying by −1 flips the inequality back)
+Since τu =
+−U −
+U +−U −is the profitability threshold and τ∆=
+−C−
+C+−C−is the score maintenance threshold, the
+derivation above confirms that τu > τ∆. Consequently, it is impossible for any p(x) to simultaneously satisfy
+p(x) ≥τu and p(x) < τ∆, which implies that C2 is empty.
+A.2
+Proof of Proposition 1
+Proof. Definition 2 implies that category 1 individuals are the only set that has non-negative expected utility.
+Hence, excluding them will decrease the total utility. Similarly, including individuals from other categories can
+only decrease the total utility. Assumption 1 and the definition of expected utility implies that E[u(x)] ≥0
+iff p(x) ≥−U −/(U + −U −).
+A.3
+Proof of Theorem 1
+We first give the restatement of Theorem 1 before showing the proof.
+Theorem 1. Suppose the optimization problem in Equation 4 has a feasible solution. Under Assumptions 1
+and 2, in the single-step setting, there exists an optimal fair policy that is a threshold policy for each group.
+Proof. Suppose the optimal fair policy π is not a threshold. We show that there exists a threshold policy π′
+that achieves at least the utility of π while also satisfying the fairness constraint. To simplify exposition,
+we assume for all x that Dg(x) > 0 for at least one group. If this is not the case, we can remove x from X
+without affecting the utility or the fairness constraint. If π becomes a threshold policy after this change, we
+can easily create π′ from π by setting π′(x) for all removed x’s to be either 0 or 1, depending on the position
+of x and the threshold.
+Since π is not a threshold policy, there exists a group g ∈{A, B} and scores x1 and x2 such that x1 > x2,
+πg(x1) < 1, and πg(x2) > 0. We consider two cases based on the value of µ′
+g(πg) for the non-thresholding
+group g and the other group g′: (1) µ′
+g(πg) −µ′
+g′(πg′) ∈[−α, α) and (2) µ′
+g(πg) = µ′
+g′(πg′) + α.
+Case (1):
+In case (1), we assume µ′
+g(πg) −µ′
+g′(πg′) ∈[−α, α). We consider policy π′
+g that is the same as
+πg for all x ∈X \ {x1, x2}, π′
+g(x1) = πg(x1) + ϵ1 and π′
+g(x2) = πg(x2) −ϵ2 for sufficiently small ϵ1, ϵ2 ≥0
+satisfying ϵ1Dg(x1) = ϵ2Dg(x2). In words, π’ selects a higher fraction of individuals with the higher score
+of x1 and a lower fraction of individuals with the lower score x2 compared to π. We show π′ has a higher
+expected utility than π and also satisfies fairness.
+Note that the difference between the expected utility of π′ and π can be written as ϵ1Dg(x1)E [u(x1)] −
+ϵ1Dg(x2)E [u(x2)]. We show that this number is non-negative. By assumption ϵ1Dg(x1) = ϵ2Dg(x2) in the
+construction of π′ and the definition of expected utility, this difference can be written as
+ϵ1Dg(x1) (E [u(x1)] −E [u(x2)]) =
+ϵ1Dg(x1) (p(x1) −p(x2))
+ U + −U −
+,
+which is positive since p is monotone by Assumption 1 and U + −U −is positive.
+It suffices to show π′ satisfies fairness. By assumption ϵ1Dg(x1) = ϵ2Dg(x2) and the definition of expected
+change in score,
+µ′
+g(π′) −µ′
+g(π) = ϵ1Dg(x1) ((p(x1) −p(x2))
+ C+ −C−
+,
+which is positive since p is monotone by Assumption 1 and C+ −C−is positive. Moreover, this difference
+can be made arbitrarily small by setting ϵ1 as close as needed to 0. Finally, δ′(π′) = δ′(π) + µ′
+g(π′) −µ′
+g(π).
+Together with the assumption of this case that δ′(π) < α this implies δ′(π′) < α and hence π′ is also fair.
+Case (2):
+In case (2), we assume µ′
+g(πg) = µ′
+g′(πg′)+α. We consider two subcases: (2a) E [∆(x1)] E [∆(x2)] >
+0, and (2b) E [∆(x1)] E [∆(x2)] ≤0.
+Case (2a):
+For case (2a), we consider the policy π′
+g that is the same as πg for all x ∈X \ {x1, x2},
+π′
+g(x1) = πg(x1) + ϵ1 and π′
+g(x2) = πg(x2) −ϵ2 for sufficiently small ϵ1, ϵ2 ≥0 satisfying
+ϵ1 = ϵ2Dg(x2)E[∆(x2)]
+Dg(x1)E[∆(x1)] ϵ2.
+By this construction of π′ and the definition of expected change in score, the difference between µ′
+g(π′)
+and µ′
+g(π) can be written as
+ϵ2Dg(x2)E[∆(x2)]
+Dg(x1)E[∆(x1)] ϵ2
+
+Dg(x1)E[∆(x1)] −ϵ2Dg(x2)E[∆(x2)]
+= ϵ2Dg(x2)E[∆(x2)] −ϵ2Dg(x2)E[∆(x2)] = 0,
+indicating that π′ also satisfies fairness.
+It remains to show that π′ achieves a strictly higher expected utility than π. By the construction
+assumption of π′ and the definition of expected utility, the difference between the expected utility of π′ and π
+can be written as
+ϵ1Dg(x1)E[u(x1)] −ϵ2Dg(x2)E[u(x2)]
+= ϵ2Dg(x2)E[∆(x2)]
+Dg(x1)E[∆(x1)] ϵ2Dg(x1)E[u(x1)] −ϵ2Dg(x2)E[u(x2)]
+= ϵ2Dg(x2)
+E[∆(x2)]
+E[∆(x1)]E[u(x1)] −E[u(x2)]
+
+.
+Note that both ϵ2 and Dg(x2) are positive. If we show that E[∆(x2)E[u(x1)]/E[∆(x1)] > E[u(x2)], we can
+demonstrate that π′ has a strictly greater expected utility than π. Since E[∆(x1)]E[∆(x2)] > 0, they should
+have the same sign. We analyze each case separately.
+In the case where both E[∆(x1)] and E[∆(x2)] are positive, by Assumption 2, U +/U −< C+/C−. This
+indicates that
+U +
+U −> C+
+C−=⇒U + −U −
+U −
+> C+ −C−
+C−
+Multiplying both sides by p(x1) −p(x2) gives us the following set of derivations.
+(p(x1) −p(x2)) U + −U −
+U −
+> (p(x1) −p(x2)) C+ −C−
+C−
+=⇒E[u(x1)]E[∆(x2)] > E[u(x2)]E[∆(x1)]
+=⇒E[u(x1)] E[∆(x2)
+E[∆(x1)] −E[u(x2)] > 0,
+as desired. The second line multiplies both sides of the inequality by p(x1) −p(x2) > 0, and the third line is
+obtained by algebraic simplification.
+In case where both E[∆(x1)] and E[∆(x2)] are negative, the ratio E[∆(x2)]/E[∆(x1)] is positive and
+greater than 1 since the expected score change is a monotone function of score. Therefore,
+E[∆(x2)]
+E[∆(x1)]E[u(x1)] −E[u(x2)] ≥E[u(x1)] −E[u(x2)] > 0.
+Case (2b):
+In case (2b), we have that E[∆(x1)]E[∆(x2)] < 0. Since E[∆(x)] is a monotone function of the
+score by Assumption 1, then it must be that E[∆(x1)] ≥0 and E[∆(x2)] < 0. Consider two subcases: (2bi)
+E[u(x1)] < 0, and (2bii) E[u(x1)] ≥0.
+In case (2bi), where E[u(x1)] < 0, construct π′
+g such that π′
+g(x) = πg(x) for all x ∈X \ {x2} and
+π′
+g(x2) = πg(x2) −ϵ for sufficiently small ϵ. Since E[u(x1)] > E[u(x2)] by Assumption 1 and E[u(x1)] < 0,
+it follows that E[u(x2)] < 0. Reducing π′
+g(x2) by ϵ compared to πg(x2) ensures that π′ remains fair since
+µ′
+π′g < µ′
+πg. Moreover, π′
+g has a higher expected utility than πg since E[u(x2)] < 0.
+In case (2bii), where E[u(x1)] > 0, we have E[u(x2)] ≤0 because if E[u(x2)] > 0, then by Assumption 2,
+we would have E[∆(x2)] > 0, which is a contradiction. If E[u(x2)] < 0 with the same argument as (2bi), we
+can create a fair π′
+g with strictly better utility by setting π′
+g(x2) = πg(x2) −ϵ. Note that π′
+g is fair because
+µ′
+π′g < µ′
+πg. Finally, when E[u(x2)] = 0 then p(x2) =
+−U −
+U +−U −by definition of expected utility. As a result,
+E[∆(x2)] = p(x2)
+ C+ −C−
++ C−
+= C−U + −U −C+
+U + −U −
+.
+The denominator of the fraction is positive, and by Assumption 2 the numerator is positive, implying
+E[∆(x2)] ≥0, contradicting the assumption E[∆(x2)] < 0.
+A.4
+Proof of Theorem 2
+We first give a restatement of Theorem 2 before giving the proof.
+Theorem 2. Suppose X = [0, 1]. Then, in the single-step setting, PoF ≥1 −O(α).
+Proof. Consider the following set of instances where wA = 1/2, wB = 1/2, DA[x] = 1, DB[x′] for x > x′ ∈[0, 1].
+In these instances, each group is evenly represented in the population, and in each group, the distribution
+is concentrated on individuals with a group-dependent score. We select C+, C−, U +, and U −such that
+Assumption 2 is satisfied and the new scores remain in X
+Since p is a monotone function, we choose x and x′ such that p(x) = 1 and p(x′) =
+−U −
+U +−U −. This choice
+implies that E[u(x)] = U + > 0 and E[u(x′)] = 0. These choices imply x belongs to category 1 while x′ belongs
+to category 3.
+Proposition 1 implies that the optimal policy π∗selects all individuals with score x in category 1 and
+achieves an expected utility of U +/2. On the other hand, if any fair policy π exists (depending on α), it
+selects a fraction πA(x) and πB(x′) such that
+x + πA(x)E[∆(x)] + (x′ + πB(x′)E[∆(x′)]
+ ≤α.
+The utility of such a policy is πA(x)U +.
+Setting C+ = 1, C−= −C+, U + = 1, U −= −1.1, x −x′ = ε (for arbitrary small ε) implies that any fair
+policy should satisfy πA(x) ≤α −ε. Since the utility of any fair policy is proportional to πA(x), then the
+optimal fair policy sets πA(x) to
+πA(x) = min{max{0, α −ε}, 1},
+where the expression guarantees πA(x) ∈[0, 1].
+This instance gives a lower bound of 1 −(α −ε) on the PoF as claimed.
+A.5
+Proof of Theorem 3
+The original statement of Theorem 3 is as follows.
+Theorem 3. For any ϵ > 0, in the single-step setting, there exists an instance such that the total variation
+distance between DA and DB is at most ϵ, but the PoF is 1 −O(α).
+In what follows, we state Theorem 3 in a more detailed version (Proposition 2) and give the proof.
+Proposition 2. For any ϵ > 0, let Iϵ denote the set of instances such that DT V (DA, DB) ≤ϵ where DT V
+is the total variation distance. Then, in the single-step setting, maxIϵ
+
+1 −Fair-OPT+(I)
+OPT(I)
+
+≥1 −O(α) where
+Fair-OPT+(I) is the expected utility of the best non-degrading fair policy.
+Proof. The construction of the proof follows a similar template to the construction in the proof of Theorem 2.
+Again we consider two distributions such that wA = wB = 1/2, DA[x] = ϵ, DA[x′′] = 1 −ϵ, DB[x′] = ϵ, and
+DB[x′′] = 1 −ϵ for x > x′ > x′′ ∈[0, 1]. We set p(x′′) ≈0, p(x′) = 1/2, and p(x) = 1. As such, x belongs to
+category 1, x′ to category 3, and x′′ to category 4.
+By construction, DT V (DA, DB) = ϵ and Assumptions 1 and 2 are also satisfied if we set U +, U −, C+, and
+C−exactly as in Theorem 2. Since the class of fair policies is restricted to be non-degrading, no policy in
+this class can satisfy πg(x′′) > 0 for g ∈{A, B} because x′′ belongs to category 4. This reduces the analysis
+to that of Theorem 2, which results in the same bound on PoF.
+A.6
+An Upper Bound for the PoF
+Having proved multiple lower bounds, we now characterize sufficient conditions to get low price of fairness as
+in Proposition 3.
+Proposition 3. Suppose, for instance I, the following conditions hold for an ϵ ∈(0, 1/2).
+1. P
+x∈C1 DB(x)E[u(x)] ≥ε · P
+x∈C1 DA(x)E[u(x)].
+2. At least one of the following properties holds:
+• Either P
+x∈C1 DB(x)E[∆(x)] ≥µA −µB −α;
+• Or there exists a subset of individual eC3 ⊆C3 in group B, such that
+
+X
+x∈e
+C3
+DB(x)E [u(x)]
+
+≤ε ·
+X
+x∈C1
+DB[x]E[u(x)],
+and
+X
+x∈C1∪e
+C3
+DB(x)E[∆(x)] ≥µA −µB −α
+.
+Then, PoF =
+
+1 −Fair-OPT(I)
+OPT(I)
+
+≤1 −ε/4.
+Proof. We show that under such conditions, the policy that selects all individuals in C1∩B and the individuals
+in ˜C3 would be fair, and the utility would make up at most ε/2-fraction of the single-step optimal policy.
+Since the optimal fair policy is at least as good as this policy, we have an upper bound on the PoF.
+In particular, the second condition provides two sufficient conditions for which an α-fair policy selects
+all the category 1 individuals from group B. If P
+x∈C1 DB(x)E[∆(x)] ≥µA −µB −α, simply admitting
+individuals C1 ∩B would be enough. On the other hand, if the conditions in the second bullet hold, we can
+admit all individuals from C1 ∩B and eC3 to guarantee fairness.
+In either way, the utility we could gain is at least max{(1 −ε) · P
+x∈C1 DB(x)E[u(x)], ε · (1 −ε) ·
+P
+x∈C1 DA(x)E[u(x)]}. On the other hand, the utility of the optimal algorithm is at most P
+x∈C1 DB(x)E[u(x)]+
+P
+x∈C1 DA(x)E[u(x)]. Therefore, assuming w.log. that P
+x∈C1 DA(x)E[u(x)] ≥P
+x∈C1 DB(x)E[u(x)] the
+price of fairness could be bounded by
+PoF ≤1 −ε · (1 −ε) · P
+x∈C1 DB(x)E[u(x)]
+2 · P
+x∈C1 DA(x)E[u(x)]
+≤1 −ε/4,
+(using ε < 1/2)
+as desired.
+B
+Omitted Details from Section 4
+We provide the detailed analysis and proofs of the statements in Section 4.
+B.1
+A More Detailed Description of the Multi-step Objective
+We start with a more detailed characterization of the multi-step objective function. The detailed char-
+acterization is based on the tracking of score changes over the stochastic process. Let G(x)(t), t ∈[T] be
+the family of scores starting from x at the t-th time step (i.e., G(x)(1) = {x}). Note that G(x)(t) is a
+random variable depending on the randomness in each step, and we let G(x)(t) be a certain realization of
+G(x)(t) (we have discussed this in Section 4.1). Furthermore, if we fix all G(x)(t) for x ∈X, we could define
+eD(t)(x) := |{y∈G(x)(t)|y=xt}|
+|G(x)(t)|
+as the fraction of individuals with score x(t) in G(x)(t). This is important since
+we want to insist on P
+x(t)∈G(x)(t) eD(t)(x) = eD(x). For randomness in step t, we use E(1:t−1) and Pr(1:t−1) to
+denote the expectation and probability induced by the randomness of the first t −1 steps, and Et and Prt to
+denote the same notion with the randomness of the t-th step (conditioning on certain realizations of the first
+t −1 steps). The analogous D(t)
+g (x) and π(t)
+g (x(t)) for g ∈{A, B} can be defined by focusing on individuals
+from group g. The objective function in Equation 6 can be written in the alternative form as in Equation 7.
+Note that in Equation 7, we wrote x(t) ∈G(x)(t) simply as x(t) for simplicity of the notation.
+max
+ΠT E
+
+
+T
+X
+t=1
+X
+g∈A,B
+wg
+X
+x∈X
+D(t)
+g (x)π(t)
+g (x)u(x)
+
+
+= max
+ΠT
+X
+g∈{A,B}
+E
+
+wg
+T
+X
+t=1
+X
+x∈X
+X
+xt∈G(x)(t)
+πt
+g(xt) · eD(t)
+g (xt) · u(xt)
+
+
+=
+max
+{π(t)}T
+t=1
+X
+g∈{A,B}
+wg
+X
+x∈X
+T
+X
+t=1
+ 
+Et
+"X
+x(t)
+eD(t)
+g (x) · u(x(t)) · πt
+g(x(t)) | G(x)(t)
+#
+·
+Pr
+(1:t−1)
+
+G(x)(t) = G(x)(t)!
+.
+(7)
+From Equation 6, the correlation between the steps is more obvious. Here, G(x)(t) is strongly dependent
+on the realizations of previous steps.
+B.2
+Justification of Assumptions 5 and 6
+We did not provide justifications for Assumptions 5 and 6 due to space limits, and we provide the justification
+here.
+Justification of Assumptions 5.
+Assumption 5 is essentially an assumption about "stability". Here,
+the failure probability scales inversely with xmax, which directly controls the variance of the random walk.
+Furthermore, we can tolerate the failure probability up to β since β is the initial gap between the average
+scores of the advantaged and disadvantaged groups. A failure probability that is way more than β would
+effectively "cancel" the advantage of group A. In real world, this assumption corresponds to a scenario when
+individuals in C1 ∪C3 are relatively trustworthy and are expected to pay back.
+Justification of Assumptions 6.
+We use a very natural family of probability distribution, namely the
+logistic distribution, to justify the assumption. A typical logistic distribution is a monotone function with
+characterized as follows:
+p(x) = 1
+Z ·
+1 + exp(−kx),
+where k is a parameter and Z is a normalization factor. Using this formulation, we have
+1 −p(x) = 1
+Z ·
+exp (−kx)
+1 + exp (−kx) ≥exp (−kx)
+2Z
+,
+where the inequality holds since −kx ≤0. On the other hand, we have
+1 −p(x + C+) = 1
+Z ·
+exp (−kx −kC+)
+1 + exp (−kx −kC+)
+≤1
+Z · exp
+ −kx −kC+
+(exp(·) is a non-negative function)
+= 1
+Z · exp (−kx) exp
+ −kC+
+.
+Therefore, as long as exp (−kC+) ≤1
+6, the inequality will hold. For k = 1, this is true for all C+ ≥ln(6),
+which is around 1.79.
+B.3
+Technical Preliminaries
+We introduce some technical tools we used in the analysis. We start with the standard concentration
+inequalities, including Markov bound and Chernoff-Hoeffding bound.
+Proposition 4 (Chernoff-Hoeffding bound). Let X1, . . . , Xm be m independent random variables with support
+in [0, 1]. Define X := Pm
+i=1 Xi. Then, for every t > 0,
+Pr (|X −E [X]| > t) ≤2 · exp
+
+−2t2
+m
+
+.
+More generally, for random variables {Xi}m
+i=1 supported on {[ai, bi]}m
+i=1, we can also write the concentration
+of the average value as follows.
+Proposition 5 (Hoeffding bound beyond 0-1 variables). Let X1, . . . , Xm be m independent random variables
+with support in [ai, bi] for Xi. Define ¯X := 1
+m · Pm
+i=1 Xi.
+P
+ | ¯X −E
+ ¯X
+
+| ≥ϵ
+
+≤2 exp
+
+−
+2m2ϵ2
+Pm
+i=1(bi −ai)2
+
+Next, we state the property of Bernstein’s inequality for the summation of the random variables.
+Proposition 6 (Bernstein’s inequality). Let X1, . . . , Xm be m independent random variables such that
+maxi |Xi| ≤M almost surely. Then, for every t > 0,
+P
+ 
+n
+X
+i=1
+Xi
+ ≥t
+!
+≤2 exp
+
+−
+t2/2
+Pn
+i=1 E[X2
+i ] + Mt/3
+
+B.4
+The Detailed Proofs
+B.4.1
+Proof of Lemma 2 (The Structural Lemma)
+Proof. We prove the lemma by iteratively conditioning on the high-probability events for the individuals to
+succeed. We define the set of scores with increments compared to the previous time step as follows.
+X (t)
+increase = ∪x{x(t) ∈G(x)(t) | x(t) ≥x(t−1)}.
+Here, we slightly abuse the notation to let x(t) and x(t−1) be the score of a certain individual so that the
+increment is well-defined. By our investment policy, we have X (t)
+increase ⊆X (t−1)
+increase ⊆· · · ⊆X (1)
+increase, where
+X (1)
+increase contains all scores. In other words, for the set of scores in X (t)
+increase, the random process will always
+increase the score and the probability p(x) of success. Therefore, if we define the random variable
+∆(x)(t) =
+(
+C+, with probability 1 −pfail
+C−, with probability pfail
+.
+We have that ∆(x)(t) ≥∆(x(t)) for x(t) ∈X (t)
+increase. We work with the random variable ∆(x)(t) to avoid
+dependency.
+We first show inductively that the fraction of the scores we account for is at most 600·( 1
+2)t−1 ·pfail fraction
+with probability at least 199/200 for the t-th time step. For the t-th step, define X (t) as the set of scores that
+are not increased in this round, and we have E
+hX (t)
+
+i
+≤pfail · ( 1
+3)t−1 X (t)
+increase
+ by applying Assumption 6.
+To elaborate, we can (1 −p(x(t)
+min)) as the probability for score decrement for the minimum score among
+scores in X (t)
+increase. Using this notation, we have (1 −p(x(1)
+min)) = pfail. Therefore, we can write
+E
+hX (t)
+
+i
+=
+X
+x∈X (t)
+increase
+(1 −p(x))
+(by definition)
+≤(1 −p(x(t)
+min)) ·
+X (t)
+increase
+
+(using p(x) as a monotone function)
+= (1 −p(x(t−1)
+min
++ C+)) ·
+X (t)
+increase
+
+(by the dynamics of score changing)
+≤1
+3 · (1 −p(x(t−1)
+min ))
+(by Assumption 6)
+≤(1
+3)2 · (1 −p(x(t−2)
+min )) ·
+X (t)
+increase
+
+(recursively applying the above calculation)
+≤· · · · · ·
+≤(1
+3)t−1 · (1 −p(x(1)
+min)) ·
+X (t)
+increase
+
+= (1
+3)t−1 · pfail ·
+X (t)
+increase
+ ,
+as claimed. Therefore, by applying the Markov inequality, we have
+Pr
+X (t)
+ ≥600 · (1
+2)t−1 · pfail ·
+X (t)
+increase
+
+
+≤
+600 · (1/3
+1/2)t−1 =
+600 · (2
+3)t−1.
+Therefore, we could apply a union bound and show that
+Pr
+X (t)
+ < 600 · (1
+2)t−1 · pfail ·
+X (t)
+increase
+ for all t
+
+≥1 −
+∞
+X
+t=1
+600 · (2
+3)t−1 ≥1 −
+600 = 199/200.
+We condition on this high-probability event for the rest of the proof. We now analyze the deviation of the
+scores for x(t) ∈X (t)
+increase. Note that for all such scores, we have x(t) ≥x + Pt
+τ=1 ∆(x)(τ). For any τ, we have
+M = (C+ −C−) and E
+
+(∆(x)(τ))2
+≤O
+ (C+ −C−)2
+. Therefore, by Bernstein’s inequality, we have that
+Pr
+
+x(t) ≤E
+h
+x(t)i
+−
+√
+t · (C+ −C−) polylog(t · |C1 ∪C3|)
+
+≤exp
+ 
+−
+eO
+ √
+t · (C+ −C−)
+2
+(C+ −C−)2 · t + eO
+ √
+t · (C+ −C−)2
+!
+≤
+200t · |C1 ∪C3|,
+where eO(·) hides polylog(t · |C1 ∪C3|) terms. Therefore, we can apply a union bound over the possible
+number of scores in C1 ∪C3 and the t steps to obtain that with probability at least 199/200, there is
+x(t) ≥E
+h
+x(t)i
+−
+√
+t · (C+ −C−) polylog(t · |C1 ∪C3|)
+≥t · C+ −
+√
+t · (C+ −C−) polylog(t · |C1 ∪C3|),
+if we do not care about the maximum scores. The second inequality is true since we have already conditioned
+on the set of X (t)
+increase. Therefore, as t →∞, the scores in X (t)
+increase would eventually reach xmax, and never
+decrease due to Assumption 6. In other words, with probability at least 1 −1/200 −1/200 = 99/100, all but
+O(pfail) fraction of scores would fail to reach xmax, as desired.
+B.4.2
+Proof of Theorem 4
+We give the (re-)statement and proof of Theorem 4 as follows.
+Theorem 4. Assume Assumptions 3, 4, 5, and 6 hold. Then, with probability at least 99/100, for sufficiently
+large T, the long-term investment policy guarantees δ′(T) < |µA −µB| −β/2, where |µA −µB| is the initial
+gap of the mean scores of the groups, and β is the parameter in Assumptions 4 and 5.
+Furthermore, we have that limT →∞PoF = O(pfail) as long as α ≥max{ ΓC4
+A
+|A| , ΓC4
+B
+|B| } + β
+Proof. At a high level, the statement is true because eventually, every individual who is given the allocation
+would reach the maximum score. This would mean that the remaining gap between the two groups is
+restricted to the individuals with scores in C4. Due to Assumption 3, the PoF goes to 0 in the limit as long
+as the fairness restriction is less restrictive than the gap in category 4.
+We now formalize the above intuition. We write the expression in Assumption 4 in the form of
+|A ∩C1|
+|A|
+· µC1
+A + |A ∩C3|
+|A|
+· µC3
+A
+
+−
+|B ∩C1|
+|B|
+· µC1
+B + |B ∩C3|
+|B|
+· µC3
+B
+
+> β.
+Let δ = |µA −µB| be the initial gap between the mean scores, we write it as a summation of conditional
+terms:
+δ = |µA −µB|
+= µA −µB
+(initially group A has a higher score)
+= |A ∩C1|
+|A|
+· µC1
+A −|B ∩C1|
+|B|
+· µC1
+B
++ |A ∩C3|
+|A|
+· µC3
+A −|B ∩C3|
+|B|
+· µC3
+B
++ |A ∩C4|
+|A|
+· µC4
+A −|B ∩C4|
+|B|
+· µC4
+B .
+For any x ∈C1 ∪C3, since the long-term investment policy selects x at each step, and u(x) and ∆(x) are
+monotone functions of x, we have that limT →∞E[G(x)(T )] = {xmax} for all but O(pfail) · |C1 ∪C3| of the
+scores by Lemma 2. Define Xdecrease as the set of scores that ever decrease during the process, and δdecrease
+as the gap between the scores induced by the scores in Xdecrease. Note that for each score x ∈Xdecrease, the
+difference in score it could induce is at most xmax (the scores cannot be negative). Therefore, the total score
+gaps induced by the scores in Xdecrease are at most |Xdecrease|
+|X|
+· xmax, which means
+δ′(T) ≤|A ∩C4|
+|A|
+· µC4
+A −|B ∩C4|
+|B|
+· µC4
+B + |Xdecrease|
+|X|
+· xmax.
+Conditioning on the high-probability event of Lemma 2, which implies |Xdecrease|
+|X|
+≤O(pfail), we could bound
+the change of the gaps between scores with
+lim
+T →∞δ −δ′(T) ≥|A ∩C1|
+|A|
+· µC1
+A −|B ∩C1|
+|B|
+· µC1
+B
++ |A ∩C3|
+|A|
+· µC3
+A −|B ∩C3|
+B
+· µC3
+B
+−O(pfail) · xmax
+≥β −
+β
+Nxmax
+· xmax
+(applying Assumptions 4 and 5)
+> β/2.
+Rearranging the terms gives us the desired statement.
+For the second part of the statement, note that after the scores in (C1 ∪C3) \ Xdecrease reach xmax, we
+have
+δ′(T) ≤|A ∩C4|
+|A|
+· µC4
+A −|B ∩C4|
+|B|
+· µC4
+B + |Xdecrease|
+|X|
+· xmax
+≤max{µ4
+A, µ4
+B} + β,
+where the last inequality holds due to assumption 5. Therefore, as long as α ≥max{µC4
+A , µC4
+B } + β, the
+long-term investment policy is already fair. For the optimal (potentially unfair) policy Π∗, by Assumption 3,
+it would also aim to bring all scores in C1 and C3 to xmax. Therefore, let T0 be the first step for all scores in
+C1 and C3 to achieve xmax by the investment policy. Before T0, on each day, the loss of the utility is at most
+(U + −U −) · |A ∪B|. After T0, there is no gap between the utility of policies, and we let the daily utility gain
+be U ∗. Therefore, we have Fair-OPT(I) ≥(T −T0) · U ∗· (1 −O(pfail)) · |C1 ∪C3| −T0 · (U + −U −) · |C1 ∪C3|
+and OPT(I) ≤T · U ∗· |C1 ∪C3|, which implies
+lim
+T →∞PoF
+≤lim
+T →∞1 −((T −T0) · U ∗· (1 −O(pfail)) −T0 · (U + −U −))
+T · U ∗
+= lim
+T →∞1 −T · (1 −O(pfail)) · U ∗
+T · U ∗
+(T0, U +, U −are finite)
+= O(pfail),
+which is as desired.
+B.4.3
+Proof of Theorem 5
+We give the (re-)statement and proof of Theorem 5 as follows.
+Theorem 5. Assume Assumptions 3, 4, and 7 hold. For any sufficiently large T and δ > 0, suppose we have
+m ≥5(C+ −C−) · log T in the multi-opportunity setting. Then, with probability at least 99/100, the even
+simpler long-term investment policy guarantees δ′(T) < δ and PoF = 0 as long as α ≥max{µC4
+A , µC4
+B }.
+Proof of Theorem 5. For each score x(t), we prove the concentration of the change of scores due to the
+multiple opportunities provided to each individual. By Hoeffding bound supported on [ai, bi] (Proposition 5
+in Appendix B.3), we have
+Pr
+∆(x(t)) −E
+h
+∆(x(t))
+i ≥ε
+
+≤exp
+
+−
+ε2m2
+Pm
+i=1(bi −ai)2
+
+≤exp
+
+−
+ε2m
+(bi −ai)
+
+(bi −ai ≤C+ −C−)
+≤exp(−5ε2 log T).
+(m ≥5(C+ −C−) log T.)
+Plugging ε = 1, we have
+Pr
+∆(x(t)) −E
+h
+∆(x(t))
+i ≥1
+
+≤
+100T .
+Therefore, we could apply a union bound, and show that with probability at least 99/100, it is always true
+that ∆(x(t)) > E
+
+∆(x(t))
+
+−1. By Assumption 7, we have E
+
+∆(x(t))
+
+≥1, which means ∆(x(t)) > 0 for all
+steps with probability at least 99/100.
+The rest of the proof is very similar to the proof of Theorem 4: by a similar calculation, we could obtain
+that
+δ −δ′(T) ≥|A ∩C1|
+|A|
+· µC1
+A −|B ∩C1|
+|B|
+· µC1
+B
++ |A ∩C3|
+|A|
+· µC3
+A −|B ∩C3|
+B
+· µC3
+B
+> 0.
+(applying Assumption 4)
+For the PoF, note that as long as α ≥max{µ4
+A, µ4
+B}, the "even simpler" investment policy is fair. As such,
+we could again let T0 be the first step for all scores in C1 and C3 achieve xmax by the investment policy. A
+utility lower bound on the optimal fair policy would therefore be ((T −T0) · U ∗−T0 · (U + −U −)) · |C1 ∪C3|.
+In comparison, an upper bound for the optimal polity is U ∗· T · |C1 ∪C3|.
+lim
+T →∞PoF ≤lim
+T →∞1 −(T −T0) · U ∗−T0 · (U + −U −)
+T · U ∗
+= 0,
+(T0, U +, U −are finite)
+which is as claimed by the proposition.
+C
+Omitted Details from Section 5
+C.1
+Additional Implementation Details
+In all experiments, we use WA = 0.7 and WB = 0.3, where A is the group with the higher mean. For the
+synthetic data, the scores are drawn from two Gaussian distributions and then post-processed to integers
+ranging from 0 to 100. For the single-step setting, we use 80 and 60 as the means of groups A and B,
+respectively. For the multi-step setting, we use 90 and 70 as the means of groups A and B, respectively. In
+all experiments, we set the variance of both distributions to 30. For the baseline instance for the synthetic
+dataset, we use U + = 2, U −= −2, C+ = 2, C−= −1. For the baseline instance for the FICO dataset, we
+use U + = 1, U −= −2, C+ = 7, C−= −14. For the high risk and cost instance for the synthetic dataset,
+we use U + = 2, U −= −20, C+ = 2, C−= −10. All experiments are written in Python and were run on a
+MacBook.
+Figure 3: Price of Simplicity (PoS) for Different datasets and parameters.
+C.2
+Sensitivity Analysis
+Motivated by Theorem 1, we also implemented an algorithm that searches over all possible thresholds for
+each group. This algorithm needs to potentially randomize at the threshold (see Definition 3). Beyond
+Assumption 1, the optimality of single-step threshold policies also requires Assumption 2. We examine
+robustness to violations of this assumption by decreasing C−in the synthetic and FICO datasets while holding
+other parameters fixed. For a given α, we measure the Price of Simplicity (PoS), defined as 1 minus the ratio
+of the utility achieved by the fair thresholding solution to that of the LP-based fair solution, which does not
+rely on Assumption 2. PoS lies in [0, 1], with lower values indicating smaller utility loss from thresholding.
+Figure 3 depicts the PoS for different combinations of α and dataset for the thresholding algorithm that does
+not randomize at the threshold. We observe that PoS peaks under mild violations but rapidly approaches 0
+as violations become severe. With randomizing over 10 values at the threshold, we observe that PoS remains
+close to 0 for all settings (not pictured), demonstrating the effectiveness of the simple thresholding policies.
+C.3
+Multi-Step Setting
+Figure 4 is the replica of Figure 2a over a time step of T = 50 and using only a population of N = 10, 000. We
+observe that with a smaller population size, we still see the same behavior but the error bars are significantly
+larger.
+Figure 4: The average gap between group means over time.

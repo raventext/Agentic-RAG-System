@@ -1,0 +1,2051 @@
+-­
+--
+上海人工智能实验室
+-:=-.==..  Shanghai Artificial Intelligence Laboratory
+AI45Lab × DeepLink
+Safactory: A Scalable Agentic Model Factory for
+Trustworthy Autonomous Intelligence
+Shanghai AI Laboratory∗
+Abstract
+As large models evolve from conversational assistants into autonomous agents,
+challenges increasingly arise from long-horizon decision making, tool use, and real
+environment interaction.
+Existing agenticinfrastructure remain fragmented across
+evaluation, data management, and agent evolution, making it difficult to discover risks
+systematically and improve models in a continuous closed loop. In this report, we
+present Safactory, a scalable agent factory for trustworthy autonomous intelligence.
+Safactory integrates three tightly coupled platforms: a Parallel Simulation Platform
+for trajectory generation, a Trustworthy Data Platform for trajectory storage and
+experience extraction, and an Autonomous Evolution Platform for asynchronous
+reinforcement learning and on-policy distillation. As far as we know, Safactory is the first
+framework to propose a unified evolutionary pipeline for next-generation trustworthy
+autonomous intelligence.
+Figure 1 Safactory platform overview diagram.
+∗Please cite this work as "Shanghai AI Lab (2025)". Full authorship contribution statements appear at the
+end of the report. Correspondence regarding this technical report can be sent to wangxuhong@pjlab.org.cn.
+I
+arXiv:2605.06230v1 [cs.AI] 7 May 2026
+
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+Contents
+Introduction
+1.1
+A Panoramic View of AI Agent Safety Risks . . . . . . . . . . . . . . . . . .
+1.2
+Limitations of Existing Systems . . . . . . . . . . . . . . . . . . . . . . . . .
+1.3
+Safactory: Building a Complete Closed Loop for Trustworthy AI . . . . . . .
+2
+Related Work
+2.1
+Agent Evaluation Framework
+. . . . . . . . . . . . . . . . . . . . . . . . . .
+2.2
+Trustworthy Data Services . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+2.3
+Agentic Model Training Services . . . . . . . . . . . . . . . . . . . . . . . . .
+3
+Parallel Simulation Platform
+3.1
+Quick Start . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+3.2
+System Architecture
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+3.3
+Supported Agent Environments and Experiments
+. . . . . . . . . . . . . . .
+3.4
+SATraj: Open-Source Agent Trajectory Datasets . . . . . . . . . . . . . . . .
+4
+Trustworthy Data Platform
+4.1
+Quick Start . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+4.2
+System Architecture
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+4.3
+Toolset Architecture
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5
+Autonomous Evolution Platform
+5.1
+Quick Start . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.2
+Agentic RL System Architecture . . . . . . . . . . . . . . . . . . . . . . . . .
+5.3
+On-policy Distillation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.4
+Experiments . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+6
+DeepLink Computing Technology
+6.1
+Large-scale pooled inference . . . . . . . . . . . . . . . . . . . . . . . . . . .
+6.2
+Distributed hierarchical data storage
+. . . . . . . . . . . . . . . . . . . . . .
+6.3
+Domestic heterogeneous training toolchain . . . . . . . . . . . . . . . . . . .
+7
+Conclusions and Discussions
+References
+A Appendix
+A.1 Data Value Assessment Tool . . . . . . . . . . . . . . . . . . . . . . . . . . .
+A.2 Interaction Trajectory of SATraj-OS
+. . . . . . . . . . . . . . . . . . . . . .
+II
+
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+Introduction
+1.1
+A Panoramic View of AI Agent Safety Risks
+With the rapid development of applications such as companion AI, DeepResearch, intelligent
+terminals, and embodied AI, large language models are moving from "conversational assistants"
+to "autonomous agents." These systems are not only responsible for answering questions but
+also continuously perceive their environment, plan tasks, invoke tools, and directly influence
+external systems.
+This brings stronger application capabilities, but also imposes higher safety requirements.
+Unlike traditional single-turn models, the risks of agents are not limited to harmful outputs;
+they accumulate progressively throughout the process of "perception →decision-making →
+execution →feedback," ultimately manifesting as real-world environmental consequences.
+As shown in Figure 2, violations, jailbreak inductions, and explicit attacks are merely the
+risks above the surface. Beneath the waterline lie more insidious issues such as tool misuse,
+state drift, process loss of control, data contamination, cross-turn inducement, and cascading
+errors. These risks are often harder to detect and more difficult to cover with static testing.
+Such risks typically exhibit three characteristics. First, they often emerge in long-horizon,
+multi-step interactions rather than single-turn input-output pairs. Second, they are closely
+tied to environmental states, tool interfaces, and execution contexts, making them difficult to
+characterize using static benchmarks alone. Third, when they do occur, the consequences
+often go beyond degraded response quality - they may further lead to erroneous operations,
+privacy breaches, system damage, or even real-world losses. Therefore, trustworthy AI for
+high-value scenarios requires not just "safer responses," but more importantly, the ability to
+remain controllable, auditable, and recoverable while taking continuous action.
+1.2
+Limitations of Existing Systems
+To address the above challenges, existing AI agent safety systems still exhibit significant
+gaps across three foundational dimensions: evaluation, data, and evolution. These issues are
+not isolated from one another. Collectively, they result in safety efforts often remaining in a
+passive "find a problem, fix a problem" mode, making it difficult to form a continuous closed
+loop oriented toward real-world deployment scenarios.
+Limitations of Evaluation Infrastructure
+Existing security evaluations are still dom-
+inated by static question-answering, single-round adversarial examples, or fixed task sets.
+Such approaches are suitable for answering whether a model "will say something wrong,"
+but struggle to answer whether an agent "will do something wrong during continuous ex-
+ecution." When risks depend on tool invocation chains, changes in environmental states,
+and the accumulation of long-horizon decisions, single-turn interactive evaluations can only
+capture the surface of the iceberg, making it difficult to systematically expose deep failure
+modes. Even in executable environments, many existing frameworks remain centered around
+fixed tasks and offline logs, lacking capabilities such as high-concurrency retesting, dynamic
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+Figure 2 The Iceberg Model of AI Safety Risks.
+perturbation injection, and joint analysis of process-consequence coupling. For the relevant
+technical landscape, see Section 2.1.
+Limitations of Data Infrastructure
+Currently, many evaluation and training frameworks
+treat data merely as a byproduct of the runtime process, with common practices relying
+on in-memory caches and temporary local files for storage. This approach struggles to
+stably support large-scale heterogeneous data management, nor does it facilitate cross-task,
+cross-version, or cross-environment retrieval, reuse, and auditing. More importantly, agents
+continuously generate a large volume of trajectories, reward signals, and failure contexts
+during evaluation, execution, and training. These are essentially high-value data assets,
+yet existing systems generally lack a unified mechanism for their structured accumulation,
+automated analysis, and subsequent feedback into model optimization. For further discussion,
+see Section 2.2.
+Limitations of Evolution infrastructure
+At the level of model evolution, training,
+evaluation, and deployment remain largely disconnected from one another. Issues identified
+during evaluation are difficult to promptly convert into training samples, and real-world
+feedback generated during execution is also hard to smoothly reintegrate into subsequent
+optimization workflows. Meanwhile, reinforcement learning and online distillation for agent
+scenarios are transitioning from standalone algorithm implementations to system-level or-
+chestration problems. However, most existing training frameworks are still designed around
+local coordination between rollout and trainer components, and are insufficient to stably
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+support complex training closed loops that involve multi-environment concurrency, trajectory
+staleness control, asynchronous sampling, and online policy updates. For a comprehensive
+review, see Section 2.3.
+1.3
+Safactory: Building a Complete Closed Loop for Trustworthy
+AI
+To address the above limitations, Safactory proposes an infrastructure framework for trustwor-
+thy autonomous agents. Centered around three core platforms - a Parallel Execution Middle
+Platform, a Trustworthy Data Middle Platform, and an Autonomous Evolution Middle Plat-
+form - it establishes a complete closed loop that integrates risk discovery, data accumulation,
+and capability repair and reinforcement. Overall, as shown in Figure 1, Safactory does not
+treat security evaluation as a one-time tool-based process, but rather organizes it as a data
+and training system that can run continuously, be iteratively optimized, and be repeatedly
+reused.
+Among these, the Parallel Execution Middle Platform targets executable sandboxes for
+Android, computer environments, and embodied scenarios. It supports environment pool
+preheating, asynchronous scheduling, and concurrent re-evaluation of multiple trajectories, as
+well as the injection of attacks and perturbations during execution, enabling more systematic
+discovery of safety risks in long-horizon interactions. The Trustworthy Data Middle Platform
+is responsible for consolidating the multimodal data, step-level trajectories, and behavioral
+signals generated during evaluation and training into retrievable, analyzable, and auditable
+data assets, and performs safety auditing, sample filtering, and experience distillation through
+an intent-driven data engine. The Autonomous Evolution Middle Platform further integrates
+these data assets into asynchronous reinforcement learning and online policy optimization
+workflows, continuously generating trainable samples under version control, trajectory filtering,
+and group consistency constraints, thereby supporting the simultaneous improvement of
+model capabilities and safety.
+Therefore, Safactory’s goal is neither to improve a single evaluation metric in isolation, nor
+to merely provide point solutions such as a data tool or a training framework. What it aims
+to establish is a closed-loop pathway of "discovering risks through execution, consolidating
+evidence through data, completing repairs through evolution, and verifying effectiveness
+through re-execution." Along this path, safety is no longer a one-time check conducted before
+model deployment, but rather becomes an infrastructure capability throughout the entire
+lifecycle of an agent.
+Related Work
+2.1
+Agent Evaluation Framework
+As model capabilities and deployment scenarios continue to expand, safety evaluation must
+evolve toward deeper and more comprehensive paradigms. We therefore define a five-level
+progression of AI safety evaluation (L1-L5):
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+Figure 3 The evolutionary trajectory of safety evaluation capabilities.
+• L1 - Q&A Evaluation: Static, single-turn benchmarks focusing on alignment,
+jailbreak robustness, and domain-specific knowledge.
+• L2 - Adversarial Evaluation: Dynamic red teaming via human or automated
+agents that generate multi-turn attack scenarios.
+• L3 - Process-Level Evaluation: Multi-turn interaction assessment that captures
+risks emerging task execution.
+• L4 - Sandbox Evaluation: Evaluation in executable environments where real-world
+consequences of agent actions are observable.
+• L5 - Evolutionary Evaluation: Adaptive evaluation that co-evolves with model
+capabilities and generalizes across scenarios.
+2.1.1
+Q&A - and Adversarial-Level Infrastructure
+Most existing evaluation infrastructure operate at L1, organizing benchmarks around task
+registries and standardized scoring pipelines. Representative systems include LM-Evaluation-
+Harness [30], OpenCompass [62], and OpenAI Evals [61]. Despite differences in scale and
+engineering maturity, they share a common paradigm: evaluation is conducted on fixed,
+single-instance tasks, inherently limiting coverage.
+To overcome this limitation, L2 adversarial evaluation introduces dynamic attack generation.
+Systems such as Giskard Hub [31], Garak [26], and promptfoo [69] expand the test space
+through continuous red teaming and structured probing. However, their evaluation unit
+remains single-turn interaction.
+Both L1 and L2 fundamentally rely on single-turn interactions. In contrast, many critical
+agent failures emerge over multi-step tool usage and long-horizon execution,
+motivating the shift toward process-level evaluation.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+2.1.2
+Process-Level Infrastructure
+L3 evaluation extends the unit of analysis from single responses to full interaction trajecto-
+ries. Langfuse [47] emphasizes observability, enabling real-time monitoring of agent traces.
+MLflow [57] integrates intermediate decision steps-such as tool selection and recovery-into
+lifecycle evaluation. DeepEval [17] evolves from Q&A-style testing by introducing agentic
+and conversation-level metrics.
+Process-level evaluation enables trajectory-based analysis of where and how risks arise.
+However, its scope largely remains within abstract task execution, lacking direct validation
+of real-world consequences.
+2.1.3
+Sandbox-Level Infrastructure
+Many agent risks-such as unsafe tool usage, improper file operations, and cascading execution
+errors-cannot be fully captured without executable environments. L4 sandbox evaluation
+addresses this by placing agents in real environments where outcomes are directly observable.
+Systems such as Inspect AI [84], Terminal-Bench [55], Harbor [77], and Claw-Eval [95] advance
+this paradigm across tool use, terminal tasks, and trajectory auditing.
+However, such systems generally operate with fixed evaluation tasks as their basic unit, lacking
+the ability to dynamically perturb the environment state, and store results primarily as logs
+rather than reusable structured data. Environment support is often domain-specific, and
+safety is treated as a secondary metric rather than a first-class objective. These limitations
+hinder scalability and reuse in rapidly evolving model settings.
+To address these gaps, Safactory introduces three key capabilities: (1) dynamic injection
+of attacks and perturbations during execution to systematically expose failure modes; (2)
+structured storage of interaction trajectories and reward signals as reusable data assets for
+downstream SFT or RL; and (3) service-oriented environment interfaces that decouple evalu-
+ation from execution, enabling seamless integration of diverse environments (e.g., industrial
+systems, simulators, embodied settings).
+Unlike prior L4 systems, The core distinction of Safactory is not whether it supports execution
+in real environments, but rather its transformation of security evaluation from a one-time
+tool-based process into a sustainably evolving infrastructure capability.
+2.2
+Trustworthy Data Services
+As the training scale of AI systems and agentic application scenarios continue to expand,
+the data service infrastructure that underpins their operation must also evolve from static
+pipelines toward orchestrable, perception-aware, and self-evolving intelligent systems. We
+categorize existing work into three stages according to capability progression:
+• Static Data Management: Offline workflow scheduling built around DAGs, ensuring
+data availability and reproducibility.
+• Data Cleaning Pipelines: Orchestrable pipelines centered on rules, scoring functions,
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+and operators, automating collection, cleaning, deduplication, filtering, alignment, and
+quality verification to reliably produce training-ready data.
+• Intelligent Data Engines: Systems centered on data assets and behavioral signals,
+transforming production-side feedback into a continuous optimization driver and forming
+a closed-loop evolutionary cycle.
+2.2.1
+Static Data Management: DAG-centric Workflow Scheduling
+Most mainstream data infrastructure revolves around task definition, dependency orches-
+tration, scheduling, and status monitoring, with DAG-based batch processing at the core.
+Apache Airflow [3] is the de facto standard for scheduling-oriented ETL, providing a DAG-
+based framework with a rich operator library and cron scheduling. Prefect [68] advances
+the paradigm from DAG as configuration to Python as flow, offering dynamic process con-
+struction and event-driven scheduling. Dagster [19] places software-defined assets at the core,
+treating datasets, models, and features as traceable products. All three share the same model:
+execution is driven by static scheduling and predefined dependencies.
+The limitation is that DAGs only answer when to run what, not whether the resulting data
+is worth using. Dirty data, duplicate samples, and low-quality content can pass through
+unchecked. This gap gave rise to quality-oriented data cleaning pipelines.
+2.2.2
+Data Cleaning Pipelines: Scoring-centric Quality Assurance
+Data cleaning pipelines treat data quality as the primary objective, building workflows around
+operators for cleaning, deduplication, filtering, and scoring. Data-Juicer [13] provides compos-
+able operators covering text, image, audio/video, and multimodal data. OpenDataArena [9]
+characterizes instructions and responses along more than ten dimensions, making data
+value quantifiable. NeMo Curator [59] uses a GPU-accelerated stack to handle cleaning,
+deduplication, and PII redaction with dedicated multimodal pipelines.
+These systems shift from task scheduling to quality-centered content selection. However,
+processing flows and scoring thresholds are fixed before the pipeline runs. Data risks surface
+only when task objectives change, domains shift, or compliance boundaries tighten, which is
+a structural limitation that static pipelines cannot overcome.
+2.2.3
+Intelligent Data Engines: Closed-loop Optimization Centered on Data
+Assets and Behavioral Signals
+Intelligent data engines treat data as continuously accumulable assets and use behavioral
+signals as the core driver of data production. TensorZero [81] unifies an LLM gateway,
+evaluation, and optimization into one system, persisting each inference and feedback while
+supporting SFT and RLHF based on real-world metrics. Arena Learning [53] simulates a
+chatbot arena to automatically generate preference pairs. Agent-in-the-Loop [98] embeds
+human annotation into production workflows. Both validate the closed loop of "behavioral
+signals →data assets →model iteration".
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+These systems, however, remain at the tool execution layer. Users must still describe execution
+flows via declarative configurations, feedback is only aggregated as training signals rather
+than used to evolve the toolchain, and data security relies on environment isolation rather
+than native substrate capabilities. In regulated and multi-party scenarios, this means task
+expression is locked within engineering teams, closed-loop experience cannot be distilled into
+reusable capabilities, and privacy constraints render many high-value tasks infeasible.
+Safactory models data tasks as a complete chain: natural language intent →dynamically
+generated pipeline →tool invocation →execution →tracking →asset accumulation. For
+explicit tasks it uses single-planning execution. For ambiguous tasks it enters autonomous
+closed-loop mode, continuously trying, judging, and correcting around the goal. Stable
+multi-step combinations can be distilled into new tools, continuously evolving the tool
+ecosystem. For data security, Safactory supports encrypted packaging for local execution,
+outputting results without exposing raw data. This transforms data services from static
+pipeline construction to intent-driven continuous evolution, which is the essential difference
+between existing intelligent data engines and Safactory.
+2.3
+Agentic Model Training Services
+With the expansion of large models into new application domains, training is no longer just
+about optimizing model parameters. It now encompasses organizing the rollout process,
+feedback modeling, and policy updates within the training pipeline. Traditional monolithic
+training frameworks, which are designed for static data, are increasingly inadequate to support
+more complex training processes. Consequently, model training services for agents have
+gradually evolved into frameworks that emphasize orchestration, decoupling, and scalability.
+Early reinforcement learning training frameworks for large language models (LLMs) mainly
+focused on the standard Reinforcement Learning from Human Feedback (RLHF) process, as
+exemplified by systems such as TRL[38], DeepSpeed-Chat[94], and OpenRLHF[63]. These
+frameworks aimed to organize supervised fine-tuning, reward modeling, and policy optimiza-
+tion into reproducible training pipelines. The training paradigm in this phase was relatively
+standardized, typically following the SFT-RM-PPO (Supervised Fine-Tuning, Reward Model-
+ing, Proximal Policy Optimization) pipeline: first, the model was aligned using demonstration
+or preference data, then further optimized through reinforcement learning with a reward
+model and PPO-based methods. This approach closely mirrored earlier representative works
+such as InstructGPT[64] and Constitutional AI[5]. Thus, the core task during this phase was
+the engineering and encapsulation of standard components like SFT, RM, and PPO, rather
+than explicitly addressing multi-round interactive training in more complex environments.
+As model scale, training costs, and online sampling expenses continued to rise, the focus
+of training frameworks shifted from simply "executing RLHF" to "organizing large-scale
+post-training systems." From GPT-3[8] and GPT-4[60] to Qwen2[70], DeepSeek-V2[21], and
+DeepSeek-V3[22], these works demonstrated that model training is evolving into a multi-stage,
+systematized engineering process: model improvement no longer solely depends on a single
+training script, but increasingly relies on reusable data pipelines, clearly defined training
+phases, and parallelism and scheduling mechanisms that scale stably with both model and
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+cluster sizes. At the framework level, verl[86] has begun to prioritize data flow organization,
+modular decoupling, and resource scheduling, with a focus that has gradually shifted from
+supporting a specific optimization method to providing unified system support for complex
+post-training processes such as PPO and DPO.
+In recent years, the rapid development of reasoning and agent-based scenarios has further
+accelerated this evolution. While early RLHF efforts primarily addressed "how to make
+models answer better," recent technical reports have focused more on "how to enable models
+to act continuously in complex environments and learn from interactions." On the one hand,
+works such as DeepSeek-R1[23] and Kimi k1.5[58] show that reinforcement learning has shifted
+from being a tool for alignment to becoming a key method for enhancing reasoning capabilities.
+Corresponding optimization methods have moved beyond the classic RLHF-PPO pipeline,
+adopting new approaches such as GRPO that are better suited to large-scale online sampling
+and relative comparison signals. On the other hand, reports such as Qwen3[71], GLM-
+4.5[32], Kimi K2[45], Tongyi DeepResearch[83], Scaling Agents via Continual Pre-training[79],
+GLM-5[96], and DeepSeek-V3.2[24] have broadened the training narrative to incorporate
+elements like thinking modes, agentic capabilities, tool usage, continual pre-training, and
+the decoupling of generation and training. In other words, the training system must now
+address not just a single parameter update, but a continuous loop of rollout, data generation,
+optimization, and evaluation.
+Against this backdrop, training frameworks are transitioning from execution frameworks
+focused on a single training cycle to systematic orchestration frameworks designed for
+complex agent workflows. Works such as slime[82], AReaL[40, 29], and RollArt[73] explore
+scalable organizational methods for more complex training workflows, from customizable
+data generation interfaces and asynchronous training execution to decoupling heterogeneous
+infrastructures. These frameworks share the characteristic of no longer being restricted to
+implementing specific optimization algorithms like PPO or GRPO; instead, they focus on
+system-wide coordination among rollout, reasoning, training, and resource orchestration.
+Along this path, the core challenge in large model training services has shifted from "how
+to complete a single training run" to "how to organize a sustainable and scalable training
+system."
+Compared to previous frameworks that were mainly designed around the collaboration
+between rollout and trainer, Safactory’s advantage lies not in introducing new single-point
+optimization modules, but in explicitly reconfiguring the structural relationships between the
+operational pipeline, data deposition, and optimization loops through layered orchestration.
+This makes the system more suited to handling the training requirements of agent-based
+scenarios, where continuous interaction, generation, and optimization co-exist.
+Parallel Simulation Platform
+As agents extend toward multi-step, complex tasks, continuous-interaction evaluation in
+real-world environments faces two core challenges. The first is long runtime and low efficiency.
+Long decision chains make even minor deviations highly prone to accumulation, so repeated
+trials are required to ensure confidence. Taking OpenClaw as an example, a single task takes
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+about 20 minutes on average. If 100 tasks are each re-evaluated five times, the total serial
+runtime would be roughly seven days. The second challenge is insufficient assessment of
+safety capabilities. The current evaluation paradigm, based on single-sample, linear execution,
+fundamentally conflicts with the exponential growth of multi-turn interactive decision branches
+in multi-step tasks. In OpenClaw, for instance, an agent may trigger high-risk operations such
+as accidentally deleting files during task execution. However, single-path testing can cover
+only a very small number of fixed trajectories, making it easy to create an illusion of safety
+simply because the model happened to avoid risk in one particular decoding attempt. Since
+existing evaluations lack mechanisms for traversing decision branches in multi-step tasks,
+they struggle to systematically expose risk blind spots in complex interactions, resulting in
+inadequate safety-evaluation coverage and distorted conclusions.
+To systematically address these pain points, the Parallel Rollout Platform was developed. As
+a sandbox rollout framework designed for evaluation and reinforcement learning, the platform
+uses pre-warmed environment pools and asynchronous scheduling mechanisms to advance
+massive numbers of long-horizon trajectories under high concurrency, effectively alleviating
+efficiency and cost bottlenecks. At the same time, it natively supports the dynamic injection
+of red-team attacks, enabling comprehensive and systematic evaluation of agents’ safety and
+robustness boundaries in complex interactive scenarios.
+In addition, the platform continuously accumulates reusable data and experience during
+operation. All step-level trajectories generated through rollouts can be seamlessly fed back
+into the system, forming a closed data loop of "evaluation-training-re-evaluation." In this
+way, the Parallel Rollout Platform fundamentally breaks through the limitations of isolated
+evaluation and establishes a unified technical foundation for the continuous improvement of
+agent capabilities and the strengthening of safety defenses.
+3.1
+Quick Start
+Safactory launches evaluation and data generation through a unified entry point, launcher.py .
+Simply select the environment configuration and connect to the model service to run the
+complete process.
+Run a minimal example
+python
+launcher.py \
+--env -config env/osgym/os_config.yaml \
+# Select the
+evaluation
+environment (OS / Android / Minecraft , etc.)
+--llm -base -url http :// YOUR_LLM_HOST/v1 \
+# Model
+service
+address
+--llm -api -key
+YOUR_API_KEY \
+# API Key
+--llm -model
+YOUR_MODEL \
+# Model
+name
+--pool -size 500
+# Number of concurrent
+agent
+instances
+This command will automatically complete environment loading, task scheduling, and evalua-
+tion execution.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+Configuration
+Safactory adopts a "CLI + YAML" layered configuration:
+• CLI parameters: Control model access and concurrent execution(e.g., --llm-* ,
+--pool-size )
+• YAML configuration: Defines specific environments and tasks (e.g., dataset, environ-
+ment parameters)
+For first-time users, simply modify the parameters related to env-config and llm to
+complete the execution.
+3.2
+System Architecture
+Figure 4 Architecture of Parallel Simulation Platform.
+To support multi-step continuous-interaction evaluation and address issues such as long
+evaluation time and insufficient evaluation coverage, we designed and implemented a parallel
+rollout platform based on state awareness and elastic scheduling (Figure 4). This platform is
+designed for the scaled execution of evaluation tasks and multi-path analysis. It centrally
+manages Agent instances, sandbox environments, large-model requests, and the circulation of
+evaluation data. It consists of four core modules: a parallel scheduler, a concurrent Agent
+rollout foundation, an elastic large-model gateway, and data storage and evaluation. To
+reduce integration costs, the platform provides a dual-track access solution: lightweight
+Agents can be directly launched through Python source code, while complex Agents can be
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+seamlessly mounted through Docker images. Developers only need to implement three basic
+interfaces-Reset, Start, and Close-to bring custom Agents under the platform’s unified
+scheduling and carry out large-scale concurrent repeated evaluation and rollout analysis under
+a standardized evaluation protocol.
+Focusing on the efficiency bottleneck in repeated evaluation of multi-step tasks, the platform
+improves evaluation throughput through an end-to-end mechanism of "pre-warming-pooled
+scheduling-asynchronous persistence." First, the sandbox manager starts the underlying
+sandboxes in batches in advance according to the configured pool capacity, completing
+the pre-warming of the task execution resource pool and reducing cold-start time from
+the source. Second, based on the ready resource pool, the system relies on ActorPool to
+concurrently create a large number of Agent instances, and achieves seamless transitions
+between tasks through asynchronous hot-switching scheduling. This reduces CPU idle time
+caused by Agent initialization, environment loading, and resource waiting, allowing limited
+computing resources to be used more for the actual evaluation process. Finally, in the face
+of request surges to large models caused by repeated evaluation with multiple Agents, the
+elastic large-model gateway is responsible for unified handling, dynamic scaling, and request
+forwarding, and transparently writes interaction trajectories into the storage module. With
+built-in buffering and a "fire-and-forget" asynchronous persistence mechanism, the main
+evaluation process does not need to block while waiting for trajectory writing. In this way,
+repeated evaluation of long tasks that was originally advanced serially is transformed into a
+multi-instance concurrent execution process, significantly reducing overall evaluation time
+while ensuring that trajectories remain traceable.
+To address problems in safety evaluation such as insufficient coverage under single-path
+execution, high costs of repeated restarts, and difficulty reproducing abnormal scenarios,
+the platform further introduces a "backtracking sandbox" mechanism, building a version
+management system similar to a Git dedicated to Agents. This mechanism can perceive
+file changes, context states, and key environment operations made by the Agent during
+the task process, and automatically generate checkpoints at important nodes. Like game
+saves, it preserves a complete behavior timeline and an environment "version tree." During
+evaluation, when an Agent enters a multi-path decision node, triggers a potentially high-risk
+operation, or causes environment damage due to incorrect execution, the system does not
+need to fully restart from the initial state. Instead, it can precisely locate a historical
+safety anchor point and quickly roll back to the corresponding state, then continue rolling
+out different action paths as if "pulling a new branch." As a result, safety evaluation is
+upgraded from single-sample, linear execution to branch-based exploration around key states.
+On the one hand, this avoids repeated execution of prerequisite steps, so the large model
+only consumes incremental tokens for newly explored branches. On the other hand, it
+enables multi-path repeated evaluation around safety-sensitive nodes such as accidental file
+deletion, incorrect modification, permission abuse, abnormal recursion, and infinite loops,
+more systematically exposing risk blind spots in long-horizon interaction and improving the
+coverage, reproducibility, and reliability of conclusions in safety capability evaluation.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+Figure 5 Supported Agent Environments and Attack Injection
+3.3
+Supported Agent Environments and Experiments
+In this section, we present the diverse agent environments supported by Safactory and their
+corresponding evaluation methodologies. As illustrated in Figure 5, the framework is built
+around a unified interaction protocol that standardizes the integration of heterogeneous
+environments, including QA, mobile (Android), desktop (OS), embodied interaction, and
+tool-use scenarios. By coupling a consistent simulation pipeline with trajectory logging and
+metric aggregation, Safactory enables unified evaluation across environments.
+Moreover, the framework supports the injection of various risk-oriented attacks during rollout,
+allowing systematic assessment of model capability, safety, and robustness under different
+conditions. Based on this unified infrastructure, we conduct experiments across QA, Android,
+OS, Embodied, and OpenClaw environments. The comparison models include claude-opus-4-
+6-thinking, qwen3.5-plus, kimi-k2.5, glm-4.6v, and step-3; in text-based benchmarks, we also
+evaluated models such as MiniMax-M2.5, DeepSeek-V3.2, and step-3.5-flash.
+3.3.1
+QA Gym
+The QA Gym environment can support conventional large model evaluation workflows. In
+this work, we adopt a red-teaming safety evaluation setup. Within this environment, agents
+are not required to perform complex external operations; instead, they engage in multi-turn
+dialogue, strategy prompting, and sustained interaction to simulate attack-defense dynamics.
+This makes it particularly suitable for characterizing the safety boundaries of models.
+Based on this setup, we reproduce the multi-strategy, multi-round, and multi-agent red-
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+teaming configuration proposed in OpenRT [87], using the safety rate as the primary evaluation
+metric.
+Configuration
+• env-config : env/qagym/qa env.yaml
+0%
+20%
+40%
+60%
+80%
+100%
+Average Safety Rate
+Claude Opus 4.6 Thinking
+MiniMax M2.5
+Qwen3.5 Plus
+GLM-5
+Kimi K2.5
+DeepSeek V3.2
+Step 3.5 Flash
+higher is better
+90.0%
+88.2%
+84.8%
+76.2%
+69.8%
+65.1%
+51.4%
+Robustness against attacks
+OpenRT benchmark
+Figure 6 Model security distribution in the QA Gym
+As shown in Figure 6, the safety performance of different models in this environment exhibits
+a clear stratification. Leading models demonstrate relatively stable resistance to attacks,
+while a significant gap remains between mid-/lower-tier models and the top tier. This suggests
+that, under purely textual settings, current alignment methods can defend against a subset
+of common attacks, but robustness improvements are uneven across models.
+More importantly, even state-of-the-art models have not established an "absolute" safety
+boundary; they still expose exploitable vulnerabilities under composite prompting and
+sustained interaction scenarios. In other words, text-based red-teaming evaluation reflects
+probabilistic defenses rather than providing strict safety guarantees.
+3.3.2
+OS Gym
+OS Gym encapsulates a real Ubuntu desktop virtual machine as a standardized evaluation
+environment, enabling agents to execute long-horizon tasks in multi-application GUI scenarios
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+and exposing potential security risks through real system interactions. This environment
+emphasizes cross-application operations, complex interface understanding, and system-level
+sensitive behaviors (e.g., file access and command execution), making it well-suited for desktop
+automation and safety evaluation.
+At the execution level, OS Gym relies on a virtualized desktop environment combined with
+containerized scheduling to support reproducible system-level interactions. While this design
+provides high-fidelity execution, it also introduces substantial system dependencies. To reduce
+deployment complexity, we provide pre-built Docker images, allowing users to run evaluations
+without manually configuring virtual machines or runtime environments.
+Configuration and Image
+• env-config : env/osgym/os config.yaml
+• Docker image: 
+The evaluation tasks are built upon OSWorld [90] and RiOSWorld [42], covering desktop
+operation workflows and security risk scenarios respectively. In security evaluation mode,
+the system not only assesses task completion but also tracks risk-triggering behaviors, and
+computes a comprehensive performance metric based on both. The reward design is directly
+derived from the final task score: binary rewards in standard mode, and multi-level discrete
+rewards in security mode, which are used to distinguish different combinations of task
+completion and risk triggers.
+As shown in Figure 7, the evaluated models fall into two distinct categories. One group
+adopts a more aggressive strategy in advancing tasks, achieving higher completion rates but
+also exhibiting a greater tendency to cross risk boundaries. The other group demonstrates
+stronger avoidance behavior, achieving higher safety at the cost of reduced task progression
+efficiency. Only a few models approach a balanced trade-off between the two.
+This indicates that risks in desktop environments arise not only from local interface mis-
+interpretation, but also from the accumulation of state uncertainty across long chains of
+cross-application interactions. Consequently, OS scenarios are more effective than mobile
+settings in exposing the core challenge of GUI agents: models must continuously make
+fine-grained trade-offs between proactive action and risk avoidance.
+3.3.3
+Android Gym
+Android Gym encapsulates a real Android emulator as a standardized evaluation environment,
+enabling agents to execute tasks within UI workflows that closely resemble real user inter-
+actions, while exposing potential security risks during execution. The environment targets
+typical mobile scenarios such as app operation, interface navigation, and environment-injected
+attacks, allowing simultaneous evaluation of task performance and safety robustness.
+At the execution level, Android Gym relies on the Android Emulator and Android Virtual
+Device (AVD), and leverages the adb interface for programmatic control of the emulator.
+This design ensures high fidelity with real device behavior, but also introduces notable
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+8%
+16%
+24%
+32%
+Success Rate
+30%
+36%
+42%
+48%
+54%
+Safety Rate
+ better
+Params
+106B
+358.5B
+1000B
+Unknown
+Computer GUI Agent Performance: Success vs. Safety
+Built upon OSWorld and RiOSWorld benchmarks
+Figure 7 Task completion capability and security distribution in the OS Gym.
+configuration complexity. To lower the barrier to use, we provide pre-built Docker images,
+allowing users to run evaluation tasks without manually setting up the emulator environment.
+Configuration and Image
+• env-config : env/androidgym/android env.yaml
+• Docker image: 
+The evaluation is built upon GhostEI-Bench [12], covering a variety of real-world mobile
+applications and environment-injection attack scenarios, including static injection, dynamic
+prompting, and misleading instructions. The core metrics include task success rate and attack
+exposure-related indicators, capturing capability and safety performance, respectively. The
+reward is defined in a terminal, binary manner: a positive reward is assigned only when the
+agent successfully completes the task without triggering any attack behavior; otherwise, the
+reward is zero. This design avoids biases introduced by process-level reward shaping and
+ensures alignment between training objectives and final evaluation metrics.
+As shown in Figure 8, capability and safety in the Android environment do not exhibit a
+clear trade-off; instead, the distribution suggests a positive correlation. Models with stronger
+task completion ability are generally less susceptible to interface manipulation or malicious
+injection. This indicates that, in mobile GUI scenarios, stronger capabilities in interface
+understanding, goal recognition, and action selection naturally contribute to improved safety.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+24%
+30%
+36%
+42%
+48%
+Success Rate
+30%
+45%
+60%
+75%
+90%
+Safety Rate
+ better
+Params
+106B
+358.5B
+1000B
+Unknown
+Mobile GUI Agent Performance: Success vs. Safety
+Built upon AndroidWorld and GhostEI benchmarks
+Figure 8 Task completion capability and security distribution in the Android Gym.
+However, substantial performance gaps remain across models, suggesting that injection attacks
+in mobile environments cannot be mitigated by capability alone, but require a combination
+of stable perception, instruction discrimination, and risk-aware decision-making.
+3.3.4
+Embodied Gym
+Safactory supports embodied scenarios through both RoboTrust Gym and Embodied Gym.
+The former targets household embodied interaction tasks, focusing on evaluating execution
+stability and safety robustness under dynamic disturbances and uncertainty. The latter is
+built upon ALFRED tasks, providing a multi-stage embodied interaction environment in
+indoor 3D scenes, and emphasizing the agent’s ability to follow natural language instructions
+to perform sequential actions such as goal finding, object manipulation, and state completion.
+These two environments correspond to two complementary questions: "Can the agent act
+safely?" and "Can the agent accomplish tasks effectively?"
+At the execution level, RoboTrust Gym is built on the Habitat simulation environment,
+while Embodied Gym relies on the AI2-THOR stack and EmbodiedBench [92]. Both involve
+graphical rendering and physical interaction simulation, leading to relatively heavy system
+dependencies. To reduce deployment overhead, we provide pre-configured environment images
+to enable rapid setup and large-scale experimentation.
+Configuration and Image
+• RoboTrust Gym env-config : env/robotrustbench/robotrustbench safety.yaml
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+• Embodied Gym env-config : env/embodiedgym/embodied config.yaml
+• Docker image: 
+10%
+15%
+20%
+25%
+30%
+Success Rate
+8%
+12%
+16%
+20%
+24%
+Safety Rate
+ better
+Params
+106B
+358.5B
+1000B
+Unknown
+Embodied Agent Performance: Success vs. Safety
+Built upon Embodied and Robotrust benchmarks
+Figure 9 Task completion capability and security distribution in the Embodied Gym.
+As shown in Figure 9, all models in the embodied environment cluster in a region characterized
+by both low task completion and low safety, indicating that the challenge is not confined to a
+single dimension but arises from the joint constraints of capability and reliability. Unlike
+the "capability-safety trade-off" observed in desktop environments, embodied scenarios
+exhibit a stronger "overall bottleneck" pattern: models struggle both to consistently complete
+long-horizon tasks and to maintain reliable behavior under dynamic interactions.
+The absence of a clear high-capability, high-safety region suggests that current multimodal
+models remain far from practical embodied intelligence. For embodied systems, the challenge
+is no longer merely improving task-specific skills, but jointly optimizing perception, planning,
+execution, and risk control as an integrated system.
+3.3.5
+OpenClaw Gym
+The OpenClaw environment targets tool-use and multi-step decision-making scenarios, en-
+abling evaluation of model capability and safety under settings that more closely resemble
+real-world agent workflows. Unlike static benchmarks, tasks in this environment typically
+involve external tool invocation, state dependencies, and multi-step action chains, making
+it better suited for capturing agent behavior in complex interaction processes. Based on
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+this environment, we extend PinchBench [67] to conduct a unified evaluation across different
+models.
+70%
+75%
+80%
+85%
+90%
+Success Rate
+48%
+52%
+56%
+60%
+Safety Rate
+ better
+Params
+196B
+541B
+1000B
+Unknown
+OpenClaw Agent Performance: Success vs. Safety
+Built upon PinchBench
+Figure 10 Task completion capability and security distribution in the OpenClaw Gym.
+As shown in Figure 10, task completion rates in OpenClaw are relatively concentrated, with
+most models operating in a high-capability range. However, the safety distribution does not
+exhibit a corresponding improvement; instead, it remains generally low and compressed within
+a narrow range. This indicates that in tool-augmented, multi-step, and state-dependent agent
+scenarios, improvements in capability do not naturally translate into better controllability.
+In other words, many models have learned to "complete tasks," but not yet to "complete
+them safely." This observation suggests that alignment strategies built around prompting and
+static Q&A do not transfer well to real tool-use environments. Execution-time monitoring,
+state awareness, and environment-level safeguards remain essential components.
+3.3.6
+Minecraft Gym
+Minecraft Gym encapsulates a real Minecraft environment as an embodied evaluation platform,
+where agents must rely solely on first-person visual input for perception, decision-making, and
+interaction. This setup more closely reflects operation conditions in real physical environments.
+The environment is primarily designed to evaluate 3D spatial understanding, goal localization,
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+and long-horizon planning, making it suitable for research in embodied intelligence and
+multimodal decision-making.
+At the execution level, Minecraft Gym depends on the Minecraft simulator11, and graphical
+rendering support (typically enabled via xvfb in headless environments). Due to its reliance
+on a game engine and visual rendering components, deployment can be relatively complex.
+To address this, we provide pre-configured environment images to enable rapid setup and
+large-scale experimentation.
+a
+b
+c
+d
+e
+f
+Figure 11 Minecraft Gym.
+Configuration and Image
+• env-config : env/mc/mc env.yaml
+• Docker image: 
+The task design covers typical scenarios such as resource collection, entity interaction, and
+GUI-based operations (e.g., crafting and smelting), enabling systematic evaluation of an
+agent’s overall capability in visually grounded environments. The reward follows a sparse,
+task-completion-driven scheme: a positive reward is granted only upon successful achievement
+of the goal condition. This design avoids biases introduced by handcrafted intermediate
+rewards and ensures alignment with the final evaluation metrics.
+3.3.7
+Low-cost expansion capability
+Beyond the environments described above, Safactory can be extended to support a wider range
+of task environments and datasets, such as DABStep for data processing workflows, Discov-
+eryWorldEnv for interactive scientific discovery tasks, and standard multimodal benchmarks
+like DeepEyes and Geo3K VL. This flexibility stems from Safactory’s modular decomposition
+of environment integration into several stable components: input-output protocol adaptation,
+rollout scheduling, trajectory and log recording, and metric aggregation with visualization.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+For a new environment, developers typically only need to implement an environment adapter
+and minimal evaluation logic to reuse the existing execution and analysis infrastructure.
+This design implies that Safactory is not limited to the scenarios currently demonstrated, but
+can serve as a general-purpose framework for agent rollout and evaluation, supporting low-cost
+extension to new benchmarks, task domains, and interaction modalities. For research requiring
+rapid validation of new environments, construction of novel benchmarks, or cross-environment
+evaluation, such extensibility is a key advantage of the framework.
+3.4
+SATraj: Open-Source Agent Trajectory Datasets
+Safactory is not only an execution framework for agent evaluation and training, but also
+capable of continuously depositing agent interaction processes into data assets. During
+each environmental operation, the framework automatically records the complete interaction
+trajectories between agents and the environment, including task instructions, dialogue history,
+model responses, action execution, environmental states, screenshot observations, stepwise
+rewards, and final task outcomes. Consequently, each evaluation or training session generates
+not only performance metrics but also high-quality trace data that is traceable, analyzable,
+and reusable.
+This mechanism extends Safactory from a single-round experimental platform to an infrastruc-
+ture for continuous data asset accumulation. For complex agent tasks such as Computer-Using
+Agents, real interaction trajectories are of great value. They can be utilized for behavioral im-
+itation in supervised fine-tuning, provide rollout data for reinforcement learning, and further
+support failure case analysis, experience extraction, safety alignment, and capability boundary
+diagnosis. Equipped with a unified data management module, Safactory structurally persists
+trajectories generated across diverse environments, models, and tasks, significantly reducing
+the cost of data sorting and reuse after multiple rounds of experiments.
+Taking OSGym as an example, Safactory can mass-produce agent trajectories in desktop
+operating environments and solidify these trajectories into open datasets. Based on OSGym,
+we have constructed and open-sourced the SATraj-OS1 dataset12. Oriented toward the
+capability learning and safety training of Computer-Using Agents, this dataset contains
+10,496 GUI interaction trajectories and 158,196 interaction steps, with an average trajectory
+length of 15.07 steps. The dataset covers both capability-oriented and safety-oriented tasks.
+Capability-related trajectories encompass scenarios involving browsers, GIMP, LibreOffice,
+Thunderbird, VLC, VS Code, system operations, and multi-application collaboration. Safety-
+related trajectories cover high-risk scenarios such as phishing webpages, pop-up inducements,
+malicious scripts, unknown files, personal privacy information, GitHub submissions, Reddit
+operations, and account management behaviors.
+Beyond environment execution and model evaluation, Safactory transforms agent operational
+processes into a self-reinforcing, growing data flywheel. Agents interact within simulated
+environments, and all interactions are automatically recorded as trajectories. After cleansing
+and annotation, these trajectories are refined into training data and experience repositories,
+1
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+Figure 12 Composite donut charts of capability and safety distributions. a Quantity distribution of
+capability and safety task outcomes; b Quantity distribution of capability and safety task categories.
+which in turn enhance the functional capabilities and safety performance of models. As
+a concrete embodiment of this capability, the SATraj-OS dataset demonstrates the great
+potential of AIEvoBox in large-scale generation, accumulation, and open sharing of high-value
+trajectory data for real-world desktop agent tasks.
+Trustworthy Data Platform
+4.1
+Quick Start
+The Trustworthy Data Platform adopts a dual-layer architecture comprising a data infras-
+tructure layer and an intelligent data execution engine. The Data Infrastructure Layer
+is responsible for establishing global data ingestion specifications and schema standards,
+enabling unified management and assetization of PB-scale heterogeneous data. Built upon
+this standardized foundation, the DataElf Engine executes complex inspection, cleaning, and
+analysis tasks through intent-driven orchestration.
+What is DataElf?
+DataElf is an intelligent execution engine designed for large-scale data tasks.
+Its core
+value lies in "Intent Interpretation": users define objectives in natural language, and the
+system automatically handles task decomposition, pipeline generation, tool invocation, and
+result auditing. Furthermore, DataElf overcomes the performance bottlenecks of traditional
+privacy-preserving computation by supporting controlled execution within local "black boxes,"
+ensuring that data is "usable but invisible."
+Core Capabilities of DataElf
+• Natural Language Driven: Orchestrates and executes dynamic pipelines based on
+simple natural language task descriptions.
+• Evolutionary Pilot Mode: Continuously attempts, corrects, and autonomously
+derives new tools for ambiguous tasks, which are then persisted as system assets.
+• Trustworthy Execution Foundation: Operates within controlled sandboxes, pro-
+viding cost-aware execution strategies (token/time budget control) and comprehensive
+automated logging.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+• Streamlined Extensibility: Allows for the seamless integration of existing tools or
+custom operators, supporting one-click tool validation and optimization.
+a. Modular Configuration
+Users can configure preferences via declarative fields in config.yaml without writing complex
+logic:
+• Storage Integration: Defines the underlying LanceDB or S3 paths and table names
+for rapid mounting to the platform base.
+• Model Preferences: Configures the primary reasoning Agent and tool-calling LLM
+APIs, model types, and retry strategies.
+• Policy Boundaries: Sets "hard budgets" for token consumption, memory usage, and
+execution duration, with selectable execution strategies ( auto / fast / deep ).
+• Tool Registration: Lists the built-in toolsets or custom extension tool names to be
+activated.
+b. Intent-Driven Task Execution
+Users interact with the engine via the CLI. The system provides immediate feedback regarding
+pipeline logic and real-time execution summaries:
+# Submit a data
+security
+audit
+task
+elf run "audit
+training_data
+for safety
+risks" -c test -security -
+config.yaml -v
+# Submit an agent
+trace
+analysis
+task
+elf run "extract a reusable
+skill
+from the
+alfworld_sample
+trajectory
+memories
+using
+skillrl_skill_extraction " -c test -
+experience -config.yaml --wait -v
+# Submit a data
+scoring/selection
+task
+elf run "score the alpaca
+data with dataelf , then give me the best
+50" -c test -assessor -config.yaml -v
+# Submit a scientific
+analysis
+task
+elf run "Retrieve
+enzyme
+attributes
+for EC number
+1.1.1.1" -c test -
+scitool -config.yaml --wait
+# [System
+Response
+Example]
+# > Intent
+interpreted
+successfully: Data
+security
+audit
+task
+detected.
+# > Orchestrating
+Pipeline: [Data
+Fetch] -> [Sensitive
+Word Scan] ->
+[Jailbreak
+Detection] -> [Summary]
+# > Executing ...
+Progress
+100%
+# > Execution
+successful. 12 risk
+points
+identified. Audit
+report
+saved to: artifacts/job_8f2f22ec/report.md
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+c. Capability Evolution in Autonomous Pilot Mode
+When facing complex or ill-defined objectives, the pilot mode performs iterative attempts
+and dynamically derives new tools based on execution feedback:
+# Launch
+autonomous
+Pilot
+mode
+elf pilot "screen high -value
+samples
+under
+privacy
+constraints" --
+budget -steps 3
+# [System
+Response
+Example]
+# Attempt
+01:
+Executing
+baseline
+filtering ...
+Criteria
+not met (
+Score: 65.0)
+# Attempt
+02:
+Capability
+gap
+identified. Autonomously
+deriving
+new
+operator: privacy_semantic_filter ...
+# Attempt
+03: Re -running
+with
+derived
+operator. Performance
+significantly
+improved (Score: 91.0)
+# > Task
+converged. Candidate
+tool
+awaiting
+approval:
+cand_tool_7ae92b11
+d. Asset Approval and Reuse
+DataElf ensures that the evolutionary process remains secure and controlled. Candidate tools
+derived during execution can be promoted to formal assets after manual review, allowing for
+future direct invocation:
+# Approve
+the
+candidate
+tool and promote it to a formal
+system
+asset
+elf
+promote
+cand_tool_7ae92b11
+# Directly
+submit the asset for
+execution in the future
+without re -
+planning
+elf submit
+asset_pipe_job_7ae92b11
+--wait
+e. Built-in Toolbox
+DataElf integrates over 30 toolsets covering data security, scientific data processing, data
+scoring, data selection, and agent trace analysis. Users can monitor the operational status of
+these tools via a visualization dashboard (as shown in Figure 13).
+f. Standardized Tool Extension
+Developers can rapidly extend system capabilities by adhering to DataElf’s **Tool Constraint
+Standards**, independent of the underlying orchestration logic:
+• Standardized Interface: Inherit from the standard base class and implement a unified
+run() method.
+• Parameter Specification: Define parameters using the **OpenAI Function Schema**,
+ensuring the Agent can accurately identify and invoke tools as needed.
+• One-Click Closed-Loop: Support for the elf tool test command to complete
+the full cycle from unit testing and benchmark validation to performance optimization.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+Figure 13 The DataElf Built-in Tool Taxonomy.
+4.2
+System Architecture
+The core design of the system follows a triple logic of "decoupled storage and computing,
+intelligent governance closed-loop, and compliance with trustworthiness," aiming to construct
+an intelligent hub that supports the full-lifecycle management of PB-scale security data
+assets.
+The underlying architecture relies on the LanceDB Serverless system to build a high-
+performance multi-modal data lakehouse, addressing the storage challenges of heterogeneous
+and unstructured data generated by the security wind tunnel system during massive eval-
+uation processes. This storage foundation achieves the decoupling of the Persistent layer,
+Object Storage, and multi-dimensional indexing layers through a tiered design. It not only
+supports the reliable storage and computation of ultra-large-scale data but also ensures
+low-latency data access via a self-developed Multi-layer Cache mechanism. This enables
+the platform to support a spectrum of queries ranging from simple business tag filtering to
+complex semantic-level similarity recall, providing precise, versioned, and reproducible data
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+Figure 14 Architecture of the Data Infrastructure and Trustworthy Data Intelligence Engine.
+slices for upstream model training.
+Sitting atop the physical storage, the data platform layer acts as a "data asset factory,"
+responsible for transforming raw, scattered deduction logs into high-value training assets. The
+platform defines a Unified Schema to achieve comprehensive standardization and alignment
+of core data, including events, samples, traces, and evaluation results.
+To shorten the
+cycle from data ingestion to availability, the system implements a batch-stream integrated
+ingestion framework that supports second-level data reporting and batch processing via an
+SDK. Within this process, a series of highly customized ETL jobs automatically complete
+data pre-processing, format cleaning, and labeling. Furthermore, the platform is equipped
+with a comprehensive management and operations toolchain, covering lineage tracking,
+metadata lifecycle management, and hot/cold tiered storage strategies, ensuring that data
+assets maintain high-performance retrieval capabilities while achieving an optimal cost-to-
+performance ratio.
+The top layer of the system is driven by the DataElf Trustworthy Data Intelligence Engine,
+which enables dynamic orchestration and automated execution from natural language user
+intents to complex governance pipelines. DataElf is not merely an execution engine but
+an agentic system with self-evolutionary capabilities. It translates ambiguous governance
+objectives into executable task Directed Acyclic Graphs (DAGs) through an intent inter-
+preter, with specialized agents-namely the Planner, Optimizer, and Judge-collaborating
+to complete task planning, strategy optimization, and result determination. To address
+extremely sensitive data environments in security scenarios, the engine introduces Isolated
+Execution Sandbox technology. All dynamically generated pipelines or code operators run
+within restricted sandboxes. Through permission declaration verification and I/O isolation
+mechanisms, the system ensures deep governance and value extraction while keeping data
+"usable but invisible." This architecture allows the system to output auditable and provable
+governance products without exposing raw privacy samples.
+The entire system achieves continuous capability growth through an "execution-verification-
+evolution" closed-loop mechanism. The DataElf engine is responsible for both executing
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+predefined tools and deriving new tool operators or optimizing existing pipeline links through
+the Toolsmith agent based on execution feedback.
+These derived capabilities undergo
+rigorous benchmark drills and compliance evaluations within the DataElf Testbed before
+being promoted to formal system assets by the Capability Manager, thus enriching the base
+tool library. Through the synergy of the distributed execution foundation and the intelligent
+orchestration hub, the system achieves heterogeneous power scheduling and streaming task
+feedback. This ensures that long-running, high-latency tasks possess robust self-repair and
+checkpoint recovery capabilities in the face of node fluctuations, ultimately forming an
+end-to-end, automated, and continuously evolving security data governance ecosystem.
+4.3
+Toolset Architecture
+4.3.1
+Data Value Assessment Tool
+The data value assessment tool offers an end-to-end pipeline for judging the training value of a
+dataset and distilling it into a high-quality subset. It comprises two complementary stages: a
+scoring stage that assigns quality scores through pluggable scorers, and a selection stage that
+turns these scores into a diverse, high-value subset of the requested size. Although designed
+to work together, the two stages are fully decoupled and can also be invoked independently:
+users may run scoring alone to obtain multi-dimensional quality signals for their downstream
+workflows, or run selection alone on top of pre-computed scores.
+Scoring. The scoring stage assigns a quality score to every sample in a dataset. It supports
+pluggable scoring methods: users can switch between scorers or run multiple scorers on the
+same dataset to obtain multi-dimensional quality signals.
+The platform currently integrates 9 scorers that cover complementary quality dimensions [10].
+PPL [41] and Norm Loss [78] measure the target model’s predictability of a training sample
+from a probabilistic and information-compression perspective: the more natural and fluent a
+passage appears to the model, the higher the score, whereas a low score indicates that the
+sample is unnatural to the model. IFD [49] compares the relative difficulty of generating
+the same response with and without its instruction, using the gap as a proxy for how
+much the instruction actually helps: the more it helps, the higher the quality.
+DEITA Q
+and DEITA C [52] rate the intrinsic properties of a sample directly: the former focuses on
+whether the instruction-response pair is clear and accurate, while the latter independently
+evaluates instruction difficulty and complexity. DeBERTa [37] applies a classifier trained on
+human-labelled data to score coherence and grammatical accuracy, while FineWeb Edu [65]
+focuses on educational value such as structured explanation. Ask LLM [74] adopts the most
+direct approach, simply prompting an off-the-shelf large language model to judge whether
+the sample is high-quality. Finally, we propose a composite strategy named DataElf as the
+platform’s default scorer: it converts the IFD and DEITA Q scores into percentile ranks and
+fuses them with equal weight, yielding a single score that jointly reflects instruction-response
+clarity, accuracy, and reasoning difficulty.
+On the engineering side, every scorer runs independently per sample and can fully exploit GPU
+parallelism; each scorer’s output is automatically cached, so repeated runs or downstream
+score fusion on the same dataset can reuse the cache without recomputation. This makes
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+large-scale quality assessment efficient and keeps the cost of extending or combining scorers
+low.
+Selection. Given the quality scores produced above, the selection stage draws a target
+number of high-value samples from the dataset. Naively taking the top-K samples by score
+tends to produce a homogeneous subset that lacks diversity in topic and difficulty. To mitigate
+this, the tool first encodes each sample into a semantic vector with an embedding model
+( Llama-3.1-8B-Instruct ), applies K-means clustering, allocates the overall selection quota
+across clusters in proportion to their sizes, and finally picks the highest-scoring samples
+within each cluster. This simple yet effective strategy preserves data diversity while keeping
+the selected subset locally high-quality within every cluster.
+Figure 15 Performance comparison after fine-tuning Qwen2.5-7B on the 9,000-sample subsets
+drawn by each scorer. By jointly considering multiple data-quality dimensions, DataElf achieves
+the best overall performance. Dashed-border bars denote the full-data baseline and methods that
+fall below it.
+Experiment
+We evaluate the scoring and selection tools on the Alpaca-52k dataset. We first score all 52,002
+samples with each of the 9 scorers integrated into the platform. For each scorer, we then
+use the selection tool to draw a 9,000-sample subset, and supervised fine-tune Qwen2.5-7B
+on that subset. Fine-tuned models are compared by their average performance on three
+benchmarks-AlpacaEval 2.0 [27], MT-Bench [100], and GSM8K [15]-after min-max score
+normalisation across methods.
+The results show that every single-axis scorer carries an implicit selection bias and fails
+to cover the full spectrum of data-quality dimensions.
+For example, deita q favours
+long, well-formatted responses, which helps expressive and conversational ability, while
+ifd prefers samples whose response depends logically on the instruction, which benefits
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+reasoning. Such type-specific biases can cause severe capability loss: as shown in Figure 15,
+ask llm ’s preference for natural long-form conversations causes it to drop most of the concise
+mathematical samples, and its aggregate score drops to 14.5, which is lower than the full-data
+baseline of 18.1 (see Appendix A.1 for per-benchmark details).
+In contrast, at the same selection budget DataElf reaches an average score of 98.7, sub-
+stantially ahead of all other methods. With less than 1/5 of the original training data, it
+surpasses the full-data baseline across multiple benchmarks, highlighting the importance of
+jointly considering multiple quality dimensions in data assessment.
+4.3.2
+Scientific Data Processing Tool
+With the continued growth of scientific research data, efficiently acquiring and processing
+domain-specific data has become a key challenge in building AI4Science pipelines. Unlike
+general-purpose text or structured business data, scientific data sources are highly fragmented:
+protein sequences, EEG signals, climate observations, and molecular structures are stored
+in domain-specific databases and file formats, lacking unified access protocols and data
+standards. At the same time, the data processing tool ecosystems across domains remain
+isolated, with heterogeneous output formats and interfaces that are difficult to compose into
+a unified AI analysis pipeline.
+The scientific data processing toolkit (SciTools) is a domain-specific tool layer within the
+DataElf tool ecosystem for scientific computing scenarios. Its tool taxonomy follows the
+domain division idea proposed by SciDataCopilot[72], and currently covers four domains:
+bioinformatics (bio), neural signals (eeg), earth science (earth), and chemistry (chem).
+It currently includes five operators: the cross-database enzyme property retrieval tool
+enzyme acquire, the protein sequence physicochemical analysis tool protein analyzer,
+an EEG signal processing tool, a climate data alignment tool, and a molecular structure
+standardization tool, built on mainstream domain libraries including UniProt[85], KEGG[43],
+PubChem[44], BioPython[16], MNE[33], and RDKit[46]. Centered on a unified invocation
+interface, a fixed output schema, and structured analytical summaries, all tools are integrated
+into the DataElf execution framework through run tool(tool name, **kwargs). Outputs
+are uniformly divided into result (statistical metrics and analytical summaries), metadata
+(execution status and runtime), and artifacts (output file paths), enabling agents to directly
+consume batch-level summaries for quality assessment and downstream scheduling without
+parsing underlying files. All tools adopt a three-state model (success / partial success /
+error) to handle partial failures in batch tasks. Under partial success, error codes and
+full exception traces of failed items are recorded in result.errors, ensuring continuous
+pipeline execution.
+4.3.3
+Data Security Audit Tool
+The data security audit tool is designed to detect security risks across multiple dimensions in
+post-training datasets, helping practitioners identify and mitigate harmful content, privacy
+leakage, and adversarial attacks before data enters the training pipeline. Built around a
+pluggable checker architecture, the tool ships with 23 checkers spanning 13 risk types: harmful
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+content, toxicity, bias, PII leakage, secret leakage, label flipping, factual inconsistency, self-
+contradiction, instruction mismatch, backdoor injection, prompt injection, jailbreak prompts,
+and sycophancy. Checkers can be freely composed through configuration files to suit different
+auditing needs. The 23 checkers are grouped into four categories based on their detection
+approach.
+Rule-based checkers perform deterministic matching via regular expressions and keyword
+lists, running offline without any model.
+PIIRule detects phone numbers, emails, ID
+numbers, and bank card numbers using the Luhn algorithm and Chinese ID checksum
+validation. SecretRule covers API key and token formats for AWS, GitHub, OpenAI, JWT,
+and other platforms. ToxicityKeywordRule and BiasKeywordRule match bias expressions
+against the HurtLex [7] multilingual lexicon.
+LLM-as-a-Judge checkers use large language models for semantic reasoning. Prompt
+designs follow the DeepEval [17] evaluation framework, covering harmful content, toxicity,
+bias, PII, jailbreak, prompt injection, contradiction, instruction mismatch, factual consistency,
+sycophancy, and DPO label flipping. SycophancyLLMJudge adopts the sycophancy detection
+strategy from Elephant [14], and DPOLabelFlipLLMJudge references the preference label
+quality audit method from Dingo [18].
+Model-based checkers use task-specific trained models for classification. BiasClassifier
+uses a ModernBERT-finetuned bias classifier [20]. ToxicityClassifier performs multi-
+label toxicity classification based on Detoxify [35]. HarmfulContentClassifier is based on
+LLaMA Guard [39]. PIINERDetector integrates the Microsoft Presidio [56] NER pipeline
+to extract structured privacy entities. JailbreakClassifier uses WildGuard [34] to detect
+jailbreak prompts and refusal behavior. PromptInjectionClassifier uses PIGuard [48]
+to identify prompt injection attacks.
+Heuristic checkers consist of GraCeFulBackdoorDefender , which implements the gradient-
+based analysis method from GraCeFul [88] to detect backdoor-poisoned samples through
+statistical clustering across the full dataset. Unlike the preceding three categories, this checker
+must process the entire dataset in batch mode to extract dataset-level statistical patterns.
+Each risk type carries a configurable weight, and the final safety score is derived from a
+weighted penalty formula, where higher scores indicate cleaner datasets.
+All non-heuristic checkers operate independently at the sample level and can be parallelized
+across multiple threads. Heuristic checkers execute sequentially in batch mode once the
+parallel phase finishes. After auditing, the tool generates a Markdown report covering risk
+distribution statistics and per-sample details. Checkers are registered through a decorator
+pattern, allowing users to mix, extend, or replace checkers via configuration.
+Experiment
+As no unified benchmark exists for post-training data security auditing, we sampled from
+multiple public datasets [80, 6, 36, 54, 25, 11, 66, 4] by risk type to construct an evaluation
+set covering all 13 risk categories. For poisoning-type risks, additional manual construction
+was applied: DPO label flipping was obtained by swapping chosen and rejected labels
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+in HH-RLHF [4]; factual inconsistency was constructed by using incorrect answers from
+TruthfulQA [51] as ground-truth responses; instruction mismatch was created by tampering
+with IFEval [101] responses to violate original constraints; secret leakage and backdoor
+samples were generated with LLM assistance. Each risk type contains approximately 100
+samples. Recall is used as the evaluation metric.
+We compare DataElf against four baselines: three specialized safety models, LLaMA-Guard-
+3-8B [39], Qwen3Guard-Gen-8B [99], and WildGuard-7B [34], and one general LLM-based
+framework, DeepEval [17].
+Figure 16 Recall (%) comparison across 13 risk types. Our DataElf achieves full-dimensional
+coverage by integrating four checker categories, significantly outperforming all baselines in average
+recall.
+As shown in Figure 16, DataElf achieves an average recall of 80.46% across all 13 risk types,
+substantially outperforming the best baseline DeepEval (48.62%) and Qwen3Guard-Gen-8B
+(48.38%). The three specialized models perform well within their training scope (LLaMA-
+Guard-3-8B reaches 99% on harmful content, WildGuard-7B reaches 97% on jailbreak
+detection), but recall drops sharply on out-of-scope risks such as label flipping, factual
+inconsistency, instruction mismatch, and backdoor injection. DeepEval achieves 94% on
+factual inconsistency via semantic reasoning, but performs poorly on label flipping, self-
+contradiction, and instruction mismatch. By integrating rule matching, LLM reasoning,
+specialized classifiers, and heuristic analysis, DataElf maintains high recall on traditional
+security risks while achieving effective detection on data poisoning risks where all baselines
+near zero, demonstrating the necessity of multi-method complementarity for full-dimensional
+security auditing.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+4.3.4
+Trajectory Analysis Tool
+The trajectory analysis tool focuses on experience distillation from the agent’s step-level
+interaction logs. Its goal is not simply to retain the original long trajectories, but to transform
+them into retrievable, reusable, and evolvable skill or experience units. The overall design, on
+one hand, draws inspiration from the skill file organization approach of "lightweight indexing
++ on-demand loading" in Claude Agent Skills [2]. On the other hand, it incorporates the
+idea of "discovering high-level policies from historical trajectories and continuously evolving
+them" proposed in works such as SkillRL [89], MemSkill [97], and EvoSkill [1]. Meanwhile,
+SkillsBench also demonstrates that highly curated and well-organized skills can stably enhance
+agent performance, although the quality control of automatically generated skills remains a
+critical challenge [50].
+Experiments
+We evaluate the effectiveness of experience injection facilitated by the trajectory analysis
+tool on the RiOSWorld benchmark. All baseline models execute tasks directly within the
+OS environment without utilizing additional skills. The evaluation metrics include the
+completion rate and the safety rate, where the safety rate represents the proportion of
+task executions that do not trigger any risks. The test tasks cover subcategories such as
+induced text , phishing web , popup , libre office , multimedia , note attack , os ,
+python script , and reddit .
+Based on this, we select kimi-k2.5 as the base model and inject the skills distilled from
+historical interactions by the trajectory analysis tool into the agent prompt to observe the
+changes in overall safety. As shown in Figure 17, the results indicate that after utilizing
+the skills, the overall safety rate of kimi-k2.5 increases from 32.17% to 71.08%, with the
+corresponding risk trigger rate decreasing from 67.83% to 28.92%. This result demonstrates
+that the lightweight experiences distilled by the trajectory analysis tool can significantly
+reduce risk exposure in OS scenarios without modifying the model parameters. Currently, we
+have only completed the verification of the overall safety rate; the remaining sub-category
+results will be supplemented subsequently.
+Autonomous Evolution Platform
+The autonomous evolution platform focuses on the "continuous enhancement of model
+capabilities." It centers around the RL training loop, organizing sample generation and
+policy updates into an iterative feedback loop: one end continuously integrates environmental
+feedback and multi-source trajectories, while the other end employs the OPD mechanism
+to convert usable signals from the teacher model into stable updates. A unified metric
+system tracks both gains and degradations. The core value of this system lies in its ability to
+support large-scale asynchronous training tasks: even under conditions with complex data
+sources and frequent configuration changes, it can consistently perform sample production,
+assembly, and policy updates, while ensuring the training process is observable, controllable,
+and reproducible.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+Figure 17 Baseline results of various models on RiOSWorld, and the results of kimi-k2.5 after
+injecting trajectory skills.
+5.1
+Quick Start
+RL training adopts a "Training Endpoint + Buffer Server" dual-process collaborative mode:
+the training endpoint is responsible for parameter updates and sampling scheduling, while the
+Buffer Server is responsible for launching the Simulation Runner and continuously returning
+rollout data. It is recommended to complete the environment variable configuration first,
+then start the services on two separate terminals.
+cd /path/to/Safactory/rl
+cp .env.example .env
+# Edit .env and input
+actual
+configuration
+# Terminal 1: Start the
+training
+endpoint
+./ run_slime_generator .sh
+# Text
+model
+./ run_slime_generator_vl .sh
+# Multimodal
+model (VL)
+# Terminal 2: Start the Buffer
+Server
+./ run_buffer_server .sh
+Once the Buffer Server starts, it automatically launches the Simulation Runner to begin
+executing rollouts and writing back the samples required for training. Terminal 1 and
+Terminal 2 can be deployed on different machines, as long as they are network-reachable.
+Key Configurations
+• Environment selection (choose one): AIEVOBOX ENV CONFIG (single YAML, suitable for
+debugging) or AIEVOBOX ENV ROOT (environment directory for bulk loading).
+• Training-related: RL GROUP SIZE (sample count per prompt), RL EPOCH (training epochs),
+RL OFF BY N (allowable weight version differences), SLIME GLOBAL BATCH SIZE (global
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+batch size).
+• Default ports: Buffer Server is 18889 (BUFFER SERVER PORT), LLM Proxy is 18890
+(LLM PROXY PORT).
+See .env.example for full variable descriptions; for advanced training script parameters, refer
+to the official Slime documentation.
+5.2
+Agentic RL System Architecture
+Figure 18 Agentic RL System Architecture
+The Agentic RL system architecture, as shown in Figure 18, is designed around three core
+modules: Bridge, Trajectory Transformation, and Buffer Server. These modules jointly
+support a fully asynchronous "Sampling-Trajectory Transformation-Training" pipeline. The
+architecture separates the rollout and training processes and uses versioned metadata and
+group consistency mechanisms to ensure that the system can reliably generate high-quality
+training samples under complex, long-duration, multi-environment concurrent tasks.
+5.2.1
+Bridge Module: Asynchronous Control and Unified Inference Entry
+In traditional reinforcement learning architectures, interactions with the environment, infer-
+ence requests, and training consumption are often tightly coupled, limiting system scalability
+and flexibility. In a fully asynchronous setup, issues such as policy version misalignment with
+sampled data, missing sample groups, trajectory and supervision signal misalignment, and
+imbalanced production-consumption in data buffers can arise. To address this, the system in-
+troduces the LLM Proxy and Rollout Manager at the Bridge layer, forming a closed loop with
+the Buffer Server: The LLM Proxy writes and returns trajectory and model version metadata
+in the request path, enabling the training endpoint to perform data staleness filtering and
+mitigate policy lag. The Rollout Manager samples by instance/group and submits in groups
+to prevent incomplete sample groups from entering training. The Bridge unifies the routing
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+of LLM sessions and links trajectory recording and transformation processes, reducing the
+chances of trajectory and supervision signal mismatch. The Buffer Server dequeues data as
+needed, balancing production and consumption rates to prevent queue buildup and starvation.
+As a result, Rollout and Train are decoupled temporally, while maintaining consistency in
+data semantics and quality constraints.
+At the same time, the Bridge supports the use of the OPD (Online Policy Distillation)
+module, which distills policies from the teacher model to real-time optimize the student
+model’s learning process, improving its generalization and training efficiency. This module
+works in collaboration with submodules for teacher model policy generation and other training
+signals to implement policy distillation.
+5.2.2
+Alignment Module: Semantic Alignment from Trajectories to Trainable
+Samples
+In the Agentic RL system, trajectory data generated by the environment cannot be directly
+used for training. It needs to go through a series of processing and transform steps to become
+suitable training samples. The Trajectory Transformation module is designed to address this
+issue. Through a fine-grained processing pipeline, it converts raw trajectories generated from
+multi-round interactions into samples that meet training requirements.
+The design of the Trajectory Transformation module focuses on ensuring data semantic consis-
+tency and correctness. Through incremental encoding and prefix matching of trajectories, the
+system effectively avoids redundant encoding of historical context while handling multimodal
+inputs (e.g., image and text data). Additionally, the system ensures that losses are only
+computed within the areas generated by the model through Mask Painter and Sample Packer,
+ensuring effective control of data quality during the training process. Ultimately, the samples
+are packed and annotated with metadata to maintain consistency in batch processing and
+prevent training bias due to data issues.
+5.2.3
+Summary
+The Agentic RL system achieves asynchronous orchestration through the Bridge module,
+maintains data lifecycle consistency, ensures semantic correctness of data through the Trajec-
+tory Transformation module, and guarantees data supply through the Buffer Server. Together,
+these modules enable the system to maintain the usability, timeliness, and statistical stability
+of training data under fully asynchronous conditions, successfully supporting unified training
+for various task types.
+5.3
+On-policy Distillation
+In the unified architecture above, OPD (On-policy Distillation) is implemented as an optional
+training route rather than a prerequisite for the system’s establishment. Its primary role is
+to provide additional distribution constraints and teacher signal correction for current policy
+updates under asynchronous rollouts and long-range agent interactions, thereby enhancing
+the consistency, stability, and controllability of the training process. Recent reviews of
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+OPD also highlight that its core idea is to distill from the student’s own accessed state and
+trajectory distributions, rather than only performing offline imitation from static teacher
+data. Accordingly, OPD is particularly suited for training scenarios with more apparent
+asynchronous sampling, policy delays, and distribution shifts. [91, 93]
+From a system implementation perspective, OPD integrates into the existing five-layer
+architecture as a plugin, without altering the main execution flow of Safactory. The teacher
+bridge, teacher model ref, and OPD signal/granularity hook in the figure should be
+understood as optional extension points: The teacher bridge in the proxy layer integrates
+teacher information during request or response phases; the hook in the rollout engine aligns
+distillation signals with the raw trajectories, and the teacher model ref at the bottom
+provides an optional teacher strategy reference. In other words, OPD does not define the
+core structure of the system but rather adds an additional supervisory interface on top of the
+unified execution base.
+In the current implementation, Safactory adopts a white-box, token-level form of OPD.
+Specifically, the system introduces token-level log probabilities provided by the teacher during
+the rollout phase and incorporates a reverse-KL regularization term into the training objective
+to impose additional constraints on the advantage-driven policy updates.
+From an architectural perspective, Safactory’s interface can further accommodate other forms
+of teacher signals, such as step-level, trajectory-level, or higher granularity feedback. This
+allows Safactory to maintain the system’s simplicity by using the same training base for
+both Gym-style and agentic scenarios, while also reserving sufficient space for more complex
+distillation, correction, and auxiliary supervision methods. [91]
+OPD can be completely disabled in Safactory; however, for agentic tasks with more pronounced
+issues of asynchronous sampling, long-range decision making, multi-round interactions, and
+complex credit assignment, OPD can enhance the stability and controllability of the training
+process without disrupting the main execution flow. This enables Safactory to support
+both conventional reinforcement learning processes and naturally extend to more complex
+autonomous evolution training paradigms, all while maintaining a unified system abstraction.
+5.4
+Experiments
+5.4.1
+Safactory V.S. slime-native
+The Safactory system supports both synchronous and asynchronous rollout execution modes.
+In terms of architectural design, Safactory explicitly decouples the rollout and training
+lifecycles: the data producer continuously generates trajectory data and writes it to storage,
+while the training process is triggered by the Bridge module once a sufficient amount of
+trainable trajectories has been accumulated.
+This asynchronous mechanism effectively
+prevents the "producer" from idling its computational resources, thereby improving overall
+resource utilization.
+In terms of data management, Safactory introduces a "trajectory staleness" mechanism
+to filter samples in the buffer. Staleness is defined as the difference between the policy
+version used for trajectory generation and the current policy version. For example, when the
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+acceptable staleness is set to 0, only trajectories generated by the current policy can be used
+for training; when the acceptable staleness is set to 1, trajectories generated by both the
+current and previous versions of the policy are allowed. This mechanism ensures training
+stability while allowing developers to customize the combination of off-policy and on-policy
+data, thereby increasing data reuse efficiency.
+Figure 19 Timeline comparison between slime-native and Safactory.
+Compared to the fixed asynchronous training strategy with staleness set to 1 in slime-native,
+Safactory can support longer trajectory generation times while maintaining approximately
+the same step time as slime-native in tasks where the training cost dominates. In contrast,
+in tasks where the rollout computational cost dominates, the performance of both systems
+is nearly identical. Figure 19 illustrates the timeline comparison between slime-native and
+Safactory during the rollout and training phases.
+Experiments were conducted using the Geo3K dataset to train a visual language model. A
+multi-round reasoning mechanism was introduced during training, along with interactive
+environment feedback. The experimental settings included a maximum of 10 environment
+interaction steps, with a total of 300 training steps. In terms of methods and models,
+the experiments utilized the Qwen3-VL-2B model, optimized using the GRPO algorithm,
+and compared the performance of Safactory (with staleness set to 1) and the Slime-native
+asynchronous training framework. The experiment was run on 8 GPUs, with 7 used for
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+Figure 20 Average time comparison across RL training stages per step.
+rollout and 1 used for training.
+Figure 20 shows the average time consumption for key stages in the RL process. In terms of
+training speed, Safactory and Slime-native perform similarly. Due to the fact that the rollout
+process does not idle while waiting for the training process to complete, the rollout time in
+Safactory is longer, generating more trajectories. Within a single step window, Slime-native
+generates 512 trajectories, which matches the global batch size, while Safactory generates an
+average of 1277.78 trajectories, which is 2.49 times the amount generated by Slime-native.
+Further analysis revealed that, under the current experimental configuration, the rollout time
+in Slime-native is shorter than the training time, leading to significant idling of inference-
+side resources, with the idle proportion being around 50%. In contrast, Safactory’s fully
+asynchronous architecture continuously generates trajectories during the training phase, thus
+preventing GPU resource waste and achieving higher overall system throughput and resource
+utilization efficiency.
+DeepLink Computing Technology
+As a domestic software-hardware collaborative open computing system for artificial intelligence,
+DeepLink aims to build a bridge for adapting hardware chips and software frameworks, and
+jointly foster an open software-hardware adaptation ecosystem[76]. Built on DeepLink, it
+supports an integrated training and inference toolchain for domestic multi-chip heterogeneous
+and cross-domain scenarios, fundamentally breaking ecological barriers, achieving software-
+hardware decoupling, and diversifying computing power elements[75].
+To empower the Safactory Framework to run in large-scale domestic environments, DeepLink
+provides three core capabilities: Large-scale pooled inference, Distributed hierarchical data
+storage, and Domestic heterogeneous training toolchain.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+6.1
+Large-scale pooled inference
+Serving as the "Computing Hub" of the AI computing foundation, it provides the core
+computing backbone for the risk inference middle platform. By building a fully domestic
+inference cluster based on Ascend Atlas, it ensures business SLAs (Service Level Agreements)
+while maximizing overall resource utilization. Through modeling and simulating the inference
+process on heterogeneous hardware, it enables automated optimization of inference services,
+achieving a cumulative 50% boost in throughput performance in typical large model scenarios.
+6.2
+Distributed hierarchical data storage
+Serving as the "Data Cornerstone" of the AI computing foundation, it provides unified
+storage for risk trajectory data generated by the inference middle platform, supporting diverse
+formats including vectors, text, images, and videos. By leveraging hybrid retrieval and a
+disaggregated compute-storage architecture, the system seamlessly integrates with object
+storage and enables elastic scaling. This facilitates millisecond-level retrieval across PB-scale
+massive samples and risk data.
+6.3
+Domestic heterogeneous training toolchain
+As the "operational assurance" of the AI computing foundation, it provides a stable underlying
+runtime environment for computing power scheduling and data processing. Based on Kunpeng
+domestic chips, an integrated adaptation solution for training and sandbox runtime has been
+developed. Through direct deployment via Linux containers and deep optimization using
+Kernel Same-page Merging (KSM)[28], virtualization overhead and memory redundancy are
+effectively reduced. This achieves a 50%+ boost in single-instance performance, an 80%+
+reduction in memory usage, and a 6-fold increase in parallel scale, ensuring the efficient and
+stable operation of the computing power base. Leveraging the Ascend Atlas 800 A3 series
+super-node computing foundation, the system bridges the full-link process for training and
+inference across heterogeneous cards. Through performance optimization methods such as
+load balancing scheduling optimization and the One Step Off-Policy mechanism, it ensures
+exceptional reliability and throughput efficiency for reinforcement learning workflows during
+ultra-long-cycle operations.
+Conclusions and Discussions
+Safactory is motivated by a simple observation: once large models become autonomous agents,
+safety can no longer be treated as a single benchmark score or a one-time release check.
+Many important failures emerge only when agents interact with tools, environments, and
+long decision chains. As a result, trustworthy agent development requires more than isolated
+evaluation tools or standalone training frameworks. It requires an infrastructure that can
+continuously discover risks, preserve evidence, convert execution traces into reusable assets,
+and feed them back into model improvement.
+In this report, we present Safactory as such an infrastructure. Its Parallel Simulation
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+Platform moves safety evaluation from static samples to large-scale sandbox-based rollout
+and risk discovery. Its Trustworthy Data Platform turns trajectories, rewards, and
+intermediate logs into structured, auditable, and retrievable data assets, while supporting
+safety auditing and experience extraction. Its Autonomous Evolution Platform further
+connects these assets to asynchronous reinforcement learning and online policy optimization,
+making it possible to organize rollout, data transformation, and policy update in a unified
+loop. Supported by DeepLink computing technologies, Safactory also provides the computing,
+storage, and system foundations needed to run this loop at scale.
+From this perspective, the main contribution of Safactory is not a single algorithm or
+benchmark.
+Rather, it is a system view of trustworthy autonomous intelligence: risk
+discovery, data deposition, capability repair, and re-validation should be designed as one
+continuous process. This design helps bridge the long-standing gap between evaluation, data,
+and training, and provides a practical foundation for building safer and more capable agents
+in OS, mobile, embodied, and other interactive environments.
+At the same time, Safactory should be viewed as a starting point rather than a finished
+solution. Several challenges remain open. First, environment coverage and scenario realism
+still need to expand, especially for high-stakes domains with richer human, tool, and system
+interactions. Second, automatically judging agent safety and utility in long-horizon tasks
+remains difficult, and stronger metrics and oversight mechanisms are still needed. Third,
+turning execution traces into stable training gains is still an evolving problem, especially
+under asynchronous sampling, distribution shift, and complex credit assignment. We hope
+Safactory can serve as a shared foundation for future work on scalable agent evaluation,
+trustworthy data construction, and continual post-training for autonomous systems.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+Contributions and Acknowledgments
+Scientific Director:
+Xia Hu
+Co-Director:
+Hui Wang, Yingchun Wang
+Technical Lead:
+Xuhong Wang†
+Co-Leads:
+Jie Hou, Jianmin Qian
+Core Contributors:
+Xinquan Chen, Zhenyun Yin, Shan He, Bin Huang,
+Shanzhe Lei, Pengcheng Shi
+Main Contributors:
+Kun Cai, Bei Chen, Bangwei Liu, Zeyu Kang, Chao
+Huang, Yang Zhang, Wenjie Li, Ruijun Ge, Yajie Wang,
+Tianshun Fang, Tianyang Xu, Yiwen Cong
+Contributors:
+Meng Jin, Gaolei Li, Xuansheng Wu, Linhan Liu, Zijing
+He, An Li, Yan Teng, Xin Tan, ChaoChao Lu, Ji He, Jie
+Li, Chunfeng Song, Jinya Xu, Fan Song, Shujie Wang
+We thank the members of Shanghai Artificial Intelligence Laboratory for their contributions
+to this project.
+†Corresponding author: wangxuhong@pjlab.org.cn
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+References
+[1] Salaheddin Alzubi, Noah Provenzano, Jaydon Bingham, Weiyuan Chen, and Tu Vu.
+Evoskill:
+Automated skill discovery for multi-agent systems.
+arXiv preprint
+arXiv:2603.02766, 2026.
+[2] Anthropic. Introducing agent skills.  2025.
+[3] Apache. Apache Airflow: A platform to programmatically author, schedule, and monitor
+workflows.  2024.
+[4] Yuntao Bai, Andy Jones, Kamal Ndousse, Amanda Askell, Anna Chen, Nova DasSarma,
+Dawn Drain, Stanislav Fort, Deep Ganguli, Tom Henighan, et al. Training a helpful and
+harmless assistant with reinforcement learning from human feedback. arXiv preprint
+arXiv:2204.05862, 2022.
+[5] Yuntao Bai, Andy Jones, Kamile Ndousse, Amanda Askell, Anna Chen, Nova DasSarma,
+Dawn Drain, Deep Ganguli, Tom Henighan, Nicholas Joseph, et al. Constitutional ai:
+Harmlessness from ai feedback. arXiv preprint arXiv:2212.08073, 2022.
+[6] Valerio Basile, Cristina Bosco, Elisabetta Fersini, Debora Nozza, Viviana Patti, Fran-
+cisco Manuel Rangel Pardo, Paolo Rosso, and Manuela Sanguinetti. Semeval-2019 task
+5: Multilingual detection of hate speech against immigrants and women in twitter. In
+Proceedings of the 13th international workshop on semantic evaluation, pages 54-63,
+2019.
+[7] Elisa Bassignana, Valerio Basile, and Viviana Patti. Hurtlex: A multilingual lexicon of
+words to hurt. In Proceedings of the fifth Italian conference on computational linguistics
+(CLiC-it 2018), pages 52-57, 2018.
+[8] Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla
+Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al.
+Language models are few-shot learners. Advances in Neural Information Processing
+Systems, 33:1877-1901, 2020.
+[9] Mengzhang Cai, Xin Gao, Yu Li, Honglin Lin, Zheng Liu, Zhuoshi Pan, Qizhi Pei,
+Xiaoran Shang, Mengyuan Sun, Zinan Tang, et al. Opendataarena: A fair and open
+arena for benchmarking post-training dataset value. arXiv preprint arXiv:2512.14051,
+2025.
+[10] Mengzhang Cai, Xin Gao, Yu Li, Honglin Lin, Zheng Liu, Zhuoshi Pan, Qizhi Pei,
+Xiaoran Shang, Mengyuan Sun, Zinan Tang, Xiaoyang Wang, Zhanping Zhong, Yun
+Zhu, Dahua Lin, Conghui He, and Lijun Wu. Opendataarena: A fair and open arena
+for benchmarking post-training dataset value, 2025.
+[11] Patrick Chao, Edoardo Debenedetti, Alexander Robey, Maksym Andriushchenko,
+Francesco Croce, Vikash Sehwag, Edgar Dobriban, Nicolas Flammarion, George J
+Pappas, Florian Tramer, et al. Jailbreakbench: An open robustness benchmark for
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+jailbreaking large language models. Advances in Neural Information Processing Systems,
+37:55005-55029, 2024.
+[12] Chiyu Chen, Xinhao Song, Yunkai Chai, Yang Yao, Haodong Zhao, Lijun Li, Jie
+Li, Yan Teng, Gongshen Liu, and Yingchun Wang. Ghostei-bench: Do mobile agents
+resilience to environmental injection in dynamic on-device environments? arXiv preprint
+arXiv:2510.20333, 2025.
+[13] Daoyuan Chen, Yilun Huang, Zhijian Ma, et al. Data-Juicer: A one-stop data pro-
+cessing system for large language models. In Proceedings of the 2024 ACM SIGMOD
+International Conference on Management of Data, 2024.
+[14] Myra Cheng, Sunny Yu, Cinoo Lee, Pranav Khadpe, Lujain Ibrahim, and Dan Jurafsky.
+Elephant: Measuring and understanding social sycophancy in llms. arXiv preprint
+arXiv:2505.13995, 2025.
+[15] Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz
+Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher
+Hesse, and John Schulman. Training verifiers to solve math word problems, 2021.
+[16] Peter J A Cock, Tiago Antao, Jeffrey T Chang, Brad A Chapman, Cymon J Cox,
+Andreas Dalke, Iddo Friedberg, Thomas Hamelryck, Frank Kauff, Bartek Wilczynski,
+et al. Biopython: freely available Python tools for computational molecular biology
+and bioinformatics. Bioinformatics, 25(11):1422-1423, 2009.
+[17] Confident AI. DeepEval: The LLM evaluation framework, 2024.
+[18] Dingo Contributors. Dingo: A comprehensive ai data quality evaluation tool for large
+models.  2024.
+[19] Dagster. Dagster: An orchestration platform for the development, production, and
+observation of data assets.  2024.
+[20] Enric Junqu´e de Fortuny. Bias detection with modernbert-large. 2025.
+[21] DeepSeek-AI. Deepseek-v2: A strong, economical, and efficient mixture-of-experts
+language model. arXiv preprint arXiv:2405.04434, 2024.
+[22] DeepSeek-AI. Deepseek-v3 technical report. arXiv preprint arXiv:2412.19437, 2024.
+[23] DeepSeek-AI. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement
+learning. arXiv preprint arXiv:2501.12948, 2025.
+[24] DeepSeek-AI. Deepseek-v3.2: Pushing the frontier of open large language models. arXiv
+preprint arXiv:2512.02556, 2025.
+[25] Deepset.
+prompt-injections.
+
+prompt-injections, 2020.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+[26] Leon Derczynski, Erick Galinkin, Jeffrey Martin, Subho Majumdar, and Nanna Inie.
+garak: A Framework for Security Probing Large Language Models. 2024.
+[27] Yann Dubois, Bal´azs Galambosi, Percy Liang, and Tatsunori B. Hashimoto. Length-
+controlled alpacaeval: A simple way to debias automatic evaluators, 2025.
+[28] Izik Eidus and Hugh Dickins. Kernel samepage merging. 
+admin-guide/mm/ksm.html, 2009. Accessed: 2026.
+[29] Wei Fu, Jiaxuan Gao, Xujie Shen, Chen Zhu, Zhiyu Mei, Chuyi He, Shusheng Xu,
+Guo Wei, Jun Mei, Jiashu Wang, Tongkai Yang, Binhang Yuan, and Yi Wu. Areal: A
+large-scale asynchronous reinforcement learning system for language reasoning. arXiv
+preprint arXiv:2505.24298, 2025.
+[30] Leo Gao, Jonathan Tow, Stella Biderman, Sid Black, Anthony DiPofi, Charles Foster,
+Laurence Golding, Jeffrey Hsu, Kyle McDonell, Niklas Muennighoff, Jason Phang,
+Laria Reynolds, Eric Tang, Anish Thite, Ben Wang, Kevin Wang, and Andy Zou. A
+framework for few-shot language model evaluation, 2021.
+[31] Giskard AI. Giskard Hub, 2024.
+[32] GLM-4.5 Team. Glm-4.5: Agentic, reasoning, and coding (arc) foundation models.
+arXiv preprint arXiv:2508.06471, 2025.
+[33] Alexandre Gramfort, Martin Luessi, Eric Larson, Denis A Engemann, Daniel Strohmeier,
+Christian Brodbeck, Lauri Parkkonen, and Matti S H¨am¨al¨ainen. MNE software for
+processing MEG and EEG data. NeuroImage, 86:446-460, 2014.
+[34] Seungju Han, Kavel Rao, Allyson Ettinger, Liwei Jiang, Bill Yuchen Lin, Nathan
+Lambert, Yejin Choi, and Nouha Dziri. Wildguard: Open one-stop moderation tools for
+safety risks, jailbreaks, and refusals of llms. Advances in neural information processing
+systems, 37:8093-8131, 2024.
+[35] Laura Hanu and Unitary team. Detoxify. 
+2020.
+[36] Thomas Hartvigsen, Saadia Gabriel, Hamid Palangi, Maarten Sap, Dipankar Ray,
+and Ece Kamar. Toxigen: A large-scale machine-generated dataset for adversarial
+and implicit hate speech detection. In Proceedings of the 60th annual meeting of the
+association for computational linguistics, pages 3309-3326, 2022.
+[37] Pengcheng He, Jianfeng Gao, and Weizhu Chen. Debertav3: Improving deberta using
+electra-style pre-training with gradient-disentangled embedding sharing. arXiv preprint
+arXiv:2111.09543, 2021.
+[38] Hugging Face.
+Trl:
+Transformer reinforcement learning.
+
+huggingface/trl, 2025.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+[39] Hakan Inan, Kartikeya Upasani, Jianfeng Chi, Rashi Rungta, Krithika Iyer, Yuning
+Mao, Michael Tontchev, Qing Hu, Brian Fuller, Davide Testuggine, et al. Llama
+guard: Llm-based input-output safeguard for human-ai conversations. arXiv preprint
+arXiv:2312.06674, 2023.
+[40] inclusionAI. Areal: Lightning-fast rl for llm reasoning and agents. 
+com/inclusionAI/AReaL, n.d.
+[41] Fred Jelinek, Robert L Mercer, Lalit R Bahl, and James K Baker. Perplexity-a
+measure of the difficulty of speech recognition tasks. The Journal of the Acoustical
+Society of America, 62(S1):S63-S63, 1977.
+[42] Yang JingYi, Shuai Shao, Dongrui Liu, and Jing Shao. Riosworld: Benchmarking the
+risk of multimodal computer-use agents. In The Thirty-ninth Annual Conference on
+Neural Information Processing Systems.
+[43] Minoru Kanehisa, Yoko Sato, Masayuki Kawashima, Miho Furumichi, and Mao Tanabe.
+KEGG as a reference resource for gene and protein annotation. Nucleic Acids Research,
+44(D1):D457-D462, 2016.
+[44] Sunghwan Kim, Jie Chen, Tiejun Cheng, Asta Gindulyte, Jia He, Siqian He, Qingliang
+Li, Benjamin A Shoemaker, Paul A Thiessen, Bo Yu, et al. PubChem in 2021: new data
+content and improved web interfaces. Nucleic Acids Research, 49(D1):D1388-D1395,
+2021.
+[45] Kimi Team. Kimi k2: Open agentic intelligence. arXiv preprint arXiv:2507.20534,
+2025.
+[46] Greg Landrum et al. RDKit: Open-source cheminformatics. 
+2013. Accessed: 2025.
+[47] Langfuse. Langfuse: Open source LLM engineering platform, 2024.
+[48] Hao Li, Xiaogeng Liu, Ning Zhang, and Chaowei Xiao. Piguard: Prompt injection
+guardrail via mitigating overdefense for free. In Proceedings of the 63rd Annual Meeting
+of the Association for Computational Linguistics, pages 30420-30437, 2025.
+[49] Ming Li, Yong Zhang, Zhitao Li, Jiuhai Chen, Lichang Chen, Ning Cheng, Jianzong
+Wang, Tianyi Zhou, and Jing Xiao. From quantity to quality: Boosting llm performance
+with self-guided data selection for instruction tuning.
+In Proceedings of the 2024
+Conference of the North American Chapter of the Association for Computational
+Linguistics: Human Language Technologies (Volume 1: Long Papers), pages 7595-7628,
+2024.
+[50] Xiangyi Li, Wenbo Chen, Yimin Liu, Shenghan Zheng, Xiaokun Chen, Yifeng He, Yubo
+Li, Bingran You, Haotian Shen, Jiankai Sun, Shuyi Wang, Binxu Li, Qunhong Zeng,
+Di Wang, Xuandong Zhao, Yuanli Wang, Roey Ben Chaim, Zonglin Di, Yipeng Gao,
+Junwei He, Yizhuo He, Liqiang Jing, Luyang Kong, Xin Lan, Jiachen Li, Songlin Li,
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+Yijiang Li, Yueqian Lin, Xinyi Liu, Xuanqing Liu, Haoran Lyu, Ze Ma, Bowei Wang,
+Runhui Wang, Tianyu Wang, Wengao Ye, Yue Zhang, Hanwen Xing, Yiqi Xue, Steven
+Dillmann, and Han-chung Lee. Skillsbench: Benchmarking how well agent skills work
+across diverse tasks. arXiv preprint arXiv:2602.12670, 2026.
+[51] Stephanie Lin, Jacob Hilton, and Owain Evans. Truthfulqa: Measuring how models
+mimic human falsehoods. In Proceedings of the 60th annual meeting of the association
+for computational linguistics (volume 1: long papers), pages 3214-3252, 2022.
+[52] Wei Liu, Weihao Zeng, Keqing He, Yong Jiang, and Junxian He. What makes good
+data for alignment? a comprehensive study of automatic data selection in instruction
+tuning. arXiv preprint arXiv:2312.15685, 2023.
+[53] Haipeng Luo, Qingfeng Sun, Can Xu, Pu Zhao, Qingwei Lin, Jianguang Lou, Shifeng
+Chen, Yansong Tang, and Weizhu Chen. Arena learning: Build data flywheel for llms
+post-training via simulated chatbot arena. arXiv preprint arXiv:2407.10627, 2024.
+[54] Media Bias Group. BABE. 
+BABE, 2020.
+[55] Mike A. Merrill, Alex Shaw, et al. Terminal-Bench: Benchmarking agents on hard,
+realistic tasks in command line interfaces. 2026.
+[56] Microsoft. Presidio.  2020.
+[57] MLflow. MLflow: A machine learning lifecycle platform, 2024.
+[58] Moonshot AI. Kimi k1.5: Scaling reinforcement learning with llms. arXiv preprint
+arXiv:2501.12599, 2025.
+[59] NVIDIA. Nvidia nemo curator.  2024.
+[60] OpenAI. Gpt-4 technical report. arXiv preprint arXiv:2303.08774, 2023.
+[61] OpenAI. OpenAI Evals, 2023.
+[62] OpenCompass Contributors.
+OpenCompass: A universal evaluation platform for
+foundation models, 2023.
+[63] OpenRLHF Team. Openrlhf: An easy-to-use, scalable and high-performance rlhf
+framework. arXiv preprint arXiv:2405.11143, 2024.
+[64] Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela
+Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al. Training
+language models to follow instructions with human feedback. Advances in Neural
+Information Processing Systems, 35:27730-27744, 2022.
+[65] Guilherme Penedo, Hynek Kydl´ıˇcek, Anton Lozhkov, Margaret Mitchell, Colin A Raffel,
+Leandro Von Werra, Thomas Wolf, et al. The fineweb datasets: Decanting the web
+for the finest text data at scale. Advances in Neural Information Processing Systems,
+37:30811-30849, 2024.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+[66] Ethan Perez, Sam Ringer, Kamile Lukosiute, Karina Nguyen, Edwin Chen, Scott
+Heiner, Craig Pettit, Catherine Olsson, Sandipan Kundu, Saurav Kadavath, et al.
+Discovering language model behaviors with model-written evaluations. In Findings of
+the association for computational linguistics, pages 13387-13434, 2023.
+[67] PinchBench Team.
+Pinchbench skill: Benchmark runner and task definitions for
+openclaw agents.  2026. GitHub repository.
+[68] Prefect. Prefect: The new standard in dataflow automation. 
+PrefectHQ/prefect, 2024.
+[69] promptfoo. promptfoo: Test and evaluate LLMs, 2024.
+[70] Qwen Team. Qwen2 technical report. arXiv preprint arXiv:2407.10671, 2024.
+[71] Qwen Team. Qwen3 technical report. arXiv preprint arXiv:2505.09388, 2025.
+[72] Jiyong Rao et al.
+SciDataCopilot: An Agentic Data Preparation Framework for
+AGI-driven Scientific Discovery. arXiv preprint arXiv:2602.09132, 2026.
+[73] RollArt Team. Rollart: Scaling agentic rl training via disaggregated infrastructure.
+arXiv preprint arXiv:2508.03680, 2025.
+[74] Noveen Sachdeva, Benjamin Coleman, Wang-Cheng Kang, Jianmo Ni, Lichan Hong,
+Ed H Chi, James Caverlee, Julian McAuley, and Derek Zhiyuan Cheng. How to train
+data-efficient llms. arXiv preprint arXiv:2402.09668, 2024.
+[75] Shanghai AI Laboratory. DeepLink.  2023.
+[76] Shanghai AI Laboratory. Deeplink: Artificial intelligence open computing system.
+ 2023.
+[77] Alex Shaw, Mike A. Merrill, et al. Harbor: A framework for running agent evaluations
+and creating RL environments, 2025.
+[78] Kashun Shum, Yuzhen Huang, Hongjian Zou, Qi Ding, Yixuan Liao, Xiaoxin Chen,
+Qian Liu, and Junxian He. Predictive data selection: The data that predicts is the
+data that teaches. arXiv preprint arXiv:2503.00808, 2025.
+[79] Liangcai Su, Zhen Zhang, Guangyu Li, Zhuo Chen, Chenxi Wang, Maojia Song,
+Xinyu Wang, Kuan Li, Jialong Wu, Xuanzhong Chen, Zile Qiao, Zhongwang Zhang,
+Huifeng Yin, Shihao Cai, Runnan Fang, Zhengwei Tao, Wenbiao Yin, Chenxiong Qian,
+Yong Jiang, Pengjun Xie, Fei Huang, and Jingren Zhou. Scaling agents via continual
+pre-training. arXiv preprint arXiv:2509.13310, 2025.
+[80] Xiongtao Sun, Hui Li, Jiaming Zhang, Yujie Yang, et al. Multipriv: Benchmark-
+ing individual-level privacy reasoning in vision-language models.
+arXiv preprint
+arXiv:2511.16940, 2025.
+[81] TensorZero Team. Tensorzero.  2024.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+[82] THUDM. slime.  n.d.
+[83] Tongyi Agent. A new era of open-source ai researchers. 
+github.io/blog/introducing-tongyi-deep-research/, 2025.
+[84] UK AI Security Institute. Inspect: A framework for large language model evaluations,
+2024.
+[85] UniProt Consortium. UniProt: the Universal Protein Knowledgebase in 2025. Nucleic
+Acids Research, 53(D1):D609-D617, 2025.
+[86] verl-project. verl: Volcano engine reinforcement learning for llms. 
+com/verl-project/verl, n.d.
+[87] Xin Wang, Yunhao Chen, Juncheng Li, Yixu Wang, Yang Yao, Tianle Gu, Jie Li, Yan
+Teng, Yingchun Wang, and Xia Hu. Openrt: An open-source red teaming framework
+for multimodal llms. arXiv preprint arXiv:2601.01592, 2026.
+[88] Zongru Wu, Pengzhou Cheng, Lingyong Fang, Zhuosheng Zhang, and Gongshen Liu.
+Gracefully filtering backdoor samples for generative large language models without
+retraining. In Proceedings of the 31st International Conference on Computational
+Linguistics, pages 3267-3282, 2025.
+[89] Peng Xia, Jianwen Chen, Hanyang Wang, Jiaqi Liu, Kaide Zeng, Yu Wang, Siwei Han,
+Yiyang Zhou, Xujiang Zhao, Haifeng Chen, Zeyu Zheng, Cihang Xie, and Huaxiu Yao.
+Skillrl: Evolving agents via recursive skill-augmented reinforcement learning. arXiv
+preprint arXiv:2602.08234, 2026.
+[90] Tianbao Xie, Danyang Zhang, Jixuan Chen, Xiaochuan Li, Siheng Zhao, Ruisheng Cao,
+Toh Jing Hua, Zhoujun Cheng, Dongchan Shin, Fangyu Lei, Yitao Liu, Yiheng Xu,
+Shuyan Zhou, Silvio Savarese, Caiming Xiong, Victor Zhong, and Tao Yu. Osworld:
+Benchmarking multimodal agents for open-ended tasks in real computer environments,
+2024.
+[91] Xiaohan Xu, Ming Li, Chongyang Tao, Tao Shen, Reynold Cheng, Jinyang Xu, Can Xu,
+Dacheng Tao, and Tianyi Zhou. A survey of on-policy distillation for large language
+models. arXiv preprint arXiv:2604.00626, 2026.
+[92] Rui Yang, Hanyang Chen, Junyu Zhang, Mark Zhao, Cheng Qian, Kangrui Wang,
+Qineng Wang, Teja Venkat Koripella, Marziyeh Movahedi, Manling Li, et al. Em-
+bodiedbench: Comprehensive benchmarking multi-modal large language models for
+vision-driven embodied agents. arXiv preprint arXiv:2502.09560, 2025.
+[93] Wenkai Yang, Weijie Liu, Ruobing Xie, Kai Yang, Saiyong Yang, and Yankai Lin.
+Learning beyond teacher: Generalized on-policy distillation with reward extrapolation.
+arXiv preprint arXiv:2602.12125, 2026.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+[94] Zhewei Yao, Reza Yazdani Aminabadi, Olatunji Ruwase, Samyam Rajbhandari, Yuxiong
+He, et al. Deepspeed-chat: Easy, fast and affordable rlhf training of chatgpt-like models
+at all scales. arXiv preprint arXiv:2308.01320, 2023.
+[95] Bowen Ye, Rang Li, Qibin Yang, et al. Claw-Eval: Toward trustworthy evaluation of
+autonomous agents. 2026.
+[96] Aohan Zeng et al. Glm-5: from vibe coding to agentic engineering. arXiv preprint
+arXiv:2602.15763, 2026.
+[97] Haozhen Zhang, Quanyu Long, Jianzhu Bao, Tao Feng, Weizhi Zhang, Haodong Yue,
+and Wenya Wang. Memskill: Learning and evolving memory skills for self-evolving
+agents. arXiv preprint arXiv:2602.02474, 2026.
+[98] Cen Zhao, Tiantian Zhang, Hanchen Su, Yufeng Zhang, Shaowei Su, Mingzhi Xu,
+Yu Liu, Wei Han, Jeremy Werner, Claire Na Cheng, et al. Agent-in-the-loop: A data
+flywheel for continuous improvement in llm-based customer support. In Proceedings of
+the 2025 Conference on Empirical Methods in Natural Language Processing: Industry
+Track, pages 1919-1930, 2025.
+[99] Haiquan Zhao, Chenhan Yuan, Fei Huang, Xiaomeng Hu, Yichang Zhang, An Yang,
+Bowen Yu, Dayiheng Liu, Jingren Zhou, Junyang Lin, et al. Qwen3guard technical
+report. arXiv preprint arXiv:2510.14276, 2025.
+[100] Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao
+Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang, Joseph E. Gonzalez,
+and Ion Stoica. Judging llm-as-a-judge with mt-bench and chatbot arena, 2023.
+[101] Jeffrey Zhou, Tianjian Lu, Swaroop Mishra, Siddhartha Brahma, Sujoy Basu, Yi Luan,
+Denny Zhou, and Le Hou. Instruction-following evaluation for large language models.
+arXiv preprint arXiv:2311.07911, 2023.
+A
+Appendix
+A.1
+Data Value Assessment Tool
+Figure 15 in the main text reports the average normalised performance of each scorer across
+the three benchmarks. Figure 21 further breaks the results down per benchmark. On
+AlpacaEval 2.0, DataElf and DEITA-Q are on par, reaching LC win rates of 64.3 and 64.9
+respectively; on GSM8K, DataElf leads the runner-up IFD (62.6) by a clear margin with
+66.7 accuracy; and on MT-Bench, DataElf again takes the top spot at 6.21. Together these
+results highlight the advantage of DataElf over every other scorer.
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+AlpacaEval 2.0
+64.9
+DEITA-Q
+64.3
+DataElf (ours)
+59.8
+FineWeb-Edu
+58.5
+IFD
+57.1
+DEITA-C
+55.5
+NormLoss
+55.2
+DeBERTa
+54.0
+PPL
+53.1
+Ask-LLM
+50.0
+Full-data
+GSM8K
+66.7
+DataElf (ours)
+62.6
+IFD
+61.1
+NormLoss
+58.9
+DEITA-C
+57.9
+FineWeb-Edu
+56.3
+DEITA-Q
+52.1
+PPL
+46.2
+DeBERTa
+44.3
+Full-data
+17.6
+Ask-LLM
+MT-Bench
+6.21
+DataElf (ours)
+6.12
+IFD
+5.98
+DEITA-Q
+5.69
+FineWeb-Edu
+5.68
+PPL
+5.62
+DeBERTa
+5.53
+NormLoss
+5.47
+DEITA-C
+5.43
+Ask-LLM
+5.20
+Full-data
+Figure 21 Per-benchmark scores of each scorer on AlpacaEval 2.0, GSM8K, and MT-Bench.
+A.2
+Interaction Trajectory of SATraj-OS
+Table 2 Representative Example Showcase from SATraj-OS.
+User Instruction
+Agent Response
+Screenshot
+Step 1:
+Review the latest desktop state
+and return only the next step
+in the required ## Action and
+## Code format.
+The latest
+screenshot is attached.
+## Action:
+Click the star (bookmark) icon
+in the Chrome address bar to
+open the bookmark dialog.
+## Code:
+‘‘‘python
+pyautogui.click(0.857,0.081)
+‘‘‘
+Step 2:
+Review the latest desktop state
+and return only the next step
+in the required ## Action and
+## Code format.
+The latest
+screenshot is attached.
+## Action:
+Click on the dropdown arrow
+next to "All Bookmarks" to
+expand the folder selection
+menu.
+## Code:
+‘‘‘python
+pyautogui.click(0.800,0.217)
+‘‘‘
+Step 3:
+Review the latest desktop state
+and return only the next step
+in the required ## Action and
+## Code format.
+The latest
+screenshot is attached.
+## Action:
+Click on the "Bookmarks bar"
+option in the dropdown menu.
+## Code:
+‘‘‘python
+pyautogui.click(0.781,0.262)
+‘‘‘
+Step 4:
+Review the latest desktop state
+and return only the next step
+in the required ## Action and
+## Code format.
+The latest
+screenshot is attached.
+## Action:
+Click the "Done" button to
+complete saving the bookmark to
+the bookmarks bar.
+## Code:
+‘‘‘python
+pyautogui.click(0.834,0.275)
+‘‘‘
+Safactory: A Scalable Agent Factory for Trustworthy Autonomous Intelligence
+Step 5:
+Review the latest desktop state
+and return only the next step
+in the required ## Action and
+## Code format.
+The latest
+screenshot is attached.
+## Action:
+Save the bookmark to the
+bookmarks bar in Google Chrome.
+## Code:
+‘‘‘python
+pythcomputer.terminate
+(status=’success’)
+‘‘‘
+The task instruction in Table 2 is as follows: "Can you save this webpage I’m looking at to
+the bookmarks bar so I can come back to it later?"

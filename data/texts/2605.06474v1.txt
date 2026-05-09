@@ -1,0 +1,4795 @@
+Q-MMR: Off-Policy Evaluation via
+Recursive Reweighting and Moment Matching
+Xiang Li
+Nanjing University
+lllllimited306@gmail.com
+Nan Jiang
+UIUC
+nanjiang@illinois.edu
+Abstract
+We present a novel theoretical framework, Q-MMR, for off-policy evaluation in
+finite-horizon MDPs. Q-MMR learns a set of scalar weights, one for each data
+point, such that the reweighted rewards approximate the expected return under
+the target policy. The weights are learned inductively in a top-down manner via a
+moment matching objective against a value-function discriminator class. Notably,
+and perhaps surprisingly, a data-dependent finite-sample guarantee for general
+function approximation can be established under only the realizability of Qπ,
+with a dimension-free bound-that is, the error does not depend on the statistical
+complexity of the function class. We also establish connections to several existing
+methods, such as importance sampling and linear FQE. Further theoretical analyses
+shed new light on the nature of coverage, a concept of fundamental importance to
+offline RL.
+Introduction
+Off-policy evaluation (OPE) using value-function approximation is a fundamental and core problem
+in the theory of reinforcement learning (RL). In this task, one estimates the expected return of a
+target policy π using data collected from some behavior policy, by leveraging a function class F that
+captures the target policy’s Q-value function Qπ. For general function approximation, the canonical
+approach is Fitted-Q Evaluation (FQE), which solves a sequence of least-square regression problems
+[Ernst et al., 2005, Chen and Jiang, 2019, Le et al., 2019]. FQE can also be viewed as the theoretical
+prototype of the TD algorithm, which is a foundational building block of RL.
+While the theory of OPE with general value-function approximation is largely considered a mature
+area, where finite-sample guarantees for FQE and related algorithms have been established [Jiang
+and Xie, 2025], there are still notable gaps in our understanding:
+• Dimension dependence. All existing analyses under general function approximation (GFA)
+need to translate the empirical loss to its population counterpart, during which one pays for the
+statistical dimension of the function class (e.g., log |F| for finite F or the log covering number
+for continuous classes). While this dependence is widely accepted, there are clearly situations
+where this is loose: for example, when the data is on-policy, Monte-Carlo (MC) estimate provides
+straightforward guarantees without any log |F| dependence, raising the question of whether the
+dimension dependence is real or an artifact of the algorithm design or its analysis.
+• Inconsistency between the general and the linear analyses. Apart from the analyses under GFA,
+researchers have also obtained refined, sharp (i.e., often minimax optimal) guarantees in the linear
+and the tabular settings [Duan et al., 2020, Yin and Wang, 2021]. As it turns out, the main 1/√n
+terms in these guarantees are indeed dimension-free. Moreover, the linear analyses hold under
+strictly weaker conditions than the Bellman-completeness assumption widely adopted in the GFA
+analyses. In fact, not only the linear analyses cannot be obtained by specializing the GFA analyses
+Preprint.
+arXiv:2605.06474v1 [cs.LG] 7 May 2026
+
+Table 1: Comparison between existing analyses and ours. Each entry corresponds to an analysis of an
+algorithm (row) in a setting (column). Columns to the right represent more specialized settings, whose
+results are plug-in instantiations of more general analyses to the left. (This is why "FQE" and "Linear
+FQE" do not coincide in the linear columns, even though they become the same algorithm there.)
+For our analyses, we use the population version of coverage (see Section 4) for better comparison
+with the existing literature. "Dim-free" refers to the property of not depending on the dimension d
+or log |F|-type terms in the data-dependent bound, or only depending on it in higher-order terms
+in the data-independent bound. (∗)Technically, the linear analysis of Duan et al. [2020] considers
+the linear-MDP setup which is stronger than Bellman completeness, but it is likely that their proofs
+and results can be adapted to the weaker settings (e.g., only realizability), especially given the later
+insights of Perdomo et al. [2023], Amortila et al. [2026]; see Appendix B.4 for details.
+General +
+realizability
+General +
+completeness
+Linear +
+realizability
+Linear +
+completeness
+Coverage
+Dim-
+free?
+Coverage
+Dim-
+free?
+Coverage
+Dim-
+free?
+Coverage
+Dim-
+free?
+FQE
+sup
+f,f ′∈Fh
+|Edπ
+h [f−f ′]|
+q
+EdD
+h [(f−f ′)2]
+✗
+N/A
+∥Edπ
+h[ϕ]∥Σ−1
+h
+✗
+Linear
+FQE
+N/A
+N/A
+Ours
+q
+EdD
+h [w⋆
+h
+2]
+✓
+sup
+f∈span(Fh)
+|Edπ
+h [f]|
+q
+EdD
+h [f 2]
+✓
+(∗) ∥ψh∥Σ−1
+h
+✓
+(∗) ∥Edπ
+h[ϕ]∥Σ−1
+h
+✓
+to the linear classes, they also give rise to novel concepts-such as seemingly unconventional
+notions of coverage (see Section 4)-that are nowhere to be found in the GFA analyses.
+In this paper, we address the above gaps with a novel algorithmic framework for OPE in finite-horizon
+MDPs. The Q-MMR algorithm learns a set of weights, one for each data point, inductively in a
+top-down manner via a moment-matching objective against a value-function discriminator class
+F. Our main guarantee is a data-dependent finite-sample bound (Theorem 1, Section 3), which is
+dimension-free in that it has no explicit dependence on the complexity of F. (A data-independent
+bound will be provided in Section 4, where only the higher-order term is dimension dependent.) For
+linear F, Q-MMR coincides with linear FQE; unlike the GFA analyses of FQE (which is dimension-
+dependent and requires Bellman completeness), our guarantees fully recover the key properties of the
+fine-grained linear and tabular analyses, under only the realizability of Qπ.
+A key quantity in our bound is the second moment of the learned weights, which plays the role of an
+empirical coverage parameter [Amortila et al., 2026]. In further analyses (Section 4), we identify
+its population counterpart and examine its properties, which shed light on the nature of coverage in
+offline RL. The high-level take-away messages are consistent with the (somewhat counterintuitive)
+recent findings [Perdomo et al., 2023, Amortila et al., 2026] (e.g., the coverage target is not the feature
+occupancy in the real MDP, but that from an approximate linear dynamical system; see Eq.(6)), but
+those findings were restricted to the linear setting and difficult to generalize. Our algorithms and
+analyses provide a much-needed generalization of such insights to GFA; see Table 1 for a summary.
+Preliminaries
+Finite-horizon MDPs
+We consider an H-step finite-horizon MDP, where a random trajectory takes
+the form of s0, a0, r0, s1, a1, r1, . . . , sH, aH, rH. W.l.o.g., s0, a0 is fixed and r0 ≡0, which will
+allow us to write our algorithm in a concise and unified manner. We also assume that the state space
+is layered, i.e., S = SH
+h=0 Sh, where {Sh}H
+h=0 are disjoint sets and it always holds that sh ∈Sh. The
+layered state space makes it convenient to use stationary notation for time-inhomogeneous objects.
+Let A be the action space, and we consider finite and discrete S and A although their cardinalities
+can be arbitrarily large. R : S × A →∆([0, Rmax]) is the reward function, and P : S × A →∆(S)
+is the transition dynamics, where P(·|s, a) for s ∈Sh and a ∈A is always supported on Sh+1.
+A policy π : S →∆(A) determines a distribution of trajectories starting from the fixed s0, a0
+as rh ∼R(·|sh, ah), sh+1 ∼P(·|sh, ah), ah+1 ∼π(·|sh+1), ∀h ≥0. We use Eπ[·] to denote
+the expectation under such a distribution, and J(π) := Eπ[PH
+h=1 rh] is the expected return. Note
+that the random return PH
+h=1 rh ∈[0, Vmax] where Vmax := HRmax. The occupancy distribution
+dπ
+h is the marginal distribution of (sh, ah) under π. The Q-function of π, Qπ(s, a), is defined as:
+∀s ∈Sh, a ∈A, Qπ(s, a) = Eπ[PH
+h′=h rh′|sh = s, ah = a]. We use Qπ
+h to denote Qπ restricted to
+Sh × A. It satisfies the Bellman equation: Qπ
+h−1 = T πQπ
+h, where T π is the Bellman operator: given
+any f : Sh × A →R and s ∈Sh−1, a ∈A, (T πf)(s, a) = Er∼R(·|s,a),s′∼P (·|s,a)[r + f(s′, π)].
+Here f(s, π) is a shorthand for Ea∼π(·|s)[f(s, a)] and f(s′, π) for s′ at time H + 1 is always treated
+as 0. Since s0, a0 is fixed, we have Qπ(s0, a0) = J(π).
+Off-Policy Evaluation (OPE)
+In OPE, we want to estimate J(π) for a given target policy π,
+using data trajectories collected with a behavior policy πD. We assume the dataset consists of
+n i.i.d. trajectories, {(s(i)
+0 , a(i)
+0 , r(i)
+0 , . . . , s(i)
+H , a(i)
+H , r(i)
+H )}n
+i=1, and dD
+h is the marginal distribution of
+(sh, ah) in the data. ED[·] denotes expectation w.r.t. the data distribution.
+To handle large state and action spaces, we consider the standard setting of function approximation,
+where a function class F = {Fh}H
+h=1 is used to model Qπ; each Fh consists of functions of the type
+Sh × A →R. Throughout the paper we assume the standard realizability assumption, that is:
+Assumption 1 (Realizability). Qπ ∈F, which is shorthand for Qπ
+h ∈Fh, ∀h ∈[H].
+Extension to handle misspecification is routine (see comment below Eq.(5)). Note that most standard
+analyses of OPE algorithms, especially those that use a general function class F, typically require the
+stronger Bellman-completeness assumption [Antos et al., 2008, Chen and Jiang, 2019]:
+Assumption 2 (Bellman Completeness). T πf ∈Fh, ∀f ∈Fh+1, h ∈[H].
+Our main guarantee (Theorem 1), however, does not rely on such a stronger assumption, and we
+discuss the implications of Bellman completeness in our results in Section 4.
+While our main results are derived for GFA, to develop intuitions and make connections with the
+literature, it will be useful to consider the special case of linear and tabular function approximation:
+Definition 1 (Linear function class). F is linear in a given feature map ϕ : S × A →Rd, if
+F = Fϕ = {(s, a) 7→ϕ(s, a)⊤θ : ∥θ∥2 ≤Θ} for some boundedness parameter Θ > 0.
+Definition 2 (Tabular function class). F is tabular if F = Ftab = [0, Vmax]S×A.
+Fixed-design analyses of linear regression
+We briefly recall the fixed-design analysis of linear
+regression (LR), which will be extremely helpful for understanding our algorithm and analyses,
+since they correspond to the special case of OPE with H = 1 and linear F. Consider LR over
+a dataset {(xi, yi)}n
+i=1 where xi ∈Rd, and assume bΣ :=
+n
+P
+i xix⊤
+i is invertible. LR gives
+bθ = bΣ−1 1
+n
+P
+i xiyi, and thus makes the prediction of x⊤
+testbθ = 1
+n
+P
+i x⊤
+testbΣ−1xiyi on a new xtest.
+Standard fixed-design analysis provides a O(∥xtest∥bΣ−1
+p
+log(1/δ)/n) high-probability error bound
+for this prediction, where ∥xtest∥bΣ−1 =
+q
+x⊤
+testbΣ−1xtest is the Mahalanobis norm. This bound is
+"fixed-design" as the concentration argument is w.r.t. the randomness of yi|xi, where {xi}n
+i=1 are
+treated as fixed instead of stochastic. It can be proved via a moment-matching formulation of LR,
+which is a special case of our Algorithm 1; see Appendix A for further detail.
+Math notation
+[H] = {1, 2, . . . , H}. ≲and ≳are inequalities that hold up to a positive absolute
+constant. We also use the big-Oh notation O(·) to highlight dependencies on selected variables. For a
+function f ∈Fh, we use f|n ∈Rn to denote its sample evaluation
+ f(s(1)
+h , a(1)
+h ), . . . , f(s(n)
+h , a(n)
+h )
+
+.
+Algorithm and Analyses
+Our algorithm, Q-MMR, learns a scalar weight bw(i)
+h for each state-action pair (s(i)
+h , a(i)
+h ) in the data,
+and forms the estimate of J(π) using the reweighted reward: bJ(π) := 1
+n
+Pn
+i=1
+PH
+h=1 bw(i)
+h r(i)
+h . In
+fact, the estimate will be unbiased if bw(i)
+h is set to the following expression, as well understood from
+Algorithm 1 Q-MMR (Q-function-based Moment-Matched Reweighting)
+Input: Target policy π, data {(s(i)
+0 , a(i)
+0 , r(i)
+0 , . . . , s(i)
+H , a(i)
+H , r(i)
+H )}n
+i=1, function class F = {Fh}h.
+Output: { bw[n]
+h }h, where bw[n]
+h
+:= [ bw(i)
+h ]i ∈Rn; bJ(π) := PH
+h=1
+n
+Pn
+i=1 bw(i)
+h r(i)
+h .
+1: Initialize bw(i)
+≡1, ∀i.
+2: for h = 1 to H do
+3:
+Choose bw[n]
+h
+as the w[n]
+h
+that (approximately) minimizes the loss
+bLh(w[n]
+h ; bw[n]
+h−1) := sup
+f∈Fh
+n
+n
+X
+i=1
+w(i)
+h f(s(i)
+h , a(i)
+h ) −1
+n
+n
+X
+i=1
+bw(i)
+h−1f(s(i)
+h , π)
+ .
+(1)
+(Optional) Among bw[n]
+h
+with the same loss, minimize ∥bw[n]
+h ∥[n] :=
+q
+n
+P
+i( bw(i)
+h )2.
+4: end for
+the literature on marginalized importance sampling (MIS) [Liu et al., 2018, Xie et al., 2019]:
+(MIS Ratio)
+dπ
+h(s(i)
+h , a(i)
+h )/dD
+h (s(i)
+h , a(i)
+h ).
+(2)
+However, learning the MIS ratio in Eq.(2) requires strong assumptions and is sufficient but not
+necessary for accurate OPE, and our algorithm enjoys guarantees when bw(i)
+h does not learn this ratio
+but something more nuanced (see Section 4). Nevertheless, to develop the first intuition, it is useful
+to temporarily pretend that our algorithm learns such weights inductively in a top-down manner.
+Algorithm Intuition
+We now provide a non-rigorous (but relatively easy to understand) explana-
+tion of our Algorithm 1, Q-MMR, which computes bw[n]
+h
+= { bw(i)
+h }n
+i=1 level-by-level from h = 0 to
+H. We do not represent such weights in a parameterized manner as standard MIS methods [Liu et al.,
+2018, Uehara et al., 2020], but rather learn a separate scalar weight for each of the n data points.
+Since (s0, a0) is the fixed dummy initial state-action pair, there is no distribution shift at h = 0 and
+we set w(i)
+= dπ
+0 (s0,a0)
+dD
+0 (s0,a0) ≡1.
+Inductively, suppose we already have bw(i)
+h−1 ≈
+dπ
+h−1(s(i)
+h−1,a(i)
+h−1)
+dD
+h−1(s(i)
+h−1,a(i)
+h−1), and we want to compute bw(i)
+h
+≈
+dπ
+h(s(i)
+h ,a(i)
+h )
+dD
+h (s(i)
+h ,a(i)
+h ). (Again, this is generally not the case in our analysis.) By the principle of importance
+sampling,1 bw[n]
+h−1 = { bw(i)
+h−1}n
+i=1 reweights the data distribution at level h −1 from dD
+h−1 to dπ
+h−1.
+As a consequence, the following (reweighted) distributions over (sh, ah), as characterized by their
+generative processes, produce the same expectations:
+sh ∼P(·|sh−1, ah−1), ah ∼π(·|sh), (sh−1, ah−1) ∼dD
+h−1, reweighted by
+dπ
+h−1(sh−1,ah−1)
+dD
+h−1(sh−1,ah−1)
+⇔sh ∼P(·|sh−1, ah−1), ah ∼π(·|sh), (sh−1, ah−1) ∼dπ
+h−1 ⇔(sh, ah) ∼dπ
+h.
+This way, we successfully produce a weighted distribution that "looks like" dπ
+h-by applying the
+weight bw(i)
+h−1 at level h −1 to the state-action pair (s(i)
+h , π) at level h. To complete the induction,
+we will need bw(i)
+h
+that reweight (s(i)
+h , a(i)
+h ), but now we only have weights that reweight (s(i)
+h , π).
+To bridge this gap, Eq.(1) employs a moment-matching objective based on the Integral Probability
+Metric (IPM): we find w(i)
+h
+such that bw[n]
+h -reweighted {(s(i)
+h , a(i)
+h )}n
+i=1 is indistinguishable from
+bw[n]
+h−1-reweighted {(s(i)
+h , π)}n
+i=1, up to the discrimination power of Fh.
+3.1
+Finite-Sample Guarantee
+We now present the main analyses for Q-MMR, which face two key challenges:
+1. While the earlier intuition appeals to learning the MIS ratio, this is generally not guaranteed when
+we only assume realizability (Assumption 1). Under such a weak assumption, we need to bound
+the OPE error without showing that bw[n]
+h
+tracks the MIS ratio.
+1That is, given distributions p and q over X and f : X →R, we have Ep[f] = Eq[p/q · f] when p/q < ∞.
+2. The number of free parameters ({ bw[n]
+h }h) scales linearly in n, the number of data points. Under
+the naïve parameter counting argument, this usually results in overfitting, i.e., an error bound
+that does not shrink as n grows. Such a practice of assigning a separate scalar to each data point
+is found in distributionally robust optimization [Rahimian and Mehrotra, 2019] and balancing
+weights [Kallus, 2018], and its analyses often require sophisticated concentration machinery.
+We address both challenges by a starkly simple and elementary analysis, whose core proof takes but a
+few lines. Perhaps surprisingly, our analysis does not perform any union bound over the function
+class F at all, which avoids the statistical complexity of F (e.g., log |F| for finite F).
+The analysis is given as follows, where we start with the OPE error:
+PH
+h=1
+n
+Pn
+i=1 bw(i)
+h r(i)
+h −J(π)
+ =
+PH
+h=0
+n
+Pn
+i=1 bw(i)
+h r(i)
+h −J(π)
+
+(r0 ≡0)
+≤
+PH
+h=0
+n
+Pn
+i=1 b
+w(i)
+h
+
+Qπ(s(i)
+h , a(i)
+h ) −Qπ(s(i)
+h+1, π)
+
+−J(π)
+ + PH
+h=0 ϵstat
+h
+(3)
+≤
+PH
+h=0
+n
+Pn
+i=1
+
+bw(i)
+h Qπ(s(i)
+h , a(i)
+h ) −b
+w(i)
+h+1Qπ(s(i)
+h+1, a(i)
+h+1)
+
+−J(π)
+
+(4)
++ PH
+h=1 bLh( bw[n]
+h ; bw[n]
+h−1) + PH
+h=0 ϵstat
+h
+= PH
+h=1 bLh( bw[n]
+h ; bw[n]
+h−1) + PH
+h=0 ϵstat
+h .
+We explain the derivation step by step:
+1. First, we replace r(i)
+h with Qπ(s(i)
+h , a(i)
+h ) −Qπ(s(i)
+h+1, π) by paying for an error term ϵstat
+h , where
+n
+Pn
+i=1 bw(i)
+h
+
+Qπ(s(i)
+h , a(i)
+h ) −r(i)
+h −Qπ(s(i)
+h+1, π)
+ ≤ϵstat
+h
+∝∥bw[n]
+h ∥[n] :=
+q
+n
+P
+i( bw(i)
+h )2
+holds with high probability. This follows from a standard concentration argument, which treats
+{(s(i)
+h , a(i)
+h )}n
+i=1 as fixed and is w.r.t. the randomness of r(i)
+h and s(i)
+h+1 conditioned on (s(i)
+h , a(i)
+h ).
+As long as bw[n]
+h
+are chosen only based on the trajectory prefixes up to {(s(i)
+h , a(i)
+h )}n
+i=1 and do not
+depend on the randomness after time h, the independence across the terms is intact, though the
+range of each term will be amplified by the size of bw(i)
+h .
+2. From (3) to (4), we replace b
+w(i)
+h Qπ(s(i)
+h+1, π) with b
+w(i)
+h+1Qπ(s(i)
+h+1, a(i)
+h+1). Their difference
+is almost exactly the matching loss used in our algorithm, except that we do not know Qπ
+h+1 in
+the algorithm and instead relax it to supf∈Fh+1 using realizability (Assumption 1):
+n
+n
+X
+i=1
+b
+w(i)
+h+1Qπ(s(i)
+h+1, a(i)
+h+1) −1
+n
+n
+X
+i=1
+b
+w(i)
+h Qπ(s(i)
+h+1, π)
+
+(5)
+≤
+sup
+f∈Fh+1
+n
+n
+X
+i=1
+bw(i)
+h+1f(s(i)
+h+1, a(i)
+h+1) −1
+n
+n
+X
+i=1
+bw(i)
+h f(s(i)
+h+1, π)
+ = bLh+1( bw[n]
+h+1; bw[n]
+h ).
+If realizability is not satisfied, an additional misspecification term will occur in the above inequality.
+In addition, the realizability of Fh+1 can be relaxed to that of the convex hull of Fh+1 as the
+matching loss is convex in f [Uehara et al., 2020], which we omit for a clean presentation.
+3. Finally, the first line of Eq.(4) vanishes due to telescoping, as the negative term in the h-th term
+exactly cancels the positive term in the (h + 1)-th term, leaving only bw(i)
+0 Qπ(s0, a0) = J(π).
+This immediately leads to the following guarantee of Q-MMR; see proof in Appendix B.1.
+Theorem 1. For any choice of weight vectors { bw[n]
+h }h in Algorithm 1 where bw[n]
+h only depends on
+{(s(i)
+0 , a(i)
+0 , r(i)
+0 , . . . , s(i)
+h , a(i)
+h )}, under Assumption 1, with probability at least 1 −δ, we have
+ bJ(π) −J(π)
+ ≤PH
+h=1 bLh( bw[n]
+h ; bw[n]
+h−1) + PH
+h=0 ϵstat
+h ,
+where ϵstat
+h
+= ∥bw[n]
+h ∥[n] · Vmax
+q
+2 log(2(H+1)/δ)
+n
+.
+Dimension-freeness and "WYSIWYG"
+Standard OPE analyses in offline RL under general
+function approximation need to translate the empirical loss to its population counterpart, during which
+one pays for the statistical dimension of the function class. In contrast, our analysis only performs
+concentration on Qπ (Eq.(3)), and no concentration on F is needed, resulting in a dimension-free
+bound. In addition, the empirical matching loss bL observed in the algorithm (Eq.(1)) shows up in
+the bound, which makes Theorem 1 "what you see is what you get (WYSIWYG)". One downside is
+that it can be difficult to tell when the matching loss will be large vs. small; as we will see below,
+in special cases like linear F, there are mild sufficient conditions (i.e., invertible sample covariance
+matrix) which guarantee that 0 matching loss is achievable (Propositions 2 and 3).
+Uncertainty quantification
+In addition to the empirical matching loss, the other term in the
+bound, ϵstat
+h , depends on the 2nd moment of bw[n]
+h , which is also available to the learner. Therefore, the
+bound in Theorem 1 is directly computable from the data, which means that our Q-MMR algorithm
+automatically comes with uncertainty quantification. Similar results can be found in existing analyses
+of linear OPE, such as Duan et al. [2020, Theorem 4], and our bound in Theorem 1 applies more
+generally to GFA and improves over Duan et al. [2020] in several aspects; see Appendix B.4.
+"Fixed-design" analysis
+Theorem 1 provides a data-dependent bound, which is an unusual form
+of guarantee in the OPE literature. By considering the following special case, however, we see that
+Theorem 1 is the natural generalization of the standard fixed-design analysis in linear regression.
+Proposition 2. Consider H = 1 and linear F (see Definition 1). Let xi = ϕ(s(i)
+1 , a(i)
+1 ). For invertible
+bΣ = 1
+n
+Pn
+i=1 xix⊤
+i , with bw(i)
+= x⊤
+testbΣ−1xi where xtest = 1
+n
+Pn
+i=1 ϕ(s(i)
+1 , π), we have
+(i) bL1( bw[n]
+1 ; bw[n]
+0 ) = 0,
+and
+(ii) ∥bw[n]
+1 ∥[n] = ∥xtest∥bΣ−1.
+The bound in Theorem 1 becomes | bJ(π) −J(π)| ≤ϵstat
++ ϵstat
+1 , where ϵstat
+∝∥bw[n]
+1 ∥[n] = ∥xtest∥bΣ−1.
+When bΣ is non-invertible, the minimizer is bw(i)
+= x⊤
+testbΣ†xi where (·)† is pseudo-inverse.
+In other words, when H = 1 and F is linear, our algorithm and guarantee exactly recover the
+moment-matching form of linear regression (LR) and its fixed-design analysis (see Section 2 and
+Appendix A): the error bound of LR depends on ∥xtest∥bΣ−1, which is data dependent due to bΣ and
+coincides with our ∥bw[n]
+1 ∥[n] in the ϵstat
+term. Our ϵstat
+term is a small overhead that corresponds to
+how xtest concentrates to its expectation along the direction of the true linear coefficients under the
+randomness of s1; see Footnote 5 in Appendix A for further details.
+Non-uniqueness of bw and the principle of least 2nd moment
+So far, Theorem 1 holds for any
+choice of { bw[n]
+h }h, including those that do not minimize Eq.(1). Moreover, even if we require bw[n]
+h
+to exactly minimize bLh(·; bw[n]
+h−1), the solution is also generally not unique. As it turns out, this
+flexibility is a blessing which allows us to unify and make connections to several existing methods.
+That said, it is still desirable that we fix a canonical choice of bw[n]
+h
+to have a fully-specified algorithm.
+Among all bw[n]
+h
+that achieves the minimal loss, it is naturally preferred to choose the one with the
+least 2nd moment ∥bw[n]
+h ∥[n] since this quantity appears in the bound through ϵstat
+h . We call this the
+principle of least 2nd moment. In fact, in Proposition 2, the choice of weights that recovers linear
+regression is exactly the minimizer of the 2nd moment.
+In practice, there can be situations where even the 2nd moment-minimizing bw[n]
+h
+is too large, causing
+a poorly behaved ϵstat
+h
+term. This can happen, for example, when bΣ is near singular in the linear
+setting. In such cases, one needs to balance the bias-variance trade-off, by potentially giving up
+some matching loss in exchange for a smaller ∥bw[n]
+h ∥[n] (and thus ϵstat
+h ). This can be implemented via
+constraint optimization (e.g., minimizing bL up to some budget for ∥bw[n]
+h ∥[n]), or via a Lagrangian
+form that corresponds to ridge regression in the linear setting (see Appendix B.5). In the rest of the
+paper, however, we will not consider constraint or regularization on bw[n]
+h
+to keep the analyses clean.
+3.2
+Connection to Existing Methods
+We discuss the relationship between Q-MMR and several existing methods to establish connections
+and help provide further insights.
+3.2.1
+Monte-Carlo Policy Evaluation and Importance Sampling
+In the special case where the data is on-policy, i.e., the trajectories are sampled from π itself, it is
+well known that the Monte-Carlo estimator, 1
+n
+Pn
+i=1
+PH
+h=1 r(i)
+h , is a simple and effective method that
+achieves dimension-free error guarantees, since the analysis simply applies concentration arguments
+to the i.i.d. random returns. This also shows the looseness of standard OPE analyses that depends on
+log |F| [Antos et al., 2008, Chen and Jiang, 2019], as those guarantees do not automatically eliminate
+log |F| when data is on policy. In contrast, Q-MMR immediately recovers MC in this setting if we
+simply choose bw(i)
+h
+≡1. (Note that this choice is not necessarily minimizing the 2nd moment of
+bw[n]
+h .) The matching loss bLh( bw[n]
+h ; bw[n]
+h−1) is 0 under such weights,2 and Theorem 1 is dimension free.
+More generally, when the behavior policy πD is stochastic, a variant of our algorithm can also recover
+step-wise importance sampling, the generalization of MC to the off-policy setting. In particular, if we
+change the target embedding 1
+n
+P
+i bw(i)
+h−1f(s(i)
+h , π) in Eq.(1) to3
+n
+X
+i
+bw(i)
+h−1f(s(i)
+h , a(i)
+h ) π(a(i)
+h |s(i)
+h )
+πD(a(i)
+h |s(i)
+h ),
+which produces the same target embedding after marginalizing over the action randomness, then
+setting bw(i)
+h = Qh
+h′=1
+π(a(i)
+h′ |s(i)
+h′ )
+πD(a(i)
+h′ |s(i)
+h′ ) ensures bLh( bw[n]
+h ; bw[n]
+h−1) = 0.
+This example also demonstrates the role of F and the importance of 2nd-moment minimization: if we
+only care about minimizing the matching loss bL but not the size of bw[n]
+h , we can always set bL to 0 by
+setting bw[n]
+h
+to be the cumulative importance weights, which generally incurs exponential-in-horizon
+variance. This is avoided when structured F admits many choices of bw[n]
+h
+that equally minimize the
+matching loss, and we can choose the smallest one to significantly dampen the weight size.
+3.2.2
+Linear and Tabular FQE
+As mentioned in Section 1, the canonical OPE method under value-function approximation is FQE,
+which fits Qπ
+h in parametric forms recursively from bottom up via a series of squared-loss regressions.
+While our Q-MMR is a top-down procedure that learns non-parametric weights, it coincides with
+FQE in the linear and tabular setting (Definitions 1 and 2), which should not be surprising given the
+connection between Q-MMR and linear regression when H = 1 (Proposition 2).
+Proposition 3. (i) In the linear setting (Definition 1), assume bΣh = 1
+n
+P
+i ϕ(s(i)
+h , a(i)
+h )ϕ(s(i)
+h , a(i)
+h )⊤
+is invertible for all h ≥1. Consider Q-MMR where in each step h we choose the least-2nd-moment
+weight bw[n] that sets bLh( bw[n]
+h ; bw[n]
+h−1) = 0. The final prediction of bJ(π) is identical to that given by
+linear FQE [Duan et al., 2020] without ridge regression.
+(ii) As a further special case in the tabular setting (Definition 2), assume every state-action pair
+appears in the dataset, Q-MMR and FQE both coincide with the model-based (certainty-equivalence)
+solution [Yin and Wang, 2021], and bw(i)
+h
+= c
+dπ
+h(s(i)
+h , a(i)
+h )/c
+dD
+h (s(i)
+h , a(i)
+h ) where c
+dD
+h is the empirical
+frequency of data and c
+dπ
+h is the occupancy of π in the empirical MDP.
+More detailed definitions (e.g., the FQE procedure) and the proof can be found in Appendix B.3. In
+the linear and tabular settings, prior works [Duan et al., 2020, Yin and Wang, 2021] have established
+fine-grained analyses where the leading O(1/√n) terms are dimension-free, which separates them
+from the log |F|-dependent guarantees for GFA and no unification is known to this date. Our
+results fill this gap in theoretical understanding, as these fine-grained results are recovered
+2This holds when π is deterministic; when π is stochastic, it still holds if we consider the IS variant of our algorithm, as
+described below.
+3This resembles how targets are set up in TD, such as expected SARSA vs. its off-policy version [Sutton and Barto, 2018].
+(and sometimes improved) when we specialize our Theorem 1 to the linear/tabular settings. We
+provide a detailed discussion and comparison w.r.t. these prior results in Appendix B.4.
+Proposition 3 also provides intuition for bLh when it takes non-zero values. In the tabular case, bLh
+may not be minimized to 0 if some (s, a) ∈Sh × A does not appear in the data at all, and the
+corresponding mass in c
+dπ
+h will result in a non-zero matching loss.
+3.3
+Computational Efficiency
+So far our analyses are only concerned with statistical efficiency. The computational efficiency of
+the method boils down to whether we can efficiently minimize bLh( · ; bw[n]
+h−1) (Eq. (1)), which is
+a standard IPM objective. As already discussed in Section 3.2, this is easy to optimize when F
+is linear as it simply amounts to linear regression. For general function approximation, given the
+minimax form (arg minw[n]
+h supf∈F), we can efficiently approximate the solution via the no-regret +
+best-response framework [Freund and Schapire, 1999] given standard optimization oracles over F;
+see further discussion in Appendix B.5.
+Understanding the Learned Weights
+The results thus far leave a few important and interrelated questions open:
+Boundedness of weights. Theorem 1 only assumes realizability and not Bellman completeness.
+In this regime, classic counterexamples against TD imply that linear FQE may diverge in the worst
+case, even if data covers all feature directions [Tsitsiklis and Van Roy, 1996]. Since our Q-MMR
+coincides with FQE in the linear setting, this means that the size of bw[n]
+h
+may blow-up exponentially
+in the horizon. Thus, naturally we want to understand when the size of bw[n]
+h
+stays well bounded, and
+how stronger conditions such as Bellman completeness help guarantee that.
+A priori bound. Theorem 1 is data dependent. Can we turn it into an a priori, data-independent
+bound? Recall that the bound depends on the size of bw[n]
+h , ∥bw[n]
+h ∥[n]. To remove the data dependence,
+we can define the population counterpart of bw[n]
+h
+and use its size to replace ∥bw[n]
+h ∥[n]. Note that such
+bounds in general will incur dimension dependence, albeit in higher-order terms [Hsu et al., 2011].
+The nature of coverage. ∥bw[n]
+h ∥[n] plays the role of coverage in Theorem 1. Conventional wisdom
+tells us that coverage is about how the distribution dD
+h covers dπ
+h, and the density coverage can
+sometimes be refined based on structure of F; for example, in linear case, data only needs to cover
+the mean feature direction E(sh,ah)∼dπ
+h[ϕ(sh, ah)]. However, recent fine-grained linear analyses tell
+a very different story: Amortila et al. [2026] (see also Duan et al. [2020], Perdomo et al. [2023])
+show that the target of coverage is generally not dπ
+h or its feature expectation, but the vector defined
+by the following linear dynamical system: starting with ψ1 = ED[ϕ(s1, π)], and define, ∀h ≥1,
+ψh+1 = Bπ
+hψh, where Bπ
+h = (Σcr
+h)⊤Σ−1
+h , Σh = ED[ϕhϕ⊤
+h ], Σcr
+h = ED[ϕh(ϕπ
+h+1)⊤].
+(6)
+Here ϕh is the shorthand of ϕ(sh, ah) and ϕπ
+h+1 = ϕ(sh+1, π). In fact, linear FQE can be thought of
+as fitting such a system and using it to predict J(π) [Duan et al., 2020]. While this system mimics the
+feature evolution in the real MDP, they are generally different (i.e., ψh ̸= Edπ
+h[ϕ]). In the fine-grained
+analyses of linear OPE, it is shown that what really needs to be covered is the ψh from such a "wrong"
+system {Bπ
+h}h, not the feature expectation Edπ
+h[ϕ] from the real MDP,4 and they only coincide
+under Bellman completeness. However, the analyses of FQE under general function approximation
+rely on completeness, and this subtle distinction between ψh and Edπ
+h[ϕ] is therefore not observed.
+Moreover, the key concepts such as Bπ
+h are defined linear-algebraically, and it is unclear how their
+GFA counterpart should be defined. Does ∥bw[n]
+h ∥[n] in our analyses (or its population counterpart)
+provide such a generalization, and how is it related to the concepts identified in the linear analyses?
+We address the above questions by providing a concentration analysis for how bw[n]
+h
+tracks its
+population counterpart, defined below; throughout this section, we assume the empirical algorithm
+performs exact minimization of bLh with least 2nd-moment bw[n]
+h .
+4There is information-theoretic lower bound against this possibility [Foster et al., 2022].
+Definition 3. In Algorithm 1, replace bw[n]
+h
+∈Rn with w⋆
+h ∈RS×A (w⋆
+0 ≡1), and Eq.(1) with
+Lh(wh; w⋆
+h−1) := supf∈Fh
+ED[wh(sh, ah)f(sh, ah)] −ED[w⋆
+h−1(sh−1, ah−1)f(sh, π)]
+ .
+(7)
+Assume exact minimization of L is performed. Among the minimizers, we choose the one that
+minimizes ∥wh∥2,dD
+h := (EdD
+h [w2
+h])1/2. The output {w⋆
+h}h is the population counterpart of { bw[n]
+h }h.
+To characterize the least-2nd-moment solution bw[n]
+h
+and its population counterpart w⋆
+h, we will use a
+Hilbert-space viewpoint based on the linear span of Fh.
+Definition 4. For each h ∈[H], define span(Fh) = {PM
+m=1 amfm : M < ∞, am ∈R, fm ∈Fh}.
+Let Fh := span(Fh) be the closure of span(Fh) under ∥f∥2,dD
+h = (E(s,a)∼dD
+h [f(s, a)2])1/2, the
+dD
+h -weighted (semi-)norm. We also define ⟨f, g⟩dD
+h = E(s,a)∼dD
+h [f(s, a)g(s, a)].
+Proposition 4 (2nd-Moment Minimizers are in F). The population least-2nd-moment weight w⋆
+h ∈
+Fh. In addition, for the least-2nd-moment bw[n]
+h , there exists ¯wh ∈Fh such that ¯wh|n = bw[n]
+h , where
+|n denotes the sample evaluation with ( ¯wh|n)i = ¯wh(s(i)
+h , a(i)
+h ), ∀i ∈[n].
+4.1
+Tracking Error of bw[n]
+h
+and Data-independent Guarantee
+We now introduce a few assumptions and provide finite-sample guarantees for how bw[n]
+h
+tracks w⋆
+h.
+When specialized to the linear setting, these assumptions recover familiar conditions in the literature.
+Assumption 3 (Bounded generalized leverage). ∀h ∈[H], there exists κh ∈(0, ∞) such that
+|f(s, a)| ≤√κh∥f∥2,dD
+h ,
+∀f ∈Fh,
+∀(s, a) ∈Sh × A.
+This assumption generalizes the standard condition of bounded statistical leverage in the linear
+setting ∥Σ−1/2
+h
+ϕ(sh, ah)∥2 ≤√κh, ∀(sh, ah), which is often assumed in random-design analyses
+[Hsu et al., 2011]. It also implies that ∥· ∥2,dD
+h is identifiable on Fh, in the sense that ∥f∥2,dD
+h = 0
+implies f = 0 on Sh × A. This immediately leads to the following implication:
+Proposition 5 (Population 0 matching loss). For each h ∈[H], under Assumption 3, the population
+matching problem in Definition 3 achieves 0 loss, i.e., Lh(w⋆
+h; w⋆
+h−1) = 0.
+As mentioned earlier, FQE without completeness may produce run-away predictions even when
+data provides good coverage, so we need some additional quantities (weaker than completeness
+assumption) to characterize and prevent the exponential blow-up of weights. In the linear setting,
+prior works have identified the operator norm of Bπ
+h (Eq.(6)) as the key quantity that controls the
+blow-up [Perdomo et al., 2023, Amortila et al., 2026]. Below we define the counterpart of these
+concepts for Q-MMR under GFA:
+Definition 5. For each h ∈[H −1], define the projected transition operator Kπ
+h : Fh+1 →Fh, such
+that ∀f ∈Fh+1, Kπ
+hf ∈Fh is the unique minimizer of the least square problem
+Kπ
+hf := arg ming∈Fh ED
+
+(g(sh, ah) −f(sh+1, π))2
+.
+Define ρt:h = supf∈Fh:∥f∥∞≤1 ∥Kπ
+t Kπ
+t+1 · · · Kπ
+h−1f∥∞as the multi-step ∞-operator norm of
+Kπ
+t Kπ
+t+1 · · · Kπ
+h−1 : Fh →Ft , where ∥g∥∞= sup(s,a)∈Sj×A |g(s, a)| for g ∈Fj. Let ρh:h = 1.
+Proposition 6 (Connection between Kπ
+h and Bπ
+h). In the linear setting, for f ∈Fh+1, let θh+1
+be its linear coefficient (i.e., f(s, a) = ϕ(s, a)⊤θh+1), and let θh be that of Kπ
+hf ∈Fh. We have
+θh = (Bπ
+h)⊤θh+1, and ρt:h ≤supst,at ∥Σ−1/2
+h
+Bπ
+h−1 · · · Bπ
+t+1Bπ
+t ϕ(st, at)∥2.
+Just as the operator norm of Bπ
+h controls the size of ψh = Bπ
+h−1 · · · Bπ
+1 ψ1 in the linear case [Amortila
+et al., 2026], we have ρ1:h, the operator norm of Kπ
+1 · · · Kπ
+h−1, controls EdD
+h [w⋆
+hf].
+Proposition 7. Under Assumption 3, |EdD
+h [w⋆
+h(sh, ah)f(sh, ah)]| ≤ρ1:h∥f∥∞, ∀h ∈[H], f ∈Fh.
+Note that w⋆
+h may have a large size for two reasons: (1) data dD
+h does not provide sufficient coverage
+(for linear, this corresponds to near-singular Σh), and (2) the algorithm’s iterations are unstable and
+produce run-away predictions even when data has good coverage (for linear, this corresponds to
+large ∥ψh∥). Proposition 7 separates out these two factors and only studies the instability in (2) by
+examining w⋆
+h · dD
+h . Such instability can be eliminated with Bellman completeness, and Proposition 7
+provides more quantitative understanding and is strictly weaker than completeness (see Section 4.2).
+We are now ready to give the tracking error guarantee, where the bound depends on ρ(·):h (iteration
+stability), the generalized leverage, the size of w⋆
+(·) (which is determined by both iteration stability
+and the data), and the log-covering number of F(·) which is the statistical dimension term.
+Theorem 8 (Empirical weight tracks its population counterpart). Define the empirical-population
+tracking error by
+ bw[n]
+h −w⋆
+h|n
+
+[n] :=
+  1
+n
+Pn
+i=1( bw(i)
+h −w⋆
+h(s(i)
+h , a(i)
+h ))21/2. Under Assumptions 3,
+fix any h ∈[H] and δ ∈(0, 1), and let Nt be the 1/8-covering number of {u ∈Ft : ∥u∥2,dD
+t ≤1}.
+If n ≳(maxt≤h κt)2(Ph
+t=1 ρt:h)2 log(H2NtNh/δ) for all t ≤h, then with probability ≥1 −δ,
+ bw[n]
+h −w⋆
+h|n
+
+[n] ≲
+h
+X
+t=1
+ρt:h
+r
+κ2
+h log(H2NtNh/δ)
+n
+(∥w⋆
+t ∥2,dD
+t + 1).
+This result also allows us to obtain a data-independent, "random-design" version of Theorem 1, where
+we replace ∥bw[n]
+h ∥[n] with ∥w⋆
+h∥2,dD
+h and incur a higher-order term that corresponds to Theorem 8;
+such bounds are only dimension-free in the leading O(1/√n) term, but incur dimension dependence
+in the higher-order terms, which is consistent with the prior specialized analyses [Hsu et al., 2011,
+Duan et al., 2020]. For the bLh term which is also data-dependent, we can show that it becomes 0:
+Proposition 9 (Empirical 0 matching loss). Under Assumption 3, if n ≳κh log(HNh/δ) for all
+h ∈[H], then Q-MMR achieves 0 matching loss w.h.p, i.e., bLh( bw[n]
+h ; bw[n]
+h−1) = 0.
+Corollary 10 (Random-design bound). Assume realizability and exact minimization, and suppose
+Assumptions 3 hold. If n ≳(maxh κh)2(PH
+h=1 ρh:H)2 log(H2NhNH/δ) for all h ∈[H], then with
+probability ≥1 −δ,
+| bJ(π)−J(π)| ≲Vmax
+s
+log H
+δ
+n
+H
+X
+h=0
+∥w⋆
+h∥2,dD
+h +Vmax
+n
+H
+X
+h=1
+h
+X
+t=1
+ρt:h
+q
+κ2
+h log H2NtNh
+δ
+
+∥w⋆
+t ∥2,dD
+t + 1
+
+.
+4.2
+Implications of Bellman Completeness
+Below we discuss the implications of Bellman completeness (Assumption 2), which is consistent
+with and generalizes similar conclusions in the linear setting [Perdomo et al., 2023, Amortila et al.,
+2026]. Under completeness, w⋆
+h · dD
+h learns dπ
+h up to the discrimination power of Fh, and the stability
+term ρ1:h is always well controlled so no exponential blow-up will occur.
+Proposition 11. Under Assumptions 2 and 3, assuming 0 ∈Fh for all h ∈[H], we have,
+(1) E(sh,ah)∼dD
+h [w⋆
+h(sh, ah)f(sh, ah)] = E(sh,ah)∼dπ
+h[f(sh, ah)],
+∀f ∈Fh.
+(2) (Kπ
+t Kπ
+t+1 · · · Kπ
+h−1f)(s, a) = Eπ[f(sh, π) | st = s, at = a],
+∀(s, a) ∈St × A, f ∈Fh.
+(3) ρt:h ≤1,
+∀1 ≤t < h ≤H.
+We also compare ∥w⋆
+h∥2,dD
+h as a coverage parameter to the literature under various additional assump-
+tions; see Table 1 for a summary.
+Proposition 12. Under the assumptions of Proposition 11, we have ∥w⋆
+h∥2
+2,dD
+h = supf∈Fh
+(Edπ
+h [f])2
+EdD
+h [f]2 .
+In the linear setting, without completeness, we have ∥w⋆
+h∥2,dD
+h = ∥ψh∥Σ−1
+h , the finite-horizon version
+of "feature-dynamics coverage" identified by Amortila et al. [2026]. If completeness is further
+assumed, ∥w⋆
+h∥2,dD
+h = ∥E(sh,ah)∼dπ
+h[ϕ(sh, ah)]∥Σ−1
+h .
+When completeness holds, ∥w⋆
+h∥2,dD
+h almost coincides with the coverage parameter of FQE, up to a
+minor difference in the function space we take sup over. In the linear case, we also recover previously
+identified coverage parameters, providing unification of our understanding.
+5
+Other Related Works
+Throughout the paper we have discussed the connection and comparison to FQE. Here we discuss
+several other related methods.
+Marginalized Importance Sampling (MIS)
+Our method is closely related to MIS methods [Liu
+et al., 2018, Nachum et al., 2019]; for example, MWL [Uehara et al., 2020] also solves a similar
+minimax problem (min over weights and max over value functions), whose loss is similar to our
+Eq. (1). Both losses are related to the Bellman flow equation, and roughly speaking, MWL can
+be viewed as using P
+h bLh as a loss to optimize the weights at all levels simultaneously. As a
+consequence, however, this introduces dependencies of bw[n]
+h
+on {s(i)
+h+1}i and violates the condition
+in our Theorem 1, so MWL cannot learn a weight per data point but must introduce a weight class
+W ⊂(S × A →R) and learn a parametric form of weight bwh ∈W instead. This means an extra
+realizability condition (of W) and a complexity term (e.g., log |W|) compared to our analyses.
+Besides the difference in loss and parameterization, there is also a significant difference between the
+existing analyses of MIS methods and ours, and some insights from our analyses may be transferred
+to MIS. For example, we may use our proof techniques to provide data-dependent bounds for MWL
+that avoid the log |F| term (see Appendix D). In addition, while most MIS methods assume W
+models the MIS ratio (Eq.(2)), Uehara et al. [2020] point out that the method may learn degenerate
+weights when F is structured, but a systematic understanding of what the learned weights really
+represent is still lacking, which our analyses shed light on given the close connection between the
+methods.
+Methods that only rely on realizability
+The main guarantee of our method (Theorem 1) only
+relies on realizability Qπ ∈F and not the stronger and more widely used Bellman-completeness
+assumption. Getting such results is also the central focus of the model selection problem in offline
+RL, where we want to select Qπ (or sometimes Q⋆) from a set of candidates on holdout data. Given
+challenges such as the double-sampling problem, these model-selection algorithms often require a
+tournament procedure and is only computationally efficient for a small number of candidates [Xie
+and Jiang, 2021, Liu et al., 2025]. In comparison, our Q-MMR is computationally efficient for rich
+function classes under standard optimization oracles.
+Top-down algorithms
+Our algorithm design bears structural similarities to some of the existing
+methods. For example, Sun et al. [2019] designs an online imitation-learning algorithm with a dataset
+that does not contain actions, which performs top-down, level-by-level moment matching against
+a value discriminator class similar to Q-MMR. However, they have online access to the MDP and
+the task is to imitate the expert policy, and their analysis requires Bellman completeness for the
+discriminator class. Huang et al. [2023] learns the parametric form of the MIS ratio (Eq.(2)) in
+finite-horizon MDPs in a top-down manner, but they do not use a value-function discriminator but
+relies on a squared-loss objective, and their analyses also require a version of completeness for the
+MIS ratio.
+Limitations and Future Work
+We conclude the paper by discussing limitations and future work. One major limitation is that we
+need i.i.d. trajectory data; an adaptively collected dataset will break the conditional independence
+between bw(i)
+h and s(i)
+h+1|s(i)
+h , a(i)
+h . A straightforward extension of our results to the infinite-horizon
+discounted case will result in similar difficulties. One potential solution is to leverage the fact that
+bw[n]
+h
+always lies in Fh (Proposition 4), so we can union bound over F. However, doing so will incur
+the dimension dependence in the leading term, and we hope to resolve this issue in the future with
+more advanced concentration tools.
+As another limitation, our weights bw[n]
+h
+are computed to minimize matching loss and variance at
+level h in a rather greedy and local manner, as the effects of bw[n]
+h
+on downstream levels h′ > h
+are not considered in optimization. One might attempt to address this issue by optimizing the sum
+of losses across all levels simultaneously, which essentially recovers MIS methods and runs into a
+double-sampling issue with non-parametric weights (Appendix D.1). It remains an open question
+whether we can optimize the weights bw[n]
+h
+across levels while circumventing the issue.
+Acknowledgement
+NJ thanks Philip Amortila, Audrey Huang, Akshay Krishnamurthy, and Steven Wu for helpful
+discussions in the early phases of the project.
+References
+Yasin Abbasi-Yadkori, David Pal, and Csaba Szepesvari. Online-to-confidence-set conversions and
+application to sparse stochastic bandits. In AISTATS, volume 22, pages 1-9, 2012.
+Philip Amortila, Audrey Huang, Akshay Krishnamurthy, and Nan Jiang. A unifying view of coverage
+in linear off-policy evaluation. arXiv preprint arXiv:2601.19030, 2026.
+András Antos, Csaba Szepesvári, and Rémi Munos. Learning near-optimal policies with Bellman-
+residual minimization based fitted policy iteration and a single sample path. Machine Learning,
+2008.
+Jinglin Chen and Nan Jiang. Information-theoretic considerations in batch reinforcement learning. In
+Proceedings of the 36th International Conference on Machine Learning, pages 1042-1051, 2019.
+Christoph Dann, Nan Jiang, Akshay Krishnamurthy, Alekh Agarwal, John Langford, and Robert E
+Schapire. On oracle-efficient pac rl with rich observations. Advances in Neural Information
+Processing Systems, 2018:1422-1432, 2018.
+Yaqi Duan, Zeyu Jia, and Mengdi Wang. Minimax-optimal off-policy evaluation with linear function
+approximation. In International Conference on Machine Learning, pages 2701-2709. PMLR,
+2020.
+Damien Ernst, Pierre Geurts, and Louis Wehenkel. Tree-based batch mode reinforcement learning.
+Journal of Machine Learning Research, 6:503-556, 2005.
+Dylan J Foster, Akshay Krishnamurthy, David Simchi-Levi, and Yunzong Xu. Offline reinforcement
+learning: Fundamental barriers for value function approximation. In Conference on Learning
+Theory, pages 3489-3489. PMLR, 2022.
+Yoav Freund and Robert E Schapire. Adaptive game playing using multiplicative weights. Games
+and Economic Behavior, 29(1-2):79-103, 1999.
+Elad Hazan. Introduction to online convex optimization. Foundations and Trends in Optimization, 2
+(3-4):157-325, 2016.
+Daniel Hsu, Sham M Kakade, and Tong Zhang. An analysis of random design linear regression.
+arXiv preprint arXiv:1106.2363, 6, 2011.
+Audrey Huang, Jinglin Chen, and Nan Jiang. Reinforcement learning in low-rank MDPs with density
+features. In Proceedings of the 40th International Conference on Machine Learning, volume 202
+of Proceedings of Machine Learning Research, pages 13710-13752. PMLR, 23-29 Jul 2023.
+Nan Jiang and Jiawei Huang. Minimax value interval for off-policy evaluation and policy optimization.
+Advances in Neural Information Processing Systems, 33, 2020.
+Nan Jiang and Tengyang Xie. Offline reinforcement learning in large state spaces: Algorithms and
+guarantees. arXiv preprint arXiv:2510.04088, 2025.
+Chi Jin, Zhuoran Yang, Zhaoran Wang, and Michael I Jordan. Provably efficient reinforcement
+learning with linear function approximation. In Conference on Learning Theory, pages 2137-2143.
+PMLR, 2020.
+Nathan Kallus. Balanced policy evaluation and learning. Advances in neural information processing
+systems, 31, 2018.
+Hoang Le, Cameron Voloshin, and Yisong Yue. Batch policy learning under constraints. In Interna-
+tional Conference on Machine Learning, pages 3703-3712, 2019.
+Pai Liu, Lingfeng Zhao, Shivangi Agarwal, Jinghan Liu, Audrey Huang, Philip Amortila, and Nan
+Jiang. Model selection for off-policy evaluation: New algorithms and experimental protocol. arXiv
+preprint arXiv:2502.08021, 2025.
+Qiang Liu, Lihong Li, Ziyang Tang, and Dengyong Zhou. Breaking the curse of horizon: Infinite-
+horizon off-policy estimation. In Advances in Neural Information Processing Systems, pages
+5356-5366, 2018.
+Sobhan Miryoosefi, Kianté Brantley, Hal Daume III, Miro Dudik, and Robert E Schapire. Reinforce-
+ment learning with convex constraints. Advances in neural information processing systems, 32,
+2019.
+Ofir Nachum, Yinlam Chow, Bo Dai, and Lihong Li. Dualdice: Behavior-agnostic estimation of
+discounted stationary distribution corrections. Advances in Neural Information Processing Systems,
+32, 2019.
+Juan C Perdomo, Akshay Krishnamurthy, Peter Bartlett, and Sham Kakade. A complete characteriza-
+tion of linear estimators for offline policy evaluation. Journal of Machine Learning Research, 24
+(284):1-50, 2023.
+Hamed Rahimian and Sanjay Mehrotra. Distributionally robust optimization: A review. arXiv
+preprint arXiv:1908.05659, 2019.
+Wen Sun, Anirudh Vemula, Byron Boots, and Drew Bagnell. Provably efficient imitation learning
+from observation alone. In International conference on machine learning, pages 6036-6045.
+PMLR, 2019.
+Richard S Sutton and Andrew G Barto. Reinforcement learning: An introduction. MIT press, 2018.
+John N Tsitsiklis and Benjamin Van Roy. Feature-based methods for large scale dynamic program-
+ming. Machine Learning, 22(1):59-94, 1996.
+Masatoshi Uehara, Jiawei Huang, and Nan Jiang. Minimax Weight and Q-Function Learning for
+Off-Policy Evaluation. In Proceedings of the 37th International Conference on Machine Learning,
+pages 1023-1032, 2020.
+Tengyang Xie and Nan Jiang. Batch value-function approximation with only realizability. In
+International Conference on Machine Learning, pages 11404-11413. PMLR, 2021.
+Tengyang Xie, Yifei Ma, and Yu-Xiang Wang. Towards optimal off-policy evaluation for reinforce-
+ment learning with marginalized importance sampling. Advances in neural information processing
+systems, 32, 2019.
+Ming Yin and Yu-Xiang Wang. Asymptotically efficient off-policy evaluation for tabular rein-
+forcement learning. In International Conference on Artificial Intelligence and Statistics, pages
+3948-3958. PMLR, 2020.
+Ming Yin and Yu-Xiang Wang. Towards instance-optimal offline reinforcement learning with
+pessimism. Advances in neural information processing systems, 34:4065-4078, 2021.
+Yaoliang Yu and Csaba Szepesvári. Analysis of kernel mean matching under covariate shift. arXiv
+preprint arXiv:1206.4650, 2012.
+A
+Linear Regression under Covariate Shift
+The form of our main theoretical guarantee in Section 3 can feel somewhat unconventional in the
+OPE literature due to its data dependence. As we will see, however, in the special case of H = 1
+with a linear function class, our algorithm and analyses recover those of linear regression under
+covariate shift [Yu and Szepesvári, 2012], where the data-dependent bound corresponds to a standard
+fixed-design analysis of linear regression [Hsu et al., 2011]. Therefore, it is instructive to quickly
+review such an analysis, which will help clarify the nature of our results.
+The covariate shift problem
+We consider (x, y) pairs that satisfy y = x⊤θ⋆+ ϵ, where x ∈Rd,
+θ⋆is the unknown linear coefficients, and ϵ is some 0-mean i.i.d. noise. We are given training data
+points {(x(i)
+train, y(i)
+train)}n
+i=1 sampled i.i.d. from distribution Ptrain, and some test data points without y
+labels {x(i)
+test}m
+i=1 sampled i.i.d. from distribution Ptest, which is potentially different from Ptrain. Now
+the goal is to estimate
+EPtest[ytest].
+Note that this problem naturally arises in our OPE setup when H = 1 and F is linear in ϕ (Defini-
+tion 1): our ϕ(s(i)
+1 , a(i)
+1 ) is x(i)
+train, r(i)
+is y(i)
+train, ϕ(s(i)
+1 , π) is x(i)
+test (so that m = n), and the estimand is
+exactly J(π); see also Amortila et al. [2026] for the connection between these two problems.
+Fixed-design analysis of linear regression
+Consider a natural algorithm that (1) performs linear
+regression from the training data to estimate bθ, and (2) outputs the estimate as 1
+m
+Pm
+i=1(x(i)
+test)⊤bθ =
+x⊤
+testbθ, where xtest := 1
+m
+Pm
+i=1 x(i)
+test. A standard analysis shows that the error can be bounded as:
+Proposition 13 (Informal). Under appropriate boundedness assumptions, with probability at least
+1 −δ, |EPtest[ytest] −x⊤
+testbθ| ≤O(∥xtest∥bΣ−1
+q
+log 1
+δ /n), where bΣ :=
+n
+Pn
+i=1 x(i)
+train(x(i)
+train)⊤is the
+sample covariance matrix from the training data.
+To understand the guarantee, the first observation is that we only care about how accurate bθ is
+when probed in the mean direction of xtest, EPtest[xtest] ≈xtest, instead of individual xtest ∼Ptest.
+The accuracy of the estimation then depends on how well this direction is covered in the training
+distribution, measured by ∥xtest∥bΣ−1. For readers familiar with the online RL literature, one may
+directly recall a bound of O(∥xtest∥bΣ−1
+q
+(d + log 1
+δ )/n) that is widely used in the linear bandit/MDP
+analyses [Abbasi-Yadkori et al., 2012, Jin et al., 2020]. However, we can avoid paying the
+√
+d factor
+here because the online RL bound needs to hold for all probing directions simultaneously, whereas in
+the covariate shift (OPE) problem we only care about a single probing direction xtest.
+Concretely, Proposition 13 can be proved by rewriting the estimate as
+x⊤
+testbθ = x⊤
+testbΣ−1
+n
+n
+X
+i=1
+x(i)
+trainy(i)
+train
+!
+=: 1
+n
+n
+X
+i=1
+bw(i)y(i)
+train.
+That is, we are effectively computing weights bw(i) = x⊤
+testbΣ−1x(i)
+train and using them to compute the
+weighted average of training labels. These weights satisfy
+n
+n
+X
+i=1
+bw(i)x(i)
+train = xtest.
+(8)
+Intuitively, if { bw(i)} reweight {x(i)
+train} to match xtest in mean, then { bw(i)}-weighted y(i)
+train will also
+match the mean of ytest. Based on this intuition, we can rewrite the error as5
+x⊤
+testbθ −x⊤
+testθ⋆= 1
+n
+n
+X
+i=1
+bw(i)(y(i)
+train −(x(i)
+train)⊤θ⋆).
+5A component of the final error (x⊤
+testbθ −EPtest[ytest]) is omitted here, namely, (xtest −EPtest[xtest])⊤θ⋆. While this term
+reflects the finite sample error of using xtest to approximate its expectation, we only need to perform concentration along the
+direction of θ⋆, so the error term is dimension-free and incurs a negligible overhead. In our analyses (e.g., Proposition 2), this
+corresponds to the ϵstat
+term.
+Note that y(i)
+train −(x(i)
+train)⊤θ⋆are 0-mean i.i.d. random variables, and { bw(i)} are chosen with no
+dependence on the randomness of {y(i)
+train}, so by a standard concentration argument we can bound the
+error using the 2nd moment of bw(i) (see the proof of Theorem 1 in Appendix B.1), which is exactly
+∥xtest∥bΣ−1 =
+q
+n
+Pn
+i=1( bw(i))2.
+A few remarks are in order:
+• Proposition 13 is a fixed-design result, as the bound depends on the matrix bΣ which is data
+dependent, and the analysis applies to settings where {x(i)
+train} is arbitrarily chosen (as in e.g., online
+learning) and not sampled from some distribution. This contrasts with the random-design analysis
+that has the population Σ = EPtrain[xtrainx⊤
+train] in the bound instead of bΣ. Random-design bounds
+typically require additional assumptions and/or have extra (dimension-dependent) higher-order
+terms [Hsu et al., 2011], as is the case for our analyses in Section 4.
+• The above analysis assumes bΣ is invertible. This is implicitly an assumption on our matching loss
+bL: invertible bΣ implies that Eq.(8) has solution(s), and Eq.(8) can be written as: ∀θ,
+n
+n
+X
+i=1
+bw(i)(x(i)
+train)⊤θ −1
+m
+m
+X
+i=1
+(x(i)
+test)⊤θ
+ = 0.
+Translating this back to the OPE notation system, we have
+0 = sup
+θ
+n
+n
+X
+i=1
+bw(i)
+1 ϕ(s(i)
+1 , a(i)
+1 )⊤θ −1
+n
+n
+X
+i=1
+ϕ(s(i)
+1 , π)⊤θ
+
+= sup
+f∈Fϕ
+n
+n
+X
+i=1
+bw(i)
+1 f(s(i)
+1 , a(i)
+1 ) −1
+n
+n
+X
+i=1
+f(s(i)
+1 , π)
+ = bL1( bw[n]
+1 ; bw[n]
+0 ).
+(9)
+If bΣ is not invertible, we can still use pseudo-inverse to compute bθ, and the violation of Eq.(8) will
+appear in the error bound as a bias term. Such a term exactly corresponds to the matching error
+term in Theorem 1.
+B
+Proofs and Additional Results for Section 3
+B.1
+Proof of Theorem 1
+For each h ∈{0, 1, . . . , H}, define the prefix sigma-field
+Gh := σ
+n
+(s(i)
+0 , a(i)
+0 , r(i)
+0 , . . . , s(i)
+h−1, a(i)
+h−1, r(i)
+h−1, s(i)
+h , a(i)
+h )
+on
+i=1
+
+.
+For each h ∈{0, . . . , H} and sample i ∈[n], define ε(i)
+h := Qπ
+h(s(i)
+h , a(i)
+h ) −r(i)
+h −Qπ
+h+1(s(i)
+h+1, π)
+as the Bellman error. By the Bellman equation, we know that E[ε(i)
+h | Gh] = 0. Also, since rewards
+lie in [0, Rmax] and total return lies in [0, Vmax], we have |ε(i)
+h | ≤Vmax almost surely.
+Now, condition on Gh. Because the n trajectories are i.i.d., once the prefixes up to (s(i)
+h , a(i)
+h ) are
+fixed, the random variables {ε(i)
+h }n
+i=1 remain conditionally independent across i. Since bw[n]
+h
+is
+Gh-measurable, the weighted variables X(i)
+h
+:= bw(i)
+h ε(i)
+h are also conditionally independent given Gh,
+satisfy
+E[X(i)
+h
+| Gh] = 0,
+|X(i)
+h | ≤| bw(i)
+h |Vmax.
+Applying Hoeffding’s inequality conditionally on Gh, for every t > 0,
+P
+"
+n
+n
+X
+i=1
+X(i)
+h
+ ≥t
+Gh
+#
+≤2 exp
+ 
+−
+n2t2
+2 Pn
+i=1(Vmax bw(i)
+h )2
+!
+= 2 exp
+
+−
+nt2
+2V 2
+max∥bw[n]
+h ∥2
+[n]
+
+.
+Setting t = ϵstat
+h
+:= Vmax∥bw[n]
+h ∥[n]
+q
+2 log(2(H+1)/δ)
+n
+and taking a union bound over h = 0, 1, . . . , H,
+we obtain an event E with Pr[E] ≥1 −δ such that on E, simultaneously for all h = 0, . . . , H,
+n
+n
+X
+i=1
+bw(i)
+h
+
+Qπ
+h(s(i)
+h , a(i)
+h ) −r(i)
+h −Qπ
+h+1(s(i)
+h+1, π)
+ ≤ϵstat
+h .
+(10)
+After obtaining the statistical concentration rate, we can follow the idea in Section 3 to finish the
+proof, which reduces the OPE error to matching losses plus the statistical errors. Fix the event E.
+Since r0 ≡0 and bw(i)
+≡1,
+| bJ(π) −J(π)| =
+
+H
+X
+h=0
+n
+n
+X
+i=1
+bw(i)
+h r(i)
+h −J(π)
+
+≤
+
+H
+X
+h=0
+n
+n
+X
+i=1
+bw(i)
+h
+
+Qπ
+h(s(i)
+h , a(i)
+h ) −Qπ
+h+1(s(i)
+h+1, π)
+
+−J(π)
+ +
+H
+X
+h=0
+ϵstat
+h ,
+where we used Eq. (10) and the triangle inequality. Now abbreviate Q(i)
+h := Qπ
+h(s(i)
+h , a(i)
+h ), Q(i)
+h,π :=
+Qπ
+h(s(i)
+h , π). Then the first term becomes
+
+H
+X
+h=0
+n
+n
+X
+i=1
+bw(i)
+h
+
+Q(i)
+h −Q(i)
+h+1,π
+
+−J(π)
+ .
+For each h = 1, . . . , H, realizability gives Qπ
+h ∈Fh. Hence, by plugging f = Qπ
+h into the definition
+of bLh (Eq. (1)),
+n
+n
+X
+i=1
+bw(i)
+h Q(i)
+h −1
+n
+n
+X
+i=1
+bw(i)
+h−1Q(i)
+h,π
+ ≤bLh( bw[n]
+h ; bw[n]
+h−1).
+Thus, for h = 1, 2, . . . , H, we have
+
+H
+X
+h=0
+n
+n
+X
+i=1
+bw(i)
+h
+
+Q(i)
+h −Q(i)
+h+1,π
+
+−J(π)
+
+≤
+
+H
+X
+h=0
+n
+n
+X
+i=1
+
+bw(i)
+h Q(i)
+h −bw(i)
+h+1Q(i)
+h+1
+
+−J(π)
+ +
+H
+X
+h=1
+bLh( bw[n]
+h ; bw[n]
+h−1)
+=
+n
+n
+X
+i=1
+
+bw(i)
+0 Q(i)
+0 −bw(i)
+H+1Q(i)
+H+1
+
+−J(π)
+ +
+H
+X
+h=1
+bLh( bw[n]
+h ; bw[n]
+h−1),
+where the second equality is due to telescoping. Since bw(i)
+= 1, Q(i)
+H+1 = 0, and Qπ
+0(s0, a0) = J(π)
+due to the dummy initial pair (s0, a0) is fixed, thus the absolute value term above is exactly zero.
+Therefore, the OPE error reduces to matching losses plus the statistical errors, i.e.,
+| bJ(π) −J(π)| ≤
+H
+X
+h=1
+bLh( bw[n]
+h ; bw[n]
+h−1) +
+H
+X
+h=0
+ϵstat
+h
+on the event E. Since P[E] ≥1 −δ, the theorem follows.
+B.2
+Proof of Proposition 2
+We now give the proof for Proposition 2, which heavily relies on the analysis of linear regression
+with covariate shift (see Appendix A).
+Proof of Proposition 2. Consider H = 1 and linear F1. Write
+xi := ϕ(s(i)
+1 , a(i)
+1 ),
+xtest := 1
+n
+n
+X
+i=1
+ϕ(s(i)
+1 , π),
+bΣ := 1
+n
+n
+X
+i=1
+xix⊤
+i .
+We first consider the case where bΣ is invertible, define bw(i)
+:= x⊤
+testbΣ−1xi for i ∈[n]. Take any
+f ∈F1 such that f(s, a) = ϕ(s, a)⊤θ, then we have
+n
+n
+X
+i=1
+bw(i)
+1 f(s(i)
+1 , a(i)
+1 ) = 1
+n
+n
+X
+i=1
+ x⊤
+testbΣ−1xi
+
+x⊤
+i θ = x⊤
+testθ,
+since 1
+n
+Pn
+i=1 xix⊤
+i cancels with bΣ. On the other hand, by the definition of xtest, we have
+n
+n
+X
+i=1
+f(s(i)
+1 , π) = 1
+n
+n
+X
+i=1
+ϕ(s(i)
+1 , π)⊤θ = x⊤
+testθ.
+Therefore, for any f ∈F1, since bw(i)
+= 1 for all i ∈[n],
+n
+n
+X
+i=1
+bw(i)
+1 f(s(i)
+1 , a(i)
+1 ) = 1
+n
+n
+X
+i=1
+bw(i)
+0 f(s(i)
+1 , π),
+which indicates that 0 empirical matching loss can be achieved, i.e., bL1( bw[n]
+1 ; bw[n]
+0 ) = 0. This proves
+the first claim. For the empirical 2nd-moment of the weight, we have
+ bw[n]
+2
+[n] = 1
+n
+n
+X
+i=1
+ xtestbΣ−1xi
+2 = x⊤
+testbΣ−1
+n
+n
+X
+i=1
+xix⊤
+i
+!
+bΣ−1xtest = x⊤
+testbΣ−1xtest,
+where we again use bΣ = 1
+n
+Pn
+i=1 xix⊤
+i . Hence, ∥bw[n]
+1 ∥[n] = ∥xtest∥bΣ−1, which proves the second
+claim. And the OPE error bound can be obtained immediately by Theorem 1:
+ bJ(π) −J(π)
+ ≤ϵstat
++ ϵstat
+= Vmax
+r
+2 log(4/δ)
+n
+ 1 + ∥xtest∥bΣ−1
+
+.
+For non-invertible bΣ, define bw(i)
+:= x⊤
+testbΣ†xi for i ∈[n], where bΣ† is the Moore-Penrose pseudo-
+inverse of bΣ. We show that this weight choice minimizes the matching loss.
+For any w ∈Rn, define its induced empirical feature moment µ(w) := 1
+n
+Pn
+i=1 w(i)xi. Since F1 is
+linear and ∥θ∥2 ≤Θ, we have
+bL1(w; bw[n]
+0 ) =
+sup
+θ:∥θ∥2≤Θ
+n
+n
+X
+i=1
+w(i)x⊤
+i θ −x⊤
+testθ
+ =
+sup
+θ:∥θ∥2≤Θ
+|⟨µ(w)−xtest, θ⟩| = Θ∥µ(w)−xtest∥2,
+where the last step is due to Cauchy-Schwarz inequality. Thus minimizing the empirical matching
+loss is equivalent to choosing µ(w) as close as possible to xtest in Euclidean norm.
+Let X := span(x1, . . . , xn). For every w, clearly µ(w) ∈X by its definition. Conversely, for
+any v ∈X, there exist coefficients αi such that v = Pn
+i=1 αixi, and choosing w(i) = nαi gives
+µ(w) = v. Hence the set of all achievable empirical moments is exactly X.
+Moreover, the range space of bΣ is Range(bΣ) = X. This is because bΣ =
+n
+Pn
+i=1 xix⊤
+i , so that
+Range(bΣ) ⊆X. On the other hand, since bΣ is symmetric, Range(bΣ) = Null(bΣ)⊥, where Null(bΣ)
+is the nullspace of bΣ. But v⊤bΣv = 1
+n
+Pn
+i=1(v⊤xi)2, so v ∈Null(bΣ) is equivalent to v⊥xi for all
+i ∈[n], thus v ∈X ⊥. Therefore, Null(bΣ) = X ⊥, and hence Range(bΣ) = X.
+It follows that the minimum empirical matching loss is obtained by projecting xtest onto the range
+space of bΣ, whose projection operator is indeed bΣbΣ†:
+µ(w) = ΠX xtest = bΣbΣ†xtest.
+The proposed weights indeed achieve this moment, since
+n
+n
+X
+i=1
+bw(i)
+1 xi = 1
+n
+n
+X
+i=1
+ x⊤
+testbΣ†xi
+
+xi =
+n
+n
+X
+i=1
+xix⊤
+i
+!
+bΣ†xtest = bΣbΣ†xtest.
+Therefore bw[n]
+minimizes the empirical matching loss. The minimum loss is
+bL1( bw[n]
+1 ; bw[n]
+0 ) = Θ
+(I −bΣbΣ†)xtest
+
+2.
+In particular, empirical 0 matching loss is achievable if and only if xtest ∈Range(bΣ).
+B.3
+Proof of Proposition 3
+Now we consider Proposition 3 which connects our Q-MMR algorithm to the canonical FQE
+algorithm in the linear and the tabular settings. Recall that FQE estimates the target-policy value
+functions recursively from the last step to the first step by solving a sequence of supervised regression
+problems: given the current estimate bQπ
+h+1, the next estimate bQπ
+h is obtained by regressing the
+Bellman target rh + bQπ
+h+1(sh+1, π) onto the current state-action features.
+Linear setting
+In the linear case, this admits a simple matrix-vector implementation. In particular,
+linear FQE sets bQH+1 ≡0, or equivalently bθH+1 = 0, and for h = H, H −1, . . . , 1, computes
+bQπ
+h(s, a) = ϕ(s, a)⊤bθh, where
+bθh = arg min
+θ∈Rd
+n
+n
+X
+i=1
+
+ϕ(s(i)
+h , a(i)
+h )⊤θ −r(i)
+h −ϕ(s(i)
+h+1, π)⊤bθh+1
+2
+.
+Equivalently, by the normal equation,
+bΣhbθh = 1
+n
+n
+X
+i=1
+ϕ(s(i)
+h , a(i)
+h )
+
+r(i)
+h + ϕ(s(i)
+h+1, π)⊤bθh+1
+
+.
+Since s0, a0 is fixed and r0 ≡0, the FQE estimate of J(π) is
+bJFQE(π) := 1
+n
+n
+X
+i=1
+bQπ
+1(s(i)
+1 , π) = 1
+n
+n
+X
+i=1
+ϕ1(s(i)
+1 , π)⊤bθ1.
+(11)
+The following proof shows that the Q-MMR algorithm produces exactly the same J(π) estimate as
+linear FQE in Eq. (11).
+Proof of Proposition 3(1). We first characterize the Q-MMR weights in the linear case. At level h,
+empirical 0 matching loss means that, for all linear functions f(s, a) = ϕ(s, a)⊤θ,
+n
+n
+X
+i=1
+bw(i)
+h ϕ(s(i)
+h , a(i)
+h )⊤θ = 1
+n
+n
+X
+i=1
+bw(i)
+h−1ϕ(s(i)
+h , π)⊤θ.
+Define bψh := 1
+n
+Pn
+i=1 bw(i)
+h−1ϕ(s(i)
+h , π) as the target moment. Then Q-MMR needs to choose bw[n]
+h
+such that
+n
+n
+X
+i=1
+bw(i)
+h ϕ(s(i)
+h , a(i)
+h ) = bψh.
+By the same linear-regression / moment-matching calculation as in Proposition 2, the least-2nd-
+moment solution that achieves empirical 0 matching loss is given by bw(i)
+h = ϕ(s(i)
+h , a(i)
+h )⊤bΣ−1
+h bψh for
+all i ∈[n], since bΣh is assumed to be invertible. It remains to show that the final Q-MMR prediction
+equals to the FQE prediction bJFQE(π). Define, for h ∈[H],
+Vh := 1
+n
+n
+X
+i=1
+bw(i)
+h−1 bQπ
+h(s(i)
+h , π) = 1
+n
+n
+X
+i=1
+bw(i)
+h−1ϕ(s(i)
+h , π)⊤bθh.
+Since bw0 ≡1, we have V1 = bJFQE(π) in Eq. (11). We now prove the recursion
+Vh = 1
+n
+n
+X
+i=1
+bw(i)
+h r(i)
+h + Vh+1,
+VH+1 ≡0.
+(12)
+Let y(i)
+h
+:= r(i)
+h + ϕ(s(i)
+h+1, π)⊤bθh+1. By the linear FQE normal equation, the target moment can
+be rewritten as bΣhbθh = 1
+n
+Pn
+i=1 ϕ(s(i)
+h , a(i)
+h )y(i)
+h . Therefore, using the closed form of the Q-MMR
+weights bw(i)
+h = ϕ(s(i)
+h , a(i)
+h )⊤bΣ−1
+h bψh, we obtain
+n
+n
+X
+i=1
+bw(i)
+h y(i)
+h
+= 1
+n
+n
+X
+i=1
+ϕ(s(i)
+h , a(i)
+h )⊤bΣ−1
+h bψhy(i)
+h
+= bψ⊤
+h bΣ−1
+h
+n
+n
+X
+i=1
+ϕ(s(i)
+h , a(i)
+h )y(i)
+h
+!
+= bψ⊤
+h bΣ−1
+h
+· bΣhbθh = bψ⊤
+h bθh = 1
+n
+n
+X
+i=1
+bw(i)
+h−1ϕ(s(i)
+h , π)⊤bθh = Vh,
+where the first equality is by the definition of bw(i)
+h , the second equality is by rearranging, the third
+equality is by the linear FQE normal equation, the fourth equation cancels bΣ, the fifth equation is by
+the definition of bψh, and the last equation is by the definition of Vh. Therefore,
+Vh = 1
+n
+n
+X
+i=1
+bw(i)
+h
+
+r(i)
+h + ϕ(s(i)
+h+1, π)⊤bθh+1
+
+= 1
+n
+n
+X
+i=1
+bw(i)
+h r(i)
+h + Vh+1.
+This proves the recursion in Eq. (12). Unrolling this recursion from h = 1 to H, and using VH+1 = 0,
+yields
+bJFQE(π) = V1 =
+H
+X
+h=1
+n
+n
+X
+i=1
+bw(i)
+h r(i)
+h ,
+while the RHS is exactly the Q-MMR estimate bJ(π) in Algorithm 1. This proves the claim that in
+linear setting with invertible {bΣh}h, our Q-MMR algorithm is equivalent to linear FQE.
+Tabular setting
+Now we consider the tabular function class Ftab = [0, Vmax]S×A in Definition 2.
+As in Proposition 3(2), we assume every state-action pair at each level appears in the dataset, i.e., for
+any h ∈[H] and (s, a) ∈Sh × A,
+bdh(s, a) > 0,
+where bdh(s, a) := 1
+n
+n
+X
+i=1
+1{s(i)
+h = s, a(i)
+h = a}.
+For tabular FQE. Define the empirical reward and empirical transition respectively by
+brh(s, a) :=
+Pn
+i=1 1{s(i)
+h = s, a(i)
+h = a}r(i)
+h
+Pn
+i=1 1{s(i)
+h = s, a(i)
+h = a}
+,
+bPh(s′|s, a) :=
+Pn
+i=1 1{s(i)
+h = s, a(i)
+h = a, s(i)
+h+1 = s′}
+Pn
+i=1 1{s(i)
+h = s, a(i)
+h = a}
+.
+Together, {brh, bPh}H
+h=1 define the empirical MDP. Tabular FQE computes bQH+1 ≡0, and for
+h = H, H −1, . . . , 1, solves the squared-loss regression problem
+bQh ∈
+arg min
+Q:Sh×A→[0,Vmax]
+n
+n
+X
+i=1
+
+Q(s(i)
+h , a(i)
+h ) −r(i)
+h −bQh+1(s(i)
+h+1, π)
+2
+.
+Since the function class is , the regression separates over each state-action pair (s, a). Therefore, for
+every (s, a),
+bQh(s, a) = brh(s, a) +
+X
+s′
+bPh(s′ | s, a) bQh+1(s′, π).
+Thus, tabular FQE is exactly Bellman evaluation of π in the empirical MDP. Hence its prediction is
+the model-based certainty-equivalence value
+bJFQE(π) = bJ b
+ψ(π),
+(13)
+where bψ denotes the empirical MDP (S, A, {brh}h, { bPh}h). The following proof shows that the
+Q-MMR algorithm produces exactly same J(π) estimate as tabular FQE (or model-based certainty-
+equivalence) in Eq. (13).
+Proof of Proposition 3(2). We first characterize the Q-MMR weights in the tabular case. Let bdπ
+h be
+the occupancy distribution of π in the empirical MDP bψ. Since s0, a0 is fixed and bw(i)
+≡1, the
+empirical occupancy is recursively defined by
+bdπ
+h = π(a | s)
+X
+˜s,˜a
+bdπ
+h−1(˜s, ˜a) bPh−1(s | ˜s, ˜a).
+We prove by induction on h that the least-2nd-moment weight bw[n]
+h that achieves empirical 0 matching
+loss satisfy
+bw(i)
+h =
+bdπ
+h(s(i)
+h , a(i)
+h )
+bdD
+h (s(i)
+h , a(i)
+h )
+.
+Fix h. Since the tabular class contains state-action indicators, empirical 0 matching loss at level h is
+equivalent to matching every state-action pair:
+n
+n
+X
+i=1
+bw(i)
+h 1{s(i)
+h = s, a(i)
+h = a} = 1
+n
+n
+X
+i=1
+bw(i)
+h−11{s(i)
+h = s}π(a | s),
+for all (s, a) ∈Sh × A. By the induction hypothesis, the RHS becomes
+n
+n
+X
+i=1
+bw(i)
+h−11{s(i)
+h = s}π(a | s)
+= π(a | s)
+X
+˜s,˜a
+bdπ
+h−1(˜s, ˜a)
+bdD
+h−1(˜s, ˜a)
+· 1
+n
+n
+X
+i=1
+1{s(i)
+h−1 = ˜s, a(i)
+h−1 = ˜a, s(i)
+h = s}
+= π(a | s)
+X
+˜s,˜a
+bdπ
+h−1(˜s, ˜a) bPh−1(s | ˜s, ˜a)
+= bdπ
+h(s, a).
+On the other hand, the LHS can be written as 1
+n
+P
+i:s(i)
+h =s,a(i)
+h =a bw(i)
+h . Thus, empirical 0 matching
+loss requires P
+i:s(i)
+h =s,a(i)
+h =a bw(i)
+h = nbdπ
+h(s, a) for all (s, a) ∈Sh × A.
+Among all weights satisfying this cell-wise constraint, the least-2nd-moment solution is constant
+within each cell. This is because for a fixed cell (s, a), minimizing P
+i:s(i)
+h =s,a(i)
+h =a( bw(i)
+h )2 subject to
+the fixed sum constraint is achieved when all weights in that cell are equal. Hence, for every i with
+(s(i)
+h , a(i)
+h ) = (s, a),
+bw(i)
+h =
+nbdπ
+h(s, a)
+Pn
+j=1 1{s(j)
+h
+= s, a(j)
+h
+= a}
+=
+bdπ
+h(s, a)
+bdD
+h (s, a)
+.
+This proves the desired formula for the Q-MMR weights bw[n]
+h . It remains to compare the final
+estimates. Recall the Q-MMR estimate in Algorithm 1 is given by
+bJ(π) =
+H
+X
+h=1
+n
+n
+X
+i=1
+bw(i)
+h r(i)
+h .
+Using the weight formula above, we get
+bJ(π) =
+H
+X
+h=1
+X
+s,a
+n
+X
+i:s(i)
+h =s,a(i)
+h =a
+bdπ
+h(s, a)
+bdD
+h (s, a)
+r(i)
+h
+=
+H
+X
+h=1
+X
+s,a
+bdπ
+h(s, a)
+P
+i:s(i)
+h =s,a(i)
+h =a r(i)
+h
+Pn
+i=1 1{s(i)
+h = s, a(i)
+h = a}
+=
+H
+X
+h=1
+X
+s,a
+bdπ
+h(s, a)brh(s, a),
+where the last expression is exactly the expected return of π in the empirical MDP bψ, i.e.,
+bJ b
+ψ(π) =
+H
+X
+h=1
+X
+s,a
+bdπ
+h(s, a)brh(s, a).
+Therefore, by Eq. (13), bJ(π) = bJFQE(π). This tells that in the tabular setting with full empirical
+support, Q-MMR and tabular FQE both coincide with the model-based certainty-equivalence solution,
+and the Q-MMR weights are exactly the empirical occupancy ratios.
+B.4
+Comparison to Prior Analyses in Linear and Tabular Settings
+In this section we compare our guarantees with those of Duan et al. [2020] in the linear setting. By
+Proposition 3(1), in the linear setting with invertible empirical covariance matrices bΣh, Q-MMR
+with exact minimization and the least-2nd-moment rule produces exactly the same estimator as linear
+FQE without ridge regularization.
+We now compare their data-independent bound to ours, and will comment on the data-dependent
+bounds below. For our result, we specialize Corollary 10 to the linear setting:
+| bJ(π) −J(π)| ≲Vmax
+r
+log(H/δ)
+n
+H
+X
+h=0
+∥w⋆
+h∥2,dD
+h + higher-order terms.
+(14)
+Duan et al. [2020, Theorem 2] also give a finite sample error bound; after translation between settings
+and notation,6 it is:
+| bJ(π) −J(π)| ≲
+H
+X
+h=0
+Vh
+r
+log(1/δ)
+n
+· ∥Edπ
+h[ϕ]∥Σ−1
+h + higher-order terms
+(15)
+where Vh := (H −h + 1)Rmax = O(Vmax) is a stage-dependent range.
+• Same coverage term. As we recognize ∥w⋆
+h∥2,dD
+h as the coverage term in Eq. (14), the corre-
+sponding term in Eq. (15) is ∥Edπ
+h[ϕ]∥Σ−1
+h . These two terms are exactly identical under Bellman
+completeness in the linear setting (Proposition 16).
+• Same n−1/2 rate. Both bounds have the same leading n−1/2 statistical rate, horizon dependence
+on H, and the range parameter up to minor differences (e.g., Vmax vs. Vh and the log H factor).
+Both bounds are dimension-free in the leading O(1/√n) term.
+• Burn-in condition and higher-order term. The burn-in condition (i.e., requirement of sample
+size n ≳(·)) and the higher-order term of Duan et al. [2020] depend on a more stringent notion of
+coverage, such as cond(Σ−1/2
+h
+Σπ
+hΣ−1/2
+h
+), where Σh is the feature covariance under dD
+h and Σπ
+h is
+that under dπ
+h. This "squared" version coverage requires data to cover all feature directions under
+π, instead of just the mean direction Edπ
+h[ϕ] [Jiang and Xie, 2025]. In contrast, the higher-order
+term in our bound in Eq. (14) relies on the tracking analysis (Theorem 1), where only the size of
+w⋆
+h shows up and no squared coverage is needed.
+• Data-dependent bounds. Both our work and Duan et al. [2020] also feature data-dependent
+bounds that are computable from data, i.e., our Theorem 1 and their Theorem 4. The bounds look
+structurally similar to Eqs.(14) and (15), except that the coverage terms become their empirical
+counterparts. Moreover, our Theorem 1 is dimension-free while their bound incurs dependence
+on
+√
+d; this might be due to the fact that their Theorem 4 (data-dependent bound) assumes
+i.i.d. transitions (their data-independent bound in Theorem 1 assumes i.i.d. trajectories), whereas all
+our results are under i.i.d. trajectories and the telescoping step in the proof of our Theorem 1 relies
+on trajectory data to have perfect cancellation. In addition, their Theorem 4 also has additional
+higher-order terms, whereas our Theorem 1 is very clean and only has the leading term.
+• Assumptions and setup. Technically speaking, Duan et al. [2020] considers the linear-MDP setup
+which is even stronger than Bellman completeness, but their proofs and results can be adapted to
+much weaker settings (e.g., only realizability), especially given the later insights of Perdomo et al.
+[2023], Amortila et al. [2026]. In particular, Amortila et al. [2026] analyze LSTDQ, an algorithm
+closely related to linear FQE, in the infinite-horizon discounted setting under only realizability, and
+their data-independent bound matches that of Duan et al. [2020] in the stable regime (∥Bπ∥op ≤1)
+under the standard conversion between finite-horizon and discounted results. On top of that, key
+6We apply the bound of Duan et al. [2020] to our setup of disjoint state spaces, which admits (nominally)
+time-homogeneous dynamics and feature map that match their setup.
+In their bound, the coverage term is
+supf∈F |E(s,a)∼dπ
+h[fh(s, a)]|/
+q
+ED[ 1
+H
+PH
+h=1 fh(s, a)2]. When {Sh}h are disjoint and feature/linear coefficients are
+essentially independent across levels, the supf is always achieved by setting fh′ ≡0, ∀h′ ̸= h. This way, their coverage
+becomes
+√
+H · supfh∈Fh |E(s,a)∼dπ
+h[fh(s, a)]|]/
+p
+ED[fh(s, a)2] =
+√
+H∥Edπ
+h[ϕ]∥Σ−1
+h
+(Proposition 12). The extra
+√
+H cancels out when we replace their 1/
+√
+N with 1/√n, as their N is the number of transitions and hence N = nH.
+quantities such as ψh also appear in Duan et al. [2020]’s analysis, so there is good reason to believe
+that Duan et al. [2020]’s bound applies to the setting where only realizability of Qπ is assumed,
+where the Edπ
+h[ϕ] term in Eq.(15) will be replaced by ψh.
+We also note that similar dimension-free bounds have also been obtained in the tabular setting [Yin
+and Wang, 2020, Theorem 3.1], and the leading term matches the form of Eqs.(14) and (15). One
+improvement in Yin and Wang [2020] is that they replace the range (Vmax or Vh) with (the square-root
+of) the variance of reward and value function V π w.r.t. state transitions; indeed, they show that this is
+the form of the asymptotically minimax-optimal bound. This improvement is very easy to implement
+in our analyses, as we can simply replace the Hoeffding’s inequality in Eq.(10) with a Bernstein’s
+inequality, where the variance of V π w.r.t. state transitions will naturally replace Vmax in the leading
+term.
+B.5
+Computational Efficiency
+For linear F, the computational efficiency of Q-MMR is clear given that it reduces to linear FQE,
+where the computation involved is just a sequence of linear regressions. For general F, computational
+guarantees are often given in the form of oracle efficiency [Dann et al., 2018], and below we show
+that the computation is efficient given access to some optimization primitives over F.
+Recall the only computation-heavy step in Q-MMR is the matching step, which is (w[n]
+h
+in Eq.(1) is
+replaced with w for notational simplicity) arg minw∈Rn bLh(w; bw[n]
+h−1) := supf∈Fh |ℓ(w, f)|, where
+ℓ(w, f) = 1
+n
+n
+X
+i=1
+w(i)f(s(i)
+h , a(i)
+h ) −1
+n
+n
+X
+i=1
+bw(i)
+h−1f(s(i)
+h , π)
+To remove the absolute value, we would like to assume Fh is a symmetric function class in the
+following discussion. That is, Fh is closed under negation: −f ∈Fh, ∀f ∈Fh.
+Now, this version only minimizes the matching loss but does not control the second moment of bw[n]
+h .
+To enable second-moment control, we can either add a regularization term λ∥w∥2
+[n] to ℓ(w[n]
+h , f) for
+an appropriate λ > 0, or add constraint on w that we can only choose from WC = {w : ∥w∥[n] ≤C}
+for some budget C. Below we discuss the latter which admits cleaner results, i.e., we want to solve
+arg min
+w∈WC
+sup
+f∈Fh
+ℓ(w, f).
+(16)
+To solve the above minimax problems, we apply the standard no-regret + best-response framework
+[Freund and Schapire, 1999] (see [Miryoosefi et al., 2019] for an example), where a w player and an
+f player alternately play a sequence of w1, w2, . . . , wT ∈WC and f1, f2, . . . , fT ∈Fh, respectively,
+and we finally output bw[n]
+h
+= 1
+T
+PT
+t=1 wt.
+No regret on w and best response on f
+In this case, after each wt ∈WC is chosen, ft is chosen
+as the best response to maximize ℓ(wt, ·), which requires a standard linear-optimization oracle over
+Fh [Dann et al., 2018]: 7
+ft ∈BR(wt) := arg max
+f∈Fh
+(
+n
+n
+X
+i=1
+w(i)
+t f(s(i)
+h , a(i)
+h ) −1
+n
+n
+X
+i=1
+bw(i)
+h−1f(s(i)
+h , π)
+)
+.
+From the point of view of the w player, it receives a loss ℓw
+t (·) = ℓ(·, ft), which is a convex function
+and we have access to the gradient information, so standard online learning algorithm such as
+projected OGD [Hazan, 2016] can be applied to obtain a regret guarantee:
+wt+1 = ΠWC[wt −η∇wℓ(wt, ft)],
+∇wℓ(wt, ft) = 1
+n
+
+ft(s(1)
+h , a(1)
+h ), . . . , ft(s(n)
+h , a(n)
+h )
+
+.
+7Here are some examples: if Fh is an RKHS ball, the oracle has a kernel witness-function form; if Fh is a neural network
+class, it corresponds to training a discriminator/value network to maximize the following weighted empirical objective; if Fh
+is finite, it is just choosing the function in the finite class with largest signed score.
+Proposition 14 (Optimization error from no-regret on w and best response on f). Fix h and bw[n]
+h−1.
+Let Gh := supf∈Fh
+  1
+n
+Pn
+i=1 f(s(i)
+h , a(i)
+h )21/2. Assume that each ft is an exact best response
+to wt, and run projected OGD over WC with a standard step-size. Then, the averaged output
+bw[n]
+h
+= 1
+T
+PT
+t=1 wt satisfies
+bLh( bw[n]
+h ; bw[n]
+h−1) ≤min
+w∈WC
+bLh(w; bw[n]
+h−1) + O
+CG
+√
+T
+
+.
+In particular, if |f(s, a)| ≤Vmax for all f ∈Fh and all data points (s(i)
+h , a(i)
+h ), then the optimization
+error is O(CVmax/
+√
+T).
+Proof sketch. For the OGD losses ℓw
+t (w) := ℓ(w, ft), we have ∥∇wℓw
+t ∥2 ≤Gh/√n and WC =
+{w ∈Rn : ∥w∥2 ≤C√n}. Hence the OGD regret is O(CGh
+√
+T). Since ft is the best response,
+ℓ(wt, ft) = supf∈Fh ℓ(wt, f) = bL(wt; bw[n]
+h−1). Therefore,
+T
+T
+X
+t=1
+bLh(wt; bw[n]
+h−1) ≤min
+w∈WC
+bLh(w; bw[n]
+h−1) + O
+CG
+√
+T
+
+.
+The claim follows by Jensen’s inequality, since w 7→bLh(w; bw[n]
+h−1) is convex.
+No regret on f and best response on w
+We can also swap the roles of f and w. For each fixed ft,
+we solve wt ∈arg minw∈WC ℓ(w, ft). Since WC is a Euclidean ball and ℓ(·, ft) is linear, this best
+response has a closed form:
+wt = −C
+ft|n
+∥ft|n∥[n]
+,
+ft|n =
+
+f(s(1)
+h , a(1)
+h ), . . . , f(s(n)
+h , a(n)
+h )
+
+∈Rn,
+for ft|n ̸= 0; and if ft|n = 0, then any wt ∈WC is a best response. Then, from the point of view
+of the f player, it receives a loss ℓf
+t (·) = ℓ(wt, ·), which is linear in f. Similar to before, if f ∈Fh
+is parametrized in a differentiable manner, we would need an online learning oracle over Fh for
+the reward sequences f 7→ℓf
+t f(). In particular, if the oracle guarantees reward regret Regf
+T , i.e.,
+maxf∈Fh
+P
+t ℓ(wt, f) −P
+t ℓ(wt, ft) ≤Regf
+T , then the same averaging argument gives
+bLh( bw[n]
+h ; bw[n]
+h−1) ≤min
+w∈WC
+bLh(w; bw[n]
+h−1) + Regf
+T
+T
+.
+For instance, in the linear case fθ(s, a) = ϕ(s, a)⊤θ with ∥θ∥2 ≤Θ, this oracle can be implemented
+by OGD/ascent on θ for the linear rewards θ 7→θ⊤m(wt), where m(wt) = 1
+n
+P
+i w(i)
+t ϕ(s(i)
+h , a(i)
+h ) −
+n
+P
+i bw(i)
+h−1ϕ(s(i)
+h , π). If ∥m(wt)∥2 ≤M for all t, then Regf
+T = O(ΘM
+√
+T), which immediately
+implies an O(ΘM/
+√
+T) optimization error. For general function classes, the same statement might
+be formulated non-parametrically by assuming such an online learning oracle over Fh.
+In the special case where the data is on-policy, i.e., the trajectories are sampled from π itself, it is
+well known that the Monte-Carlo estimator, 1
+n
+Pn
+i=1
+PH
+h=1 r(i)
+h , is a simple and effective method that
+achieves dimension-free error guarantees, since the analysis simply applies concentration arguments
+to the i.i.d. random returns. This also shows the looseness of standard OPE analyses that depends on
+log |F| [Antos et al., 2008, Chen and Jiang, 2019], as those guarantees do not automatically eliminate
+log |F| when data is on policy. In contrast, Q-MMR immediately recovers MC in this setting if we
+simply choose bw(i)
+h
+≡1. (Note that this choice is not necessarily minimizing the 2nd moment of
+bw[n]
+h .) The matching loss bLh( bw[n]
+h ; bw[n]
+h−1) is 0 under such weights,8 and Theorem 1 is dimension free.
+More generally, when the behavior policy πD is stochastic, a variant of our algorithm can also recover
+step-wise importance sampling, the generalization of MC to the off-policy setting. In particular, if we
+8This holds when π is deterministic; when π is stochastic, it still holds if we consider the IS variant of our algorithm, as
+described below.
+change the target embedding 1
+n
+P
+i bw(i)
+h−1f(s(i)
+h , π) in Eq.(1) to9
+n
+X
+i
+bw(i)
+h−1f(s(i)
+h , a(i)
+h ) π(a(i)
+h |s(i)
+h )
+πD(a(i)
+h |s(i)
+h ),
+which produces the same target embedding after marginalizing over the action randomness, then
+setting bw(i)
+h = Qh
+h′=1
+π(a(i)
+h′ |s(i)
+h′ )
+πD(a(i)
+h′ |s(i)
+h′ ) ensures bLh( bw[n]
+h ; bw[n]
+h−1) = 0.
+This example also demonstrates the role of F and the importance of 2nd-moment minimization: if we
+only care about minimizing the matching loss bL but not the size of bw[n]
+h , we can always set bL to 0 by
+setting bw[n]
+h
+to be the cumulative importance weights, which generally incurs exponential-in-horizon
+variance. This is avoided when structured F admits many choices of bw[n]
+h
+that equally minimize the
+matching loss, and we can choose the smallest one to significantly dampen the weight size.
+C
+Proofs and Additional Results of Section 4
+C.1
+Auxiliary functionals and representers
+In this section, we introduce several auxiliary concepts that will be used in the subsequent proofs and
+in our understanding of the learned weights. The main idea is to view the population and empirical
+moment-matching problems through the lens of Hilbert-space linear functionals. This viewpoint will
+be useful for two reasons. First, it explains why the population exact-matching problem is feasible
+under the bounded generalized leverage assumption (Assumption 3). Second, it allows us to compare
+the empirical weights { bw[n]
+h }h with their population counterparts {w⋆
+h}h by representing both of
+them inside the same Hilbert space.
+Recall from Definition 4 that the Hilbert space Fh is the closure of span(Fh) under the dD
+h -weighted
+L2 norm, equipped with the inner product ⟨f, g⟩dD
+h = EdD
+h [fg]. For any f ∈Fh, let P πf denote the
+one-step transition of f under the target policy, i.e., (P πf)(s, a) = Es′∼P (·|s,a)[f(s′, π)]. Given the
+population weight, define the propagated signed measure
+ν⋆
+h := P π(w⋆
+h−1 · dD
+h−1).
+Equivalently, ν⋆
+h is the signed measure satisfying, for every f ∈Fh,
+E(sh,ah)∼ν⋆
+h[f(sh, ah)] = E(sh−1,ah−1)∼dD
+h−1[w⋆
+h−1(sh−1, ah−1) · (P πf)(sh−1, ah−1)].
+We call ν⋆
+h a signed measure because w⋆
+h−1 is not required to be nonnegative. Therefore w⋆
+h−1dD
+h−1,
+and hence its pushforward under P π, need not be a probability distribution.
+Definition 6 (Population and empirical target functionals). For each h ∈[H], define the population
+target functional Λ⋆
+h : Fh →R by
+Λ⋆
+h(f) := Eν⋆
+h[f] = EdD
+h−1[w⋆
+h−1 · (P πf)].
+Given the empirical weights bw[n]
+h−1, define the empirical target functional bΛ : Fh →R by
+bΛh(f) := 1
+n
+n
+X
+i=1
+bw(i)
+h−1f(s(i)
+h , π).
+Thus, Λ⋆
+h is the population moment that the level-h weight should match, while bΛh is its empirical
+analogue induced by the already-learned weights at level h−1. The next proposition shows that these
+linear functionals admit Riesz representers in Fh. It also shows that, whenever empirical 0 matching
+loss is feasible (which is shown in Proposition 9 as a high-probability corollary under population 0
+matching loss), the least-2nd-moment empirical weight vector can be viewed as the sample evaluation
+of some function in Fh.
+9This resembles how targets are set up in TD, such as expected SARSA vs. its off-policy version [Sutton and Barto, 2018].
+Proposition 15 (Existence of representers). Under Assumption 3, for each h ∈[H], we have:
+(i) The population target functional Λ⋆
+h is a continuous linear functional on Fh. Hence, the
+w⋆
+h defined in Definition 3 satisfies w⋆
+h ∈Fh, and ⟨w⋆
+h, f⟩dD
+h = Λ⋆
+h(f) for all f ∈Fh.
+Moreover, w⋆
+h is the unique least-2nd-moment solution among all L2(dD
+h ) functions w
+satisfying ⟨w, f⟩dD
+h = Λ⋆
+h(f) for all f ∈Fh.
+(ii) The empirical functional bΛh is also a continuous linear functional on Fh. Hence there exists
+a unique auxiliary representer ewh ∈Fh such that ⟨ewh, f⟩dD
+h = bΛh(f) for all f ∈Fh.
+(iii) Suppose empirical 0 matching loss is feasible at level h, and let bw[n]
+h
+be the least-2nd-
+moment weight vector. Then, there exists a lift representer ¯wh ∈Fh such that ¯wh|n = bw[n]
+h .
+Consequently, 1
+n
+Pn
+i=1 ¯w(s(i)
+h , a(i)
+h )f(s(i)
+h , a(i)
+h ) = bΛh(f) for all f ∈Fh.
+Proof. For (i), linearity of Λ⋆
+h follows directly from its definition (Definition 6), so we need to
+show its continuity. By Assumption 3, every f ∈Fh satisfies |f(s, a)| ≤√κh∥f∥2,dD
+h . Therefore,
+|f(s, π)| ≤√κh∥f∥2,dD
+h as well. It follows that
+|Λ⋆
+h(f)| ≤EdD
+h−1[|w⋆
+h−1| · |P πf|] ≤√κh · EdD
+h−1[|w⋆
+h−1|]∥f∥D
+2,dh.
+Using Cauchy-Schwarz, EdD
+h−1[|w⋆
+h−1|] ≤∥w⋆
+h−1∥2,dD
+h−1. Hence Λ⋆
+h is bounded, and therefore
+continuous, on Fh. Therefore, by the Riesz representation theorem, there exists a unique w⋆∈Fh
+such that ⟨w⋆, f⟩dD
+h = Λ⋆
+h(f) for all f ∈Fh. This already proves that the population 0 matching
+loss is feasible (Proposition 5): the feasible set is nonempty because w⋆itself satisfies all the required
+moment equations. Since w⋆
+h defined in Definition 3 minimizes the matching loss, we have w⋆
+h = w⋆.
+It remains to justify the minimum-norm claim. Let w ∈L2(dD
+h ) be any other function satisfying the
+same moment equations, namely ⟨w, f⟩dD
+h = Λ⋆
+h(f) for all f ∈Fh. Then w −w⋆
+h is orthogonal to
+every element of Fh. Since w⋆
+h ∈Fh, we have ⟨w −w⋆
+h, w⋆
+h⟩dD
+h = 0. Therefore,
+∥w∥2
+2,dD
+h = ∥w⋆
+h∥2
+2,dD
+h + ∥w −w⋆
+h∥2
+2,dD
+h ≥∥w⋆
+h∥2
+2,dD
+h .
+Thus w⋆
+h is the unique minimum-norm solution, up to dD
+h -almost-sure equivalence.
+For (ii), the argument is similar. The empirical functional bΛh is linear in f. Moreover, under
+Assumption 3, we have
+|bΛh(f)| ≤1
+n
+n
+X
+i=1
+| bw(i)
+h−1| · |f(s(i)
+h , π)| ≤√κh
+ 1
+n
+n
+X
+i=1
+| bw(i)
+h−1|
+
+∥f∥2,dD
+h .
+Therefore bΛh is continuous on Fh. Applying the Riesz representation theorem again yields a unique
+ewh ∈Fh such that ⟨ewh, f⟩dD
+h = bΛh(f) for all f ∈Fh.
+For (iii), let Fh|n := {f|n : f ∈Fh} ⊆Rn be the sample-evaluation subspace of Fh. The empirical
+matching constraints only depend on the projection of the weight vector onto Fh|n, because every
+constraint is tested against some vector f|n ∈Fh|n. Decompose the least-2nd-moment solution as
+bw[n]
+h
+= v + v⊥, where v ∈Fh|n and v⊥∈(Fh|n)⊥. Since v⊥is orthogonal to every f|n ∈Fh|n,
+replacing bw[n]
+h
+by v preserves all empirical matching constraints. If v⊥̸= 0, this replacement strictly
+decreases ∥bw[n]
+h ∥[n], contradicting the least-2nd-moment choice of bw[n]
+h . Therefore, v⊥= 0 and
+bw[n]
+h
+∈Fh|n.
+By the definition of Fh|n, there exists ¯wh ∈Fh such that ¯wh|n = bw[n]
+h . Since by our assumption,
+bw[n]
+h
+achieves empirical 0 matching loss, we obtain 1
+n
+Pn
+i=1 ¯w(s(i)
+h , a(i)
+h )f(s(i)
+h , a(i)
+h ) = bΛh(f) for
+all f ∈Fh.
+The above three representers play different roles. The population weight w⋆
+h is the object we ultimately
+want to track. The auxiliary representer ewh converts the empirical target functional into the population
+geometry of Fh. The lift representer ¯wh converts the empirical sample weights back into a function so
+that empirical pairings can be compared with population pairings. In the linear setting (Definition 1)
+with both population and empirical 0 matching loss, these objects reduce to the familiar forms that
+correspond to the feature dynamical system in Eq. (6); see the following proposition.
+Proposition 16 (Linear forms of the three representers). Suppose Fh is linear in a feature map
+ϕ : Sh × A →Rd. Write ϕh := ϕ(sh, ah), ϕπ
+h := ϕ(sh, π). Assume that the population covariance
+matrix Σh := EdD
+h [ϕh(ϕh)⊤] is invertible. For the empirical lift, additionally assume that bΣh :=
+n
+Pn
+i=1 ϕ(i)
+h (ϕ(i)
+h )⊤is invertible, where ϕ(i)
+h := ϕ(s(i)
+h , a(i)
+h ).
+Consider the feature dynamical system {ψh}h defined in Eq. (6), i.e., ψ1 := ED[ϕπ
+1], and for h ≥1,
+ψh+1 := Bπ
+hψh,
+Bπ
+h := (Σcr
+h)⊤Σ−1
+h ,
+Σcr
+h := ED[ϕh(ϕπ
+h+1)⊤].
+Also define the empirical target vector bψh := 1
+n
+Pn
+i=1 bw(i)
+h−1ϕ(s(i)
+h , π). Then the three representers in
+Proposition 15 take the following forms:
+w⋆
+h(s, a) = ϕ(s, a)⊤Σ−1
+h ψh,
+ewh(s, a) = ϕ(s, a)⊤Σ−1
+h bψh,
+¯wh(s, a) = ϕ(s, a)⊤bΣ−1
+h bψh.
+Proof. We first identify the population representer w⋆
+h via induction on h. More precisely, we prove
+jointly that, for every h, the population target functional satisfies
+Λ⋆
+h(f) = ψ⊤
+h θ,
+∀f ∈Fh such that f(s, a) = ϕ(s, a)⊤θ,
+and that its Riesz representer is w⋆
+h(s, a) = ϕ(s, a)⊤Σ−1
+h ψh.
+For h = 1, since w⋆
+0 ≡1, for every f(s, a) = ϕ(s, a)⊤θ,
+Λ⋆
+1(f) = ED[f(s1, π)] = ED[ϕπ
+1]⊤θ = ψ⊤
+1 θ.
+The Riesz representer w⋆
+1 therefore satisfies, for all θ, ED[w⋆
+1(s1, a1) · ϕ⊤
+1 θ] = ψ⊤
+1 θ. Since w⋆
+1 ∈F1
+by Proposition 15(i), we can write w⋆
+1(s, a) = ϕ(s, a)⊤α1. This becomes α⊤
+1 Σ1θ = ψ⊤
+1 θ for all θ.
+Hence α1 = Σ−1
+1 ψ1 for invertible Σ1, and therefore w⋆
+1(s, a) = ϕ(s, a)⊤Σ−1
+1 ψ1.
+Now assume the two claims hold at level h. By the definition of the population target functional,
+Λ⋆
+h+1(f) = ED[w⋆
+h(sh, ah)f(sh+1, π)]
+= ED[ϕ⊤
+h Σ−1
+h ψh · (ϕπ
+h+1)⊤θ]
+= ψ⊤
+h Σ−1
+h Σcr
+hθ
+= ψ⊤
+h+1θ,
+where the first equality is due to the inductive hypothesis on w⋆
+h, the second equality leverages the
+definition of Σcr
+h and the third equality is due to ψh+1 = (Σcr
+h)⊤Σ−1
+h ψh.
+Similarly, since Λ⋆
+h+1(f) = ψ⊤
+h+1θ for all f(s, a) = ϕ(s, a)⊤θ, the representer w⋆
+h+1 satisfies
+ED[w⋆
+h+1(sh+1, ah+1) · (ϕ⊤
+h+1θ)] = ψ⊤
+h+1θ,
+∀θ.
+Since w⋆
+h+1 ∈Fh+1, we can write w⋆
+h+1(s, a) = ϕ(s, a)⊤αh+1. The above matching equation
+becomes α⊤
+h+1Σh+1θ = ψ⊤
+h+1θ for all θ and thus αh+1 = Σ−1
+h+1ψh+1 for invertible Σh+1, indicating
+w⋆
+h+1(s, a) = ϕ(s, a)⊤Σ−1
+h+1ψh+1. This closes the induction.
+The proof for ewh does not require induction. For any f(s, a) = ϕ(s, a)⊤θ, bΛh(f) = bψ⊤
+h θ by the
+definition of bψh. Since ewh ∈Fh by Proposition 15(ii), its linear form ewh(s, a) = ϕ(s, a)⊤eαh
+satisfies Σheαh = bψh, and hence ewh(s, a) = ϕ(s, a)⊤Σ−1
+h bψh.
+Finally, for the empirical lift ¯wh, empirical 0 matching loss gives
+n
+n
+X
+i=1
+¯wh(s(i)
+h , a(i)
+h )ϕ(i)
+h = bψh.
+Since ¯wh ∈Fh by Proposition 15(iii), its linear form ¯wh(s, a) = ϕ(s, a)⊤¯αh satisfies bΣh¯αh = bψh.
+Since bΣh is invertible, it directly leads to ¯wh(s, a) = ϕ(s, a)⊤bΣ−1
+h bψh.
+C.2
+Proofs of Propositions 4, 5, 6, 7, 11 and 12
+Proof of Proposition 4. For the second argument that for the least-2nd-moment bw[n]
+h , there exists
+some ¯wh ∈Fh such that ¯wh|n = bw[n]
+h , the proof is exactly same as stated in Proposition 15(iii).
+Note that in there we do not use the empirical 0 matching loss condition for bw[n]
+h
+∈Fh|n argument.
+For the first argument that the least-2nd-moment population weight w⋆
+h ∈Fh, we can adopt a
+similar strategy to prove (which does not require Assumption 3). For any w ∈L2(dD
+h ) and any
+f ∈Fh ⊆Fh, we have
+EdD
+h [w · f] = EdD
+h [(ΠFhw) · f],
+where ΠFh is the L2(dD
+h )-projection onto Fh. This is because w −ΠFhw is orthogonal to Fh.
+Therefore, the population matching loss Lh(w; w⋆
+h−1) depends on w only through its projection
+ΠFhw, which means Lh(w; w⋆
+h−1) = Lh(ΠFhw; w⋆
+h−1). Moreover,
+∥w∥2
+2,dD
+h = ∥ΠFhw∥2
+2,dD
+h + ∥w −ΠFhw∥2
+2,dD
+h .
+Thus, if w⋆
+h is chosen among the exact minimizers of Lh(·; w⋆
+h−1) to have least-2nd-moment, then its
+orthogonal component outside Fh must be 0. Otherwise replacing w⋆
+h by ΠFhw⋆
+h would preserve the
+loss and strictly reduce its 2nd-moment. Hence, w⋆
+h ∈Fh.
+Proof of Proposition 5. Proposition 15(i) already implies this claim.
+Proof of Proposition 6. For a function f ∈Fh+1, by Definition 5, its one-step backup is given by
+Kπ
+hf = arg ming∈Fh ED[(g(sh, ah) −f(sh+1, π))2] ∈Fh. That is, Kπ
+hf = ΠFhP πf, where the
+projection step preserves linearity in ϕ of the function. Therefore, if f(s, a) = ϕ(s, a)⊤θh+1, we can
+write (Kπ
+hf)(s, a) = ϕ(s, a)⊤θh for some θh solved by the above least-square problem. Specifically,
+the normal equation for this least-square problem is
+Σhθh = Σcr
+hθh+1,
+where Σh and Σcr
+h are defined in Eq. (6). Thus, for invertible Σh, we have θh = Σ−1
+h Σcr
+hθh+1 =
+(Bπ
+h)⊤θh+1, since Bπ
+h = (Σcr
+h)⊤Σ−1
+h . This proves the first claim.
+For the multi-step bound, let f ∈Fh have coefficient θh. Repeatedly applying the previous identity
+gives that Kπ
+t Kπ
+t+1 · · · Kπ
+h−1f has coefficient
+(Bπ
+t )⊤(Bπ
+t+1)⊤· · · (Bπ
+h−1)⊤θh = (Bπ
+h−1 · · · Bπ
+t+1Bπ
+t )⊤θh.
+Therefore, for any (st, at) ∈St × A,
+(Kπ
+t Kπ
+t+1 · · · Kπ
+h−1f)(st, at) = ϕ(st, at)⊤(Bπ
+h−1 · · · Bπ
+t+1Bπ
+t )⊤θh
+=
+D
+Σ−1/2
+h
+Bπ
+h−1 · · · Bπ
+t+1Bπ
+t ϕ(st, at), Σ1/2
+h θh
+E
+.
+By Cauchy-Schwarz,
+(Kπ
+t Kπ
+t+1 · · · Kπ
+h−1f)(st, at)
+ ≤
+Σ−1/2
+h
+Bπ
+h−1 · · · Bπ
+t+1Bπ
+t ϕ(st, at)
+
+2 · ∥Σ1/2
+h θh∥2.
+Since ∥Σ1/2
+h θh∥2 = ∥f∥2,dD
+h ≤∥f∥∞, we take the supremum over (st, at) and then over all f with
+∥f∥∞≤1 yields the bound for ρt:h.
+Proof of Proposition 7. By Proposition 5, we can achieve population 0 matching loss under Assump-
+tion 3, i.e., for any f ∈Fh
+EdD
+h [w⋆
+hf] = EdD
+h−1[w⋆
+h−1 · (P πf)] = EdD
+h−1[w⋆
+h−1 · (Kπ
+h−1f)],
+where the last step is because w⋆
+h−1 ∈Fh−1 (Proposition 15(i)), so that we can replace P πf by its
+L2(dD
+h−1)-projection Kπ
+h−1f without changing the overall inner product. Apply the same argument
+recursively gives
+EdD
+h [w⋆
+hf] = EdD
+1 [w⋆
+1 · (Kπ
+1 Kπ
+2 · · · Kπ
+h−1f)].
+At level 1, L1 = 0 implies EdD
+1 [w⋆
+1 · (Kπ
+1 Kπ
+2 · · · Kπ
+h−1f)] = EdD
+0 [w⋆
+0 · (P πKπ
+1 Kπ
+2 · · · Kπ
+h−1f)].
+Since w⋆
+0 ≡1 and (s0, a0) is fixed, the RHS becomes ED[(Kπ
+1 Kπ
+2 · · · Kπ
+h−1f)(s1, π)] and hence we
+have
+EdD
+h [w⋆
+hf]
+ ≤∥Kπ
+1 Kπ
+2 · · · Kπ
+h−1f∥∞≤ρ1:h∥f∥∞,
+by the definition of ρ1:h. This proves the claim.
+Proof of Proposition 11. We first want to claim that Bellman completeness over the original function
+class Fh (T πf ∈Fh−1, ∀f ∈Fh) implies the backup closure property of the Hilbert space Fh
+(P πf ∈Fh−1, ∀f ∈Fh). This is because we assume 0 ∈Fh and hence r = T π0 ∈Fh−1; by
+Bellman completeness, T πf ∈Fh−1 for all f ∈Fh. Thus, P πf = T πf −r ∈span(Fh−1) for all
+f ∈Fh. By linearity, P πspan(Fh) ⊆span(Fh−1), and by closure this extends to P πFh ⊆Fh−1.
+For 1), we prove by induction that, for every f ∈Fh, EdD
+h [w⋆
+hf] = Edπ
+h[f]. For h = 1, population
+0 matching loss (Proposition 5) gives EdD
+1 [w⋆
+1f] = EdD
+0 [w⋆
+0 · (P πf)]. Since w⋆
+0 ≡1 and dD
+0 = dπ
+is the fixed initial state-action pair, by Bellman flow equation, EdD
+0 [w⋆
+0 · (P πf)] = Edπ
+1 f. Thus the
+claim holds for h = 1.
+Assume that the induction holds at level h −1, and take any f ∈Fh. By our claim before, we know
+that P πf ∈Fh−1. Therefore,
+EdD
+h [w⋆
+hf] = EdD
+h−1[w⋆
+h−1 · (P πf)] = Edπ
+h−1[P πf] = Edπ
+hf,
+where the first equality is due to population 0 matching loss, the second equality is by inductive
+hypothesis, and the last equality uses Bellman flow equation that dπ
+h = P πdπ
+h−1 for h ∈[H]. This
+proves 1).
+For 2), let f ∈Fh. Since P πf ∈Fh−1, by the definition of the projected backup operator Kπ
+h−1,
+we have that Kπ
+h−1f = ΠFh−1P πf = P πf as an element of L2(dD
+h−1).
+Under Assumption 3, equality in L2(dD
+h−1) implies pointwise equality for all (s, a) ∈Sh−1 × A,
+because |g(s, a)| ≤√κh−1∥g∥2,dD
+h−1 for all g ∈Fh−1. Hence,
+(Kπ
+h−1f)(s, a) = (P πf)(s, a) = Eπ[f(sh, π) | sh−1 = s, ah−1 = a].
+Iterating this identity from t to h −1 yields
+(Kπ
+t Kπ
+t+1 · · · Kπ
+h−1f)(s, a) = Eπ[f(sh, π) | st = s, at = a].
+3) For any f ∈Fh with ∥f∥∞≤1, by the multi-step identity in 2),
+|(Kπ
+t Kπ
+t+1 · · · Kπ
+h−1f)(s, a)| = |Eπ[f(sh, π) | st = s, at = a]| ≤∥f∥∞≤1.
+Therefore, by Definition 5, ρt:h = supf∈Fh:∥f∥∞≤1 ∥Kπ
+t Kπ
+t+1 · · · Kπ
+h−1f∥∞≤1.
+Proof of Proposition 12. We first prove the general case with Bellman completeness. By Propo-
+sition 11(1), for any f ∈Fh, we have Edπ
+h[f] = EdD
+h [w⋆
+hf] = ⟨w⋆
+h, f⟩dD
+h for all f ∈Fh. By
+Cauchy-Schwarz inequality, we have
+|Edπ
+h[f]| = |⟨w⋆
+h, f⟩dD
+h | ≤∥w⋆
+h∥2,dD
+h ∥f∥2,dD
+h .
+Moreover, the above inequality becomes equality if we take f = w⋆
+h ∈Fh. Therefore we get
+∥w⋆
+h∥2,dD
+h =
+sup
+f∈Fh,f̸=0
+|Edπ
+h[f]|
+∥f∥2,dD
+h
+=
+sup
+f∈Fh,f̸=0
+|Edπ
+h[f]|
+q
+EdD
+h [f 2]
+.
+Now we consider linear case. By Proposition 16, we have w⋆
+h(s, a) = ϕ(s, a)⊤Σ−1
+h ψh. Therefore,
+∥w⋆
+h∥2
+2,dD
+h = EdD
+h
+
+(ϕ⊤
+h Σ−1
+h ψh)2
+= ψ⊤
+h Σ−1
+h ψh = ∥ψh∥2
+Σ−1
+h ,
+i.e., ∥w⋆
+h∥2,dD
+h = ∥ψh∥Σ−1
+h , which does NOT require Bellman completeness.
+Under linear Bellman completeness, by Proposition 11(1), we have
+EdD
+h [w⋆
+hfθ] = Edπ
+h[fθ]
+holds for all θ, where fθ(s, a) = ϕ(s, a)⊤θ. Recall w⋆
+h(s, a) = ϕ(s, a)⊤Σ−1
+h ψh. The LHS of the
+above equation becomes ψ⊤
+h θ, since EdD
+h [ϕhϕ⊤
+h ] cancels with Σ−1
+h ; while the RHS of the above
+equation becomes Edπ
+h[ϕh]⊤θ. Therefore, ψh = Edπ
+h[ϕh] and hence ∥w⋆
+h∥2,dD
+h = ∥Edπ
+h[ϕh]∥Σ−1
+h .
+This proves the claim.
+C.3
+Concentration arguments
+We state two standard concentration arguments, both obtained by Bernstein’s inequality together with
+a covering argument. For each f, let Nh be the 1/8-covering number of the unit ball of Fh under
+∥· ∥2,dD
+h , i.e., Bh := {f ∈Fh : ∥f∥2,dD
+h ≤1}. Define
+χh := 4
+ r
+2κh log(8HN 2
+h/δ)
+n
++ 4κh log(8HN 2
+h/δ)
+3n
+!
+,
+(17)
+and, for 1 ≤t < h ≤H,
+τt:h = 4
+3(ρt:h + ρt+1:h)
+ r
+2κh log(8H2NtNh/δ)
+n
++ 2√κtκh log(8H2NtNh/δ)
+3n
+!
+,
+(18)
+where ρt:h is defined in Definition 5. Now, for two elements u, v ∈Fh, we define the sample inner
+product and norm as
+⟨u|n, v|n⟩[n] := 1
+n
+n
+X
+i=1
+u(s(i)
+h , a(i)
+h )v(s(i)
+h , a(i)
+h ),
+∥u|n∥2
+[n] := 1
+n
+n
+X
+i=1
+u(s(i)
+h , a(i)
+h )2.
+Lemma 17 (Near-isometry). Under Assumption 3, with probability at least 1 −δ/4, simultaneously
+for all h ∈[H] and u, v ∈Fh,
+⟨u|n, v|n⟩[n] −⟨u, v⟩dD
+h
+ ≤χh∥u∥2,dD
+h ∥v∥2,dD
+h ,
+where χh is given in Eq. (17). In particular, take u = v, we get the near-isometry norm bound:
+(1 −χh)∥u∥2
+2,dD
+h ≤∥u|n∥2
+[n] ≤(1 + χh)∥u∥2
+2,dD
+h .
+Lemma 18 (Cross-step concentration). For any f ∈Ft+1, define the one-step sample realization
+operator by ( bPtf)(s(i)
+t , a(i)
+t ) := f(s(i)
+t+1, π). Under Assumption 3, with probability at least 1 −δ/4,
+simultaneously for all 1 ≤t < h ≤H, all u ∈Ft and all f ∈Fh,
+
+D
+u|n, ( bPt −Kπ
+t )g(h,f)
+t+1 |n
+E
+[n]
+ ≤τt:h∥u∥2,dD
+t ∥f∥2,dD
+h ,
+where Kπ
+t = ΠFtP π is the projected transition operator at step t (see Definition 5), g(h,f)
+t+1
+is the
+shorthand for Kπ
+t+1 · · · Kπ
+h−1f (that is, the backup function of f onto step t + 1 from step h), and
+τt:h is given in Eq. (18).
+Proof of Lemma 17. First, we fix an arbitrary pair of elements (u, v) ∈Fh × Fh and time step
+h ∈[H]. Let Yi = u(s(i)
+h , a(i)
+h )v(s(i)
+h , a(i)
+h ) and µ = E[Yi]. Then the concentration error to be
+controlled becomes
+⟨u|n, v|n⟩[n] −⟨u, v⟩dD
+h
+ =
+n
+n
+X
+i=1
+Yi −µ
+ .
+Under Assumption 3, |Yi| ≤sups,a |u(s, a)||v(s, a)| ≤κh∥u∥2,dD
+h ∥v∥2,dD
+h , and by Cauchy-Schwarz
+inequality, µ = |E[uv]| ≤
+p
+E[u2] · E[v2] = ∥u∥2,dD
+h ∥v∥2,dD
+h . Thus the range bound is given by
+|Yi −µ| ≤(κh + 1)∥u∥2,dD
+h ∥v∥2,dD
+h ≤2κh∥u∥2,dD
+h ∥v∥2,dD
+h ,
+since κh ≥1. On the other hand, the variance of Yi can also be bounded via
+Var[Yi] ≤E[Y 2
+i ] = E[u(s, a)2 · v(s, a)2]
+≤κh∥v∥2
+2,dD
+h · E[u(s, a)2] = κh∥v∥2
+2,dD
+h ∥u∥2
+2,dD
+h ,
+where the inequality is also due to Assumption 3. Thus, by Bernstein’s inequality, for fixed (u, v),
+with probability at least 1 −δ/2,
+n
+n
+X
+i=1
+Yi −µ
+ ≤∥u∥2,dD
+h ∥v∥2,dD
+h
+ r
+2κh log(4/δ)
+n
++ 4κh log(4/δ)
+3n
+!
+.
+Now we complete the proof by a standard covering argument. Let Ch be a 1/8-cover of the unit ball
+Bh := {f ∈Fh : ∥f∥2,dD
+h ≤1} under the norm ∥· ∥2,dD
+h , with |Ch| = Nh. Applying the fixed-pair
+Bernstein bound above to all pairs (u0, v0) ∈Ch × Ch and all h ∈[H], with failure probability
+δ/(2HN 2
+h) for each pair, we obtain that with probability at least 1 −δ/2, simultaneously for all
+h ∈[H] and u0, v0 ∈Ch,
+⟨u0|n, v0|n⟩[n] −⟨u0, v0⟩dD
+h
+ ≤
+r
+2κh log(8HN 2
+h/δ)
+n
++ 4κh log(8HN 2
+h/δ)
+3n
+= 3
+4χh.
+It remains to extend this bound from the finite cover to the whole unit ball.
+Let Mh =
+supu,v∈Bh |⟨u|n, v|n⟩[n] −⟨u, v⟩dD
+h | be the uniform concentration error. By the covering property,
+for arbitrary u, v ∈Bh, there exists u0, v0 ∈Ch such that
+∥u −u0∥2,dD
+h ≤1
+8,
+∥v −v0∥2,dD
+h ≤1
+8.
+By bilinearity of inner product, we have
+⟨u|n, v|n⟩[n] −⟨u, v⟩dD
+h
+ ≤
+⟨u0|n, v0|n⟩[n] −⟨u0, v0⟩dD
+h
+
++
+⟨(u −u0)|n, v|n⟩[n] −⟨u −u0, v⟩dD
+h
+ +
+⟨u0|n, (v −v0)|n⟩[n] −⟨u0, v −v0⟩dD
+h
+.
+The first term is bounded by 3χh/4. For the second term, since ∥u−u0∥2,dD
+h ≤1/8 and ∥v∥2,dD
+h ≤1,
+we have 8(u −u0) ∈Bh and v ∈Bh. Therefore, by the definition of Mh, we have
+⟨(u −u0)|n, v|n⟩[n] −⟨u −u0, v⟩dD
+h
+ ≤1
+8Mh.
+Similarly, the third term is also bounded by Mh/8. Combining the three terms, we have that for
+arbitrary u, v ∈Bh,
+⟨u|n, v|n⟩[n] −⟨u, v⟩dD
+h
+ ≤3
+4χh + 1
+4Mh.
+Taking the supremum over u, v ∈Bh, we have Mh ≤3χh/4 + Mh/4, which is equivalent to
+Mh ≤χh. Finally, for arbitrary u, v ∈Fh, if both norms are non-zero (if either norm is zero, then
+the same inequality is trivial under Assumption 3, since ∥u∥2,dD
+h = 0 implies u(s, a) = 0 on all
+sample points as well), apply the above unit-ball bound to u/∥u∥2,dD
+h and v/∥v∥2,dD
+h yields
+⟨u|n, v|n⟩[n] −⟨u, v⟩dD
+h
+ ≤χh∥u∥2,dD
+h ∥v∥2,dD
+h ,
+∀u, v ∈Fh,
+∀h ∈[H].
+This proves the uniform concentration bound.
+Proof of Lemma 18. The proof structure is similar to that of Lemma 17. We first fix t < h, u ∈Bt
+and f ∈Bh, where Bt and Bh are unit balls. Define
+Zi := u(s(i)
+t , a(i)
+t )
+
+g(h,f)
+t+1 (s(i)
+t+1, π) −g(h,f)
+t
+(s(i)
+t , a(i)
+t )
+
+,
+where g(h,f)
+t
+= Kπ
+t g(h,f)
+t+1
+= Kπ
+t · · · Kπ
+h−1f. Then, the concentration quantity we want to control
+becomes
+
+D
+u|n, ( bPt −Kπ
+t )g(h,f)
+t+1 |n
+E
+[n]
+ = 1
+n
+n
+X
+i=1
+Zi.
+Notice that E[Zi] = 0. This is because when we take expectation,
+E[Zi] = E(st,at)∼dD
+t
+h
+u(st, at)
+
+(P πg(h,f)
+t+1 )(st, at) −(Kπ
+t g(h,f)
+t+1 )(st, at)
+i
+.
+But Kπ
+t g(h,f)
+t+1
+= ΠFtP πg(h,f)
+t+1
+where ΠFt is the projection onto Ft. Since u ∈Ft, the projection
+residual is orthogonal to Ft, i.e., Kπ
+t and P π agree when tested against functions in Ft. Hence
+E[Zi] = 0.
+Now we are going to bound Zi. Since ∥u∥2,dD
+t ≤1, generalized leverage gives |u(s, a)| ≤√κt.
+Also, ∥f∥2,dD
+h ≤1 implies ∥f∥∞≤√κh. Thus by Definition 5, we have
+∥g(h,f)
+t
+∥∞≤ρt:h
+√κh,
+∥g(h,f)
+t+1 ∥∞≤ρt+1:h
+√κh.
+This gives an upper bound for the range of Zi, i.e., |Zi| ≤(ρt:h + ρt+1:h)√κtκh. On the other hand,
+for the variance control, we can use a slightly sharper bound that
+Var[Zi] ≤E[Z2
+i ] ≤(ρt:h + ρt+1:h)2κh · E(st,at)∼dD
+t [u(st, at)2] ≤(ρt:h + ρt+1:h)2κh,
+since ∥u∥2,dD
+t ≤1. Therefore, Bernstein’s inequality gives for fixed u, f, with probability at least
+1 −δ/2,
+n
+n
+X
+i=1
+Zi
+ ≤(ρt:h + ρt+1:h)
+ r
+2κh log(4/δ)
+n
++ 2√κtκh log(4/δ)
+3n
+!
+.
+The subsequent steps are similar. We can take 1/8-nets Ct ⊂Bt and Ch ⊂Bh, with sizes |Ct| = Nt
+and |Ch| = Nh. Union bound over all (u0, f0) ∈Ct × Ch and all t, h gives the same bound with
+log(4/δ) ⇝log(8H2NtNh/δ). We can apply the same procedure to extend the bound from the net
+to the whole unit ball, by paying an additional 4/3 factor to get
+sup
+u∈Bt,f∈Bh
+
+D
+u|n, ( bPt −Kπ
+t )g(h,f)
+t+1 |n
+E
+[n]
+ ≤τt:h.
+Finally, for general nonzero u, f, apply the above unit-ball result to u/∥u∥2,dD
+t and f/∥f∥2,dD
+h proves
+the simultaneous concentration bound.
+C.4
+Proof of Theorem 8
+Now we are going to prove the empirical-population tracking theorem (Theorem 8). We will break
+the proof into three steps. Throughout, define
+ηh := ∥ewh −w⋆
+h∥2,dD
+h ,
+∆h := ∥bw[n]
+h −w⋆
+h|n∥[n].
+Our goal is to control the tracking error ∆h.
+Step 1: duality conversion
+We will first transfer the weight error ∆h to the functional-side error
+ηh. This is inspired by linear case where the linear functional (dual) space corresponds to the feature
+space, and the dynamical system in linear case is also defined in the feature space, which is a much
+more convenient way to do analysis; see also Duan et al. [2020]. To see why this is a duality, define
+the dual norm ∥· ∥∗for linear functional Λ such that
+∥Λ∥∗=
+sup
+f∈Fh:∥f∥2,dD
+h ≤1
+|Λ(f)|.
+The following proposition relates ηh with this functional error’s dual norm.
+Proposition 19 (Error duality). For two linear functionals bΛh, Λ⋆
+h : Fh →R, suppose their Riesz
+representers are two elements ewh, w⋆
+h ∈Fh, respectively. Then, ∥ewh −w⋆
+h∥2,dD
+h = ∥bΛh −Λ⋆
+h∥∗.
+Proof. For any f ∈Fh, we have
+(bΛh −Λ⋆
+h)(f)
+ = ⟨ewh −w⋆
+h, f⟩dD
+h ≤∥ewh −w⋆
+h∥2,dD
+h ∥f∥2,dD
+h ,
+where the first equality is due to Riesz representation theorem, and the second inequality is by Cauchy-
+Schwarz. Thus, taking the supremum over ∥f∥2,dD
+h ≤1 gives one direction, i.e., ∥bΛh −Λ⋆
+h∥∗≤
+∥ewh −w⋆
+h∥2,dD
+h .
+On the other hand, if ewh = w⋆
+h, then the claim is trivial. Otherwise, take
+f ⋆
+h =
+ewh −w⋆
+h
+∥ewh −w⋆
+h∥2,dD
+h
+∈Fh.
+Then ∥f ⋆
+h∥2,dD
+h = 1, and (bΛh −Λ⋆
+h)(f) = ∥ewh −w⋆
+h∥2,dD
+h . Hence, ∥bΛh −Λ⋆
+h∥∗≥∥ewh −w⋆
+h∥2,dD
+h .
+Combining the two inequalities proves the claim.
+Now we are going to translate the tracking error ∆h with the functional error ηh; see the following
+lemma.
+Lemma 20 (Tracking error conversion). For any h ∈[H], assume χh ≤1/2 for χh in Eq. (17),
+which can be achieved by n ≳κh log(HNh/δ). Then, ∆h ≤(1 + 3χh)ηh + 2χh∥w⋆
+h∥2,dD
+h .
+Proof. By triangular inequality,
+∆h = ∥bw[n]
+h −w⋆
+h|n∥[n] = ∥¯wh −w⋆
+h∥[n] ≤∥ewh −w⋆
+h∥[n] + ∥¯wh −ewh∥[n].
+For the first term, Lemma 17 gives (where we use √1 + x ≤1 + x/2 for x ≥0):
+∥ewh −w⋆
+h∥[n] ≤
+p
+1 + χh∥ewh −w⋆
+h∥2,dD
+h ≤
+
+1 + 1
+2χh
+
+ηh.
+For the second term, recall the definition of ewh (which is the representer of bΛh) and ¯wh (which is the
+sample-lift of bw[n]
+h ), we have
+⟨ewh, f⟩dD
+h = bΛh(f) = ⟨¯wh, f⟩[n],
+∀f ∈Fh.
+Taking f = ¯wh −ewh, we obtain
+∥¯wh −ewh∥2
+[n] = ⟨¯wh, ¯wh −ewh⟩[n] −⟨ewh, ¯wh −ewh⟩[n]
+= ⟨ewh, ¯wh −ewh⟩dD
+h −⟨ewh, ¯wh −ewh⟩[n]
+≤χh∥ewh∥2,dD
+h ∥¯wh −ewh∥2,dD
+h
+≤
+χh
+√1 −χh
+∥ewh∥2,dD
+h ∥¯wh −ewh∥[n],
+where the last two inequalities are both due to Lemma 17. By canceling a ∥¯wh −ewh∥[n], we have
+∥¯wh −ewh∥[n] ≤
+χh
+√1 −χh
+∥ewh∥2,dD
+h ≤2χh(ηh + ∥w⋆
+h∥2,dD
+h ),
+where we use the fact that χh ≤1/2 and triangular inequality. Combining the two terms, we have
+∆h ≤
+
+1 + 1
+2χh
+
+ηh + 2χh(ηh + ∥w⋆
+h∥2,dD
+h ) ≤(1 + 3χh)ηh + 2χh∥w⋆
+h∥2,dD
+h .
+Step 2: functional telescoping and recursion
+By Proposition 19 and Lemma 20, we learned that
+essentially we want to control
+ηh = ∥bΛh −Λ⋆
+h∥∗=
+sup
+f∈Fh:∥f∥2,dD
+h ≤1
+|bΛh(f) −Λ⋆
+h(f)|.
+The following telescoping lemma demonstrates the iterative nature of Λ⋆
+h and bΛh, since our Q-MMR
+algorithm is level-by-level. As we will see, the iterative property of the population functional Λ⋆
+h
+depends on the projected backup operator Kπ
+h in Definition 5; while the operator corresponding to
+the empirical functional bΛh is the one-step realization operator bPh defined in Lemma 18, i.e.,
+( bPhf)(s(i)
+h , a(i)
+h ) = f(s(i)
+h+1, π),
+f ∈Fh+1.
+Such correspondences enable us to do functional telescoping; see the following lemma.
+Lemma 21 (Functional telescoping). For every h ∈[H] and f ∈Fh,
+bΛh(f) −Λ⋆
+h(f) = bΛ1(g(h,f)
+) −Λ⋆
+1(g(h,f)
+) +
+h−1
+X
+t=1
+D
+¯wt|n, (( bPt −Kπ
+t )g(h,f)
+t+1 )|n
+E
+[n] ,
+where g(h,f)
+t
+is the shorthand for Kπ
+t Kπ
+t+1 · · · Kπ
+h−1f, i.e., the multi-step backup of f ∈Fh onto Ft.
+Proof. We first claim that Λ⋆
+h(f) = Λ⋆
+t (g(h,f)
+t
+) = ⟨w⋆
+t , g(h,f)
+t
+⟩dD
+t for every 1 ≤t ≤h ≤H and
+f ∈Fh. Suppose this claim holds, we have that Λ⋆
+h(f) = Λ⋆
+1(g(h,f)
+). Thus it remains to relate the
+empirical functionals. Write gt := g(h,f)
+t
+∈Ft. By the definition of bΛt+1, we have
+bΛt+1(gt+1) = 1
+n
+n
+X
+i=1
+bw(i)
+t gt+1(s(i)
+t+1, π) = ⟨¯wt, bPtgt+1⟩[n],
+and by using the matching condition (Proposition 15(iii)), we can also write
+bΛt(gt) = 1
+n
+n
+X
+i=1
+bw(i)
+t gt(s(i)
+t , a(i)
+t ) = ⟨¯wt|n, gt|n⟩[n].
+Since gt = Kπ
+t gt+1 by the backup recursion, the difference of the above two equations becomes
+bΛt+1(gt+1) −bΛt(gt) = ⟨¯wt|n, (( bPt −Kπ
+t )gt+1)|n⟩[n].
+By telescoping (summing over t = 1, . . . , h −1), we have
+bΛh(f) −bΛ1(g1) =
+h−1
+X
+t=1
+⟨¯wt|n, (( bPt −Kπ
+t )gt+1)|n⟩[n],
+since f = g(h,f)
+h
+. This proves the lemma.
+Now we go back to prove the claim that Λ⋆
+h(f) = Λ⋆
+t (gt) = ⟨w⋆
+t , gt⟩dD
+t . If t = h, gt = g(h,f)
+h
+= f
+so the claim trivially holds. Consider t < h. For t = h −1, we can write
+Λ⋆
+h(f) = EdD
+h−1[w⋆
+h−1 · (P πf)] = EdD
+h−1[w⋆
+h−1 · (ΠFh−1P πf)] = ⟨w⋆
+h−1, Kπ
+h−1f⟩dD
+h−1,
+where the second equality uses w⋆
+h−1 ∈Fh−1 (Proposition 15(i)) and orthogonality of Πh−1 (the
+projection onto Fh−1), and the last equality uses the definition of Kπ
+h−1 = ΠFh−1P π. Iterating this
+identity, we have
+Λ⋆
+h(f) = ⟨w⋆
+t , Kπ
+t Kπ
+t+1 · · · Kπ
+h−1f⟩dD
+t = ⟨w⋆
+t , gt⟩dD
+t = Λ⋆
+t (gt),
+where the last equality is due to the definition of Λ⋆
+t .
+Using the telescoping in Lemma 21, we can now decompose this empirical-population tracking error
+(in the functional space) and thereby control ηh, yielding a recursion formula to be solved later.
+Lemma 22 (Functional recursion). With probability at least 1 −δ, assume χt ≤1/2 for all t ≤h.
+Then for every h ∈[H],
+ηh ≤
+h−1
+X
+t=1
+at:hηt +
+h−1
+X
+t=1
+at:h∥w⋆
+t ∥2,dD
+t + 4
+3ρ1:h
+r
+2κh log(4Nh/δ)
+n
+,
+where at:h := τt:h + 3χt√κh(ρt:h + ρt+1:h) with χh in Eq. (17) and τt:h in Eq. (18).
+Proof. Fix f ∈Fh with ∥f∥2,dD
+h ≤1. By Lemma 21, we have
+bΛh(f) −Λ⋆
+h(f) = bΛ1(g(h,f)
+) −Λ⋆
+1(g(h,f)
+) +
+h−1
+X
+t=1
+D
+¯wt|n, (( bPt −Kπ
+t )g(h,f)
+t+1 )|n
+E
+[n] .
+For the first-step error term bΛ1(g) −Λ⋆
+1(g) with g := g(h,f)
+, by Definition 6, we have
+bΛ1(g) −Λ⋆
+1(g) = 1
+n
+n
+X
+i=1
+bw(i)
+0 g(s(i)
+1 , π) −ED[w⋆
+0(s0, a0)g(s1, π)]
+= 1
+n
+n
+X
+i=1
+g(s(i)
+1 , π) −ED[g(s1, π)] ≤4
+3ρ1:h
+r
+2κh log(4Nh/δ)
+n
+,
+with probability at least 1 −δ/2, where we used ∥g∥∞≤ρ1:h and the standard covering argument
+over Bh (since g = g(h,f)
+is uniquely determined by f ∈Fh). It remains to tackle the second
+summation term.
+For notational simplicity, we omit the |n in ⟨·|n, ·|n⟩[n] in the following proof. We decompose this
+functional error into the following three terms using ¯wt = ( ewt −w⋆
+t ) + w⋆
+t + ( ¯wt −ewt):
+(I) =
+
+D
+ewt −w⋆
+t , ( bPt −Kπ
+t )g(h,f)
+t+1
+E
+[n]
+ ,
+(II) =
+
+D
+w⋆
+t , ( bPt −Kπ
+t )g(h,f)
+t+1
+E
+[n]
+ ,
+(III) =
+
+D
+¯wt −ewt, ( bPt −Kπ
+t )g(h,f)
+t+1
+E
+[n]
+ .
+By Lemma 18, we have (I) ≤τt:hηt and (II) ≤τt:h∥w⋆
+t ∥2,dD
+t . For the third term,
+(III) ≤∥¯wt −ewt∥[n] ·
+( bPt −Kπ
+t )g(h,f)
+t+1
+
+[n]
+≤
+χt
+√1 −χt
+(ηt + ∥w⋆
+t ∥2,dD
+t )
+ bPtg(h,f)
+t+1
+
+[n] +
+g(h,f)
+t
+
+[n]
+
+,
+where the first inequality is due to Cauchy-Schwarz, and the second inequality we leveraged proof of
+Lemma 20 to control the first ∥¯wt −ewt∥[n] term, and the triangular inequality to control the second
+term (by noticing that g(h,f)
+t
+= Kπ
+t g(h,f)
+t+1 ).
+For the ∥bPtg(h,f)
+t+1 ∥[n] term, we can bound it via Definition 5:
+ bPtg(h,f)
+t+1
+
+[n] =
+v
+u
+u
+t 1
+n
+n
+X
+i=1
+g(h,f)
+t+1 (s(i)
+t+1, π)2 ≤max
+s,a
+g(h,f)
+t+1 (s, a)
+ ≤√κhρt+1:h.
+where we use Assumption 3 and the fact that ∥f∥2,dD
+h ≤1. For the ∥g(h,f)
+t
+∥[n] term, we can similarly
+bound it via Definition 5 (transferred via isometry concentration at first):
+g(h,f)
+t
+
+[n] ≤
+p
+1 + χt
+g(h,f)
+t
+
+2,dD
+t
+≤
+p
+1 + χt · √κhρt:h ≤2√κhρt:h.
+Hence combining the terms, the third term can be controlled by
+(III) ≤2χt√κh
+√1 −χt
+(ρt:h + ρt+1:h)(ηt + ∥w⋆
+t ∥2,dD
+t )
+≤3χt
+√κh(ρt:h + ρt+1:h)(ηt + ∥w⋆
+t ∥2,dD
+t ).
+Summing the three bounds and taking the supremum over ∥f∥2,dD
+h ≤1 controls the functional error
+term. By union bound over three events: the first step concentration error with failure probability
+δ/2, the event in Lemma 17 with failure probability δ/4, and the event in Lemma 18 with failure
+probability δ/4; we prove the claim with probability at least 1 −δ.
+Step 3: solving the recursion
+As shown in Lemma 22, what we get is essentially a recursion in ηh
+(i.e., the RHS also appears ηt for t ≤h). Therefore the final step of proving Theorem 8 is to solve for
+this recursion to control ηh, hence ∆h.
+Proof of Theorem 8. Abbreviate ϵ1:j = 4
+3ρ1:j
+p
+2κj log(4Nj/δ)/n. Let
+Ah := max
+1≤j≤h ϵ1:j +
+j−1
+X
+t=1
+at,j∥w⋆
+t ∥2,dD
+t ,
+Bh := max
+1≤j≤h
+j−1
+X
+t=1
+at,j,
+Eh := max
+1≤j≤h ηj.
+By Lemma 22, with probability at least 1 −δ, for every j ≤h, we have
+ηj ≤
+j−1
+X
+t=1
+at,jηt + ϵ1:j +
+j−1
+X
+t=1
+at,j∥w⋆
+t ∥2,dD
+t ≤BhEh + Ah.
+Taking the maximum over j ≤h gives Eh ≤BhEh + Ah. Hence, we have
+ηh ≤max
+1≤j≤h ηj = Eh ≤
+Ah
+1 −Bh
+≤2Ah ≤2ϵ1:h + 2
+h−1
+X
+t=1
+at:h∥w⋆
+t ∥2,dD
+t ,
+where we use Bh ≤1/2 since our choice of n that n ≳(maxt≤h κt)2(Ph
+t=1 ρt:h)2 log(H2NtNh/δ)
+automatically enables Bh ≤1/2; and the last inequality is due to the maximum of Ah is exactly
+taken at j = h (because all elements are non-negative; that is, at,j∥w⋆
+t ∥2,dD
+t ≥0). Now we can apply
+Lemma 20:
+∆h ≤(1 + 3χh)ηh + 2χh∥w⋆
+h∥2,dD
+h ≤5ϵ1:h + 5
+h−1
+X
+t=1
+at:h∥w⋆
+t ∥2,dD
+t + 2χh∥w⋆
+h∥2,dD
+h ,
+where we use χh ≤1/2 (hence 2(1 + 3χh) ≤5). By the definitions of χh in Eq. (17) and τt:h in
+Eq. (18), we have
+∆h ≤5ϵ1:h + 5
+h−1
+X
+t=1
+at:h∥w⋆
+t ∥2,dD
+t + 2χh∥w⋆
+h∥2,dD
+h
+≤4
+3ρ1:h
+r
+2κh log(4Nh/δ)
+n
++ 20
+√κh
+h−1
+X
+t=1
+(ρt:h + ρt+1:h)∥w⋆
+t ∥2,dD
+t
+·
+ s
+2κh log 8H2NtNh
+δ
+n
++ 2√κtκh log 8H2NtNh
+δ
+3n
++ 3
+s
+2κh log 8HN2
+h
+δ
+n
++ 4κh log 8HN2
+h
+δ
+n
+!
++ 8
+3∥w⋆
+h∥2,dD
+h
+ s
+2κh log 8HN2
+h
+δ
+n
++ 4κh log 8HN2
+h
+δ
+3n
+!
+≲
+h
+X
+t=1
+ρt:h
+s
+κ2
+h log H2NtNh
+δ
+n
+∥w⋆
+t ∥2,dD
+t + ρ1:h
+s
+κh log Nh
+δ
+n
++ higher order term.
+We use ≲to ignore some universal constants (here the constant can be set to 320/3 if we
+combine all terms), and the higher order term is of order O(1/n) in the above equation.
+And we also combined the logarithmic terms and the first step term (by our choice of n ≳
+(maxt≤h κt)2(Ph
+t=1 ρt:h)2 log(H2NtNh/δ)). Therefore, ignoring the higher-order term, we prove
+Theorem 8: for any h ∈[H], with probability at least 1 −δ,
+ bw[n]
+h −w⋆
+h|n
+
+[n] ≲
+h
+X
+t=1
+ρt:h
+r
+κh log(H2NtNh/δ)
+n
+∥w⋆
+t ∥2,dD
+t + ρ1:h
+r
+κh log(Nh/δ)
+n
+.
+C.5
+Proofs of Proposition 9 and Corollary 10
+Here we provide the proof of Proposition 9, as well as the random-design result of the Q-MMR
+algorithm (Corollary 10). As stated in Proposition 9, the population 0 matching loss will imply the
+empirical 0 matching loss with high probability. In the linear case, this is obvious since the invertible
+covariance Σ implies the invertible empirical covariance bΣ by matrix Bernstein inequality. However,
+under GFA, we need to leverage the near-isometry concentration argument (Lemma 17).
+Proof of Proposition 9. As we will see, the empirical 0 matching loss does not rely on the whole
+function f ∈Fh, but its sample-evaluation f|n = (f(s(1)
+h , a(1)
+h ), . . . , f(s(n)
+h , a(n)
+h )), where the
+sample evaluation map |n : Fh →Rn. The near-isometry condition in Lemma 17 implies that |n is
+injective. Indeed, if f|n = 0, then ∥f|n∥[n] = 0, which implies
+0 = ∥f|n∥2
+[n] ≥(1 −χh)∥f∥2
+2,dD
+h .
+Since χh < 1/2 by our choice of n, this gives ∥f∥2,dD
+h = 0, hence f = 0 as an element of Fh.
+Now consider the sample evaluation space Fh|n = {f|n : f ∈Fh} ⊆Rn. We can define a linear
+functional ℓh : Fh|n →R by
+ℓh(f|n) := bΛh(f) = 1
+n
+n
+X
+i=1
+bw(i)
+h−1f(s(i)
+h , π),
+∀f|n ∈Fh|n,
+This is well defined. To see this, suppose f|n = g|n. Then (f −g)|n = 0 by linearity; and f = g
+in Fh by injectivity of this sample evaluation operator |n, i.e., ∥f −g∥2,dD
+h = 0. Therefore, we can
+apply generalized leverage (Assumption 3) to give
+|f(s, a) −g(s, a)| ≤√κh∥f −g∥2,dD
+h = 0,
+∀(s, a) ∈Sh × A.
+Thus f and g also agree pointwise. In particular, this implies f(s(i)
+h , π) = g(s(i)
+h , π) for all i ∈[n].
+Hence bΛh(f) = bΛh(g). So the linear functional ℓh is well-defined.
+Next, since Fh|n is a subspace of Rn, it is also finite-dimensional. Equip Fh|n with the empirical
+inner product ⟨z, z′⟩[n] = 1
+nz⊤z′. By the finite-dimensional Riesz representation theorem, there
+exists some vector ah ∈Fh|n ⊆Rn such that
+ℓh(z) = ⟨ah, z⟩[n],
+∀z ∈Fh|n.
+Taking z = f|n, we have
+bΛh(f) = ℓh(f|n) = ⟨ah, f|n⟩[n] = 1
+n
+n
+X
+i=1
+a(i)
+h f(s(i)
+h , a(i)
+h ),
+∀f ∈Fh.
+By setting bw[n]
+h
+:= ah, we would achieve empirical 0 matching loss, i.e.,
+n
+n
+X
+i=1
+bw(i)
+h f(s(i)
+h , a(i)
+h ) = bΛh(f) = 1
+n
+n
+X
+i=1
+bw(i)
+h−1f(s(i)
+h , π).
+So the empirical matching loss over Fh is zero. Since Fh ⊆Fh, the empirical matching loss over
+Fh is also zero. Thus the empirical minimizer used by Q-MMR also achieves zero loss.
+The proof of Corollary 10 is a direct consequence of Theorem 8 (by leveraging the same procedure of
+telescoping as our fixed-design result in Theorem 1). As we will see in the following, the empirical-
+population tracking error is paired with the average Bellman residual, leading it to a higher-order
+term so that the dominant term becomes random-design control.
+Proof of Corollary 10. First, we make the following decomposition of the suboptimality gap J(π) −
+bJ(π):
+|J(π) −bJ(π)| =
+Qπ(s0, a0) −1
+n
+n
+X
+i=1
+H
+X
+h=0
+bw(i)
+h r(i)
+h
+
+=
+n
+n
+X
+i=1
+bw(i)
+0 Qπ(s(i)
+0 , a(i)
+0 ) −1
+n
+n
+X
+i=1
+H
+X
+h=0
+bw(i)
+h r(i)
+h
+
+=
+n
+n
+X
+i=1
+H
+X
+h=0
+
+bw(i)
+h Qπ(s(i)
+h , a(i)
+h ) −bw(i)
+h+1Qπ(s(i)
+h+1, a(i)
+h+1)
+
+−1
+n
+n
+X
+i=1
+H
+X
+h=0
+bw(i)
+h r(i)
+h
+
+=
+n
+n
+X
+i=1
+H
+X
+h=0
+
+bw(i)
+h Qπ(s(i)
+h , a(i)
+h ) −bw(i)
+h Qπ(s(i)
+h+1, π) −bw(i)
+h r(i)
+h
+
+≤
+n
+n
+X
+i=1
+H
+X
+h=0
+w⋆
+h(s(i)
+h , a(i)
+h )ε(i)
+h
+
+|
+{z
+}
+(I): random design control
++
+n
+n
+X
+i=1
+H
+X
+h=0
+
+bw(i)
+h −w⋆
+h(s(i)
+h , a(i)
+h )
+
+ε(i)
+h
+
+|
+{z
+}
+(II): tracking error
+,
+where ε(i)
+h := Qπ(s(i)
+h , a(i)
+h ) −r(i)
+h −Qπ(s(i)
+h+1, π) denotes the Bellman residual at current transition
+sample (s(i)
+h , a(i)
+h , r(i)
+h , s(i)
+h+1). We use that bw0 ≡1 and bwH+1 ≡0; and the fourth equation is due to
+our empirical 0 matching loss in Proposition 9.
+The first term is the random-design control on population weight functional w⋆
+h. For each fixed
+h, define Xh,i := w⋆
+h(s(i)
+h , a(i)
+h )ε(i)
+h . Conditioned on {(s(i)
+h , a(i)
+h )}n
+i=1, the variables {Xh,i}n
+i=1 are
+independent, mean-zero, and satisfy |Xh,i| ≤Vmax|w⋆
+h(s(i)
+h , a(i)
+h )| since |ε(i)
+h | ≤|Vmax|. Therefore,
+by standard Hoeffding’s inequality, we have: with probability at least 1 −α,
+n
+n
+X
+i=1
+Xh,i
+ ≤Vmax
+r
+2 log(2/α)
+n
+∥w⋆
+h|n∥[n],
+where ∥w⋆
+h|n∥[n] =
+
+n
+Pn
+i=1 w⋆
+h(s(i)
+h , a(i)
+h )21/2
+. Using the near-isometry transfer in Lemma 17
+and χh ≤1/2 (which is implied by our choice of n in Corollary 10), we have
+∥w⋆
+h|n∥[n] ≤
+p
+1 + χh∥w⋆
+h∥2,dD
+h ≤
+r
+2∥w⋆
+h∥2,dD
+h ≤2∥w⋆
+h∥2,dD
+h .
+Take α = δ/(2(H + 1)), then union bound over h ∈[H], we can control the first term by
+(I) ≤2Vmax
+r
+2 log(4(H + 1)/δ)
+n
+H
+X
+h=0
+∥w⋆
+h∥2,dD
+h .
+Now for the tracking part, define Yh,i = ∆(i)
+h ε(i)
+h . Because bw(i)
+h depends only on the trajectory prefix
+up to (s(i)
+h , a(i)
+h ), and w⋆
+h(s(i)
+h , a(i)
+h ) is also measurable with respect to (s(i)
+h , a(i)
+h ), the coefficient ∆(i)
+h
+is fixed when conditioning on the level-h prefixes. Therefore, conditional on those prefixes, the
+variables {Yh,i}n
+i=1 are again independent, mean-zero, and |Yh,i| ≤Vmax|∆(i)
+h |. Apply Hoeffding’s
+inequality again, for each fixed h, with probability at least 1 −α,
+n
+n
+X
+i=1
+Yh,i
+ ≤Vmax
+r
+2 log(2/α)
+n
+∥∆h∥[n] = Vmax
+r
+2 log(2/α)
+n
+∥bw[n]
+h −w⋆
+h|n∥[n].
+Taking again α = δ/(2(H + 1)) and union bound over h, we can control the second term by
+(II) ≤Vmax
+r
+2 log(4(H + 1)/δ)
+n
+H
+X
+h=1
+∥bw[n]
+h −w⋆
+h|n∥[n],
+since w⋆
+0 ≡1 and bw(i)
+= 1 for all i ∈[n]. So now we can apply the tracking theorem (Theorem 8) to
+see that the second term is indeed a higher-order term, since both the average Bellman error and the
+tracking error exhibit the rate of n−1/2 (hence an overall rate of n−1). Combining (I) and (II) proves
+the corollary.
+D
+Further discussion on MIS
+D.1
+Issues with non-parametric weights in MIS
+MIS methods often take a minimax form similar to our Q-MMR, and here we provide further
+discussion on the issue with learning non-parametric weights in MIS. Taking MQL [Uehara et al.,
+2020] as an example, whose population loss is (in the infinite-horizon discounted setting)
+arg min
+f∈F
+max
+w∈W Lq(f, w) := |EdD[w(s, a)(f(s, a) −r −γf(s′, π))]| .
+When w is not restricted to a parametric class W but is a separate scalar for each data point, one
+can immediately see that the loss L is ill-behaved: the original MIS derivations rely on the fact
+that maxw∈W L(Qπ, w) = 0 [Uehara et al., 2020, Jiang and Huang, 2020], but when w is non-
+parametric, L(Qπ, w) ̸= 0 in general when the environment is stochastic, since w can simply choose
+to be positive or negative depending on the sign of Qπ(s, a) −r −γQπ(s′, π). (This issue can
+be viewed as a version of the infamous double-sampling problem.) In contrast, our algorithm and
+analyses forbid the choice of w to depend on the next-state randomness, which avoids this problem.
+Now, MQL learns f using w as discriminator, and its "dual" method such as MWL [Uehara et al.,
+2020] learns w using f as discriminator, which is more similar to our method. We conjecture that
+MWL is subject to similar issues, though a clear counterexample remains to be found.
+D.2
+Data-dependent bounds for MIS
+Consider MWL, whose population loss is (we assume initial state-action pair is fixed as (s0, a0))
+arg min
+w∈W
+sup
+f∈F
+Lw(w, f) :=
+f(s0, a0) +
+1 −γ EdD[w(s, a)(γf(s′, π) −f(s, a))]
+ .
+The actual algorithm optimizes the empirical loss bLw where EdD is replaced with the empirical
+expectation bEdD, and forms the final prediction bJ(π) =
+1−γ bEdD[ bwr] where bw is the learned w. The
+standard finite-sample guarantee for MWL pays for the statistical complexities of both W and F.
+Below we show that the complexity of F can be avoided in a data-dependent guarantee similar to our
+Theorem 1: for any fixed w ∈W, we have
+1 −γ
+bEdD[w(s, a)r] −J(π)
+
+=
+1 −γ
+bEdD[w(s, a)(Qπ(s, a) −r −γQπ(s′, π)] −Qπ(s0, a0) +
+1 −γ
+bEdD[w(s, a)(−Qπ(s, a) + γQπ(s′, π))
+
+≤
+1 −γ
+bEdD[w(s, a)(Qπ(s, a) −r −γQπ(s′, π)]
+ + sup
+f∈F
+bLw(w, f).
+(Qπ ∈F)
+The first term enjoys a "fixed-design" concentration bound similar to our proof of Theorem 1, but
+needs a union bound over w ∈W so that the bound holds for bw. The second term is the empirically
+observed loss, similar to our bLh term in Theorem 1.

@@ -1,0 +1,954 @@
+From Token Lists to Graph Motifs:
+Weisfeiler-Lehman Analysis of Sparse Autoencoder
+Features
+Ruben Fernandez-Boullon*
+University of Vigo
+ruben.fernandez.boullon@uvigo.gal
+Pablo Magarinos-Docampo
+University of Vigo
+pablo.magarinos@uvigo.gal
+Javier Perez-Robles
+University of Vigo
+Abstract
+Sparse autoencoders (SAEs) have become central to mechanistic interpretability,
+decomposing transformer activations into monosemantic features [1, 3, 2]. Yet ex-
+isting analyses characterise features almost exclusively through top-activating token
+lists or decoder weight vectors, leaving the higher-order co-occurrence structure
+shared across features largely unexamined. We introduce a graph-structured repre-
+sentation in which each SAE feature is modelled as a token co-occurrence graph:
+nodes are the tokens most frequent near strong activations, and edges connect pairs
+that co-occur within local context windows. A custom WL-style, frequency-binned
+graph kernel [13, 14] then provides a similarity measure over this structural space.
+Applied as a proof of concept to features from a large SAE trained on GPT-2 Small
+[17] and probed with a synthetic mixed-domain corpus, our clustering recovers
+heuristic motif families-punctuation-heavy patterns, language and script clusters,
+and code-like templates-that are not recovered by clustering on decoder cosine
+similarity (alphabetic purity 0.516 vs. 0.000). A token-histogram baseline achieves
+higher overall purity (0.854 vs. 0.760), so the contribution of the graph view is
+complementary rather than dominant: it surfaces structural relationships that token-
+frequency and decoder-weight views alone do not capture. Cluster assignments are
+stable across graph-construction hyperparameters and random seeds.
+Introduction
+Large language models (LLMs) are increasingly deployed in high-stakes applications, motivating a
+growing body of work on mechanistic interpretability that aims to understand their internal compu-
+tation at the level of neurons, features, and circuits. Sparse autoencoders (SAEs) over transformer
+activations have been proposed as a way to disentangle polysemantic neurons into more monose-
+mantic features, and have been scaled to full residual streams in GPT-2 Small and to frontier models
+such as Claude 3 Sonnet [1, 2, 3, 4]. Despite this progress, most empirical analyses of SAEs describe
+individual features through lists of top-activating tokens, example prompts, or human-written expla-
+nations, leaving open the question of how to systematically organise and compare large dictionaries
+of features.
+In this paper, we explore a complementary perspective in which each SAE feature is represented as a
+graph derived from its activation patterns over text. Intuitively, we treat the tokens that frequently
+appear in the neighbourhood of strong activations as nodes, and connect pairs of tokens that co-occur
+in local contexts when the feature is active. This yields a collection of graphs, one per feature,
+Preprint.
+arXiv:2605.06494v1 [cs.AI] 7 May 2026
+
+which can be compared using a graph kernel inspired by the Weisfeiler-Lehman (WL) subtree kernel
+[13, 14]. By clustering features in this graph-kernel space, we aim to surface recurring structural
+motifs that group together features which appear unrelated if inspected only via their top tokens.
+We propose graph-structured co-occurrence representations for SAE features and a custom WL-style,
+frequency-binned kernel tailored to weighted token graphs (Sections 4.2-4.3). (ii) We provide a
+proof-of-concept evaluation on a single SAE (6-RES-JB, layer 6) of GPT-2 Small, using a synthetic
+mixed-domain corpus designed to elicit varied surface motifs (Section 5). (iii) We benchmark the
+resulting clusters against decoder-cosine and token-histogram baselines using a heuristic token-type
+purity metric (Section 6.2), and report robustness to graph-construction hyperparameters, k-means
+seeds, feature-selection cutoffs, undirected-vs-directed edges, and a small Python-code corpus. We
+do not claim mechanistic interpretation of individual features; the conclusions are about whether the
+graph view yields a structural organisation distinct from existing baselines.
+Background
+Sparse autoencoders over transformer activations have been proposed as a way to discover more
+interpretable feature bases than raw neurons, by learning an overcomplete dictionary with sparse
+codes that reconstruct the original activations [1, 3]. Recent work has demonstrated that such SAEs
+can capture meaningful concepts, from simple syntax and punctuation patterns to more abstract
+semantic and factual knowledge, and can be scaled across all residual stream layers of GPT-2 Small
+[3, 2].
+Graph kernels provide a way to compare graphs by implicitly mapping them into a feature space
+where inner products correspond to measures of structural similarity. The Weisfeiler-Lehman (WL)
+framework iteratively refines node labels by hashing together local neighbourhood information;
+the resulting WL subtree kernel of Shervashidze et al. [14] extends the original combinatorial
+test of Weisfeiler and Lehman [13] into a family of efficient graph kernels widely used for graph
+classification. Standard Python libraries such as GraKeL [15] and graphkit-learn [16] provide off-
+the-shelf implementations. In our experiments we use a custom implementation that departs from
+the standard subtree kernel in two ways: it derives initial node labels from log-scaled, binned co-
+occurrence frequencies rather than raw token identities, and it normalises by the geometric mean
+of diagonal kernel values (Section 4.3). For brevity we still abbreviate this kernel as "WL-style" or
+simply "WL" throughout, with the explicit caveat that it is an inspired variant rather than the kernel
+of [14] verbatim.
+Related Work
+The superposition hypothesis [1] motivates SAEs as a tool for decomposing polysemantic neurons
+into monosemantic features by learning overcomplete dictionaries with sparse latent codes. Bricken
+et al. [2] established the foundational methodology on a one-layer transformer, recovering hundreds
+of interpretable features via dictionary learning on MLP activations. At frontier scale, Templeton et
+al. [4] showed that SAEs trained on Claude 3 Sonnet yield millions of interpretable features spanning
+fine-grained syntax, factual knowledge, and abstract concepts. Early SAEs impose L1 regularisation,
+but the resulting shrinkage bias systematically underestimates feature magnitudes [3]. Gated SAEs [5]
+address this by decoupling feature selection from magnitude estimation via a dedicated sigmoid
+gate and an independent ReLU branch. TopK SAEs [3] replace continuous regularisation with a
+hard cardinality constraint retaining exactly K activations per forward pass. JumpReLU SAEs [6]
+introduce a learnable per-feature threshold with a discontinuous activation function, enabling direct
+L0 optimisation via straight-through estimators and achieving state-of-the-art reconstruction fidelity
+on frontier models. The SAE we analyse (6-RES-JB) uses a standard ReLU activation; whether
+graph-structured motifs persist across these newer architectural variants is an open direction.
+Li et al. [7] demonstrated through large-scale geometric analysis that SAE feature spaces exhibit
+rich multi-scale structure rather than being isotropic. At the finest scale, feature vectors form near-
+crystalline arrangements in latent subspaces that encode relational analogies akin to Word2Vec
+arithmetic. At an intermediate scale, co-occurrence topology reveals tightly localised "lobes" of
+features sharing semantic domains-such as Python programming, biomedical vocabulary, or French
+text-that are physically adjacent in decoder geometry. At the broadest scale, the spectral distribution
+of the full feature point cloud follows a power law, with maximum variance concentrated in middle
+transformer layers. This multi-scale geometric organisation directly motivates the graph-based view
+of this paper: rather than describing features in isolation through top-activating tokens, we build
+co-occurrence graphs that capture neighbourhood structure across activations and apply graph kernels
+to surface higher-order motifs spanning multiple features simultaneously.
+Mechanistic interpretability has moved toward explicitly graph-structured representations of infor-
+mation flow. Marks et al. [8] introduced sparse feature circuits-directed acyclic graphs connecting
+SAE features across layers via causal attribution-and showed that these circuits provide concise,
+editable explanations of model behaviour on narrow tasks. Building on this, Dunefsky et al. [9]
+proposed Cross-Layer Transcoders (CLTs), which replace opaque MLP blocks with linear surrogates
+projecting residual states to post-MLP outputs as a direct linear combination of learned features, en-
+abling scalable construction of full attribution graphs in which edges are weighted by Jacobian-based
+causal influence. To our knowledge, no prior work applies graph kernels to compare SAE feature
+co-occurrence graphs; our approach is complementary to circuit tracing, operating at the level of
+local activation structure rather than inter-layer causal attribution.
+Method
+4.1
+Models and sparse autoencoders
+We focus on GPT-2 Small as our base language model, using the implementation and pretrained
+weights from HuggingFace Transformers [17]. For sparse autoencoders, we rely on the public open-
+sae-soup collection [3, 2] trained on the residual stream of GPT-2 Small. Concretely, all experiments
+in this paper use a single SAE attached to the residual stream at layer 6 before the attention block
+(6-RES-JB), which exposes 24,576 sparse features with an expansion factor of 32 (dmodel = 768,
+dsae = 24,576). The SAE was originally trained on an OpenWebText-like corpus [18]; in this paper
+we re-use the released weights without retraining and probe activations on a different (synthetic
+mixed-domain) corpus described in Section 5. We do not run cross-layer comparisons: extending the
+analysis to other residual layers and SAE architectures is left to future work and discussed as a scope
+limitation in Section 8.
+4.2
+Constructing graphs from SAE features
+Given a fixed SAE and a corpus of text, we collect activations for a subset of features over many
+model runs. For each feature f, we define a high-activation event at position t whenever its activation
+zt,f exceeds a feature-specific threshold τf, chosen as the p-th percentile of its empirical activation
+distribution. Around each such event, we consider a local window of tokens and accumulate statistics
+about which tokens tend to appear in the neighbourhood of strong activations.
+To convert feature f into a graph Gf, we proceed as follows. First, we select the top K tokens that
+appear most frequently in windows centred around high-activation events for f; these tokens form the
+node set of Gf. Each node carries a discrete label derived from the log-scaled co-occurrence frequency
+of its token within the feature (Section 4.3), so node identity reflects activation strength rather than
+token identity. Second, we add an undirected edge between two nodes if their corresponding tokens
+co-occur at least C times within such windows for feature f, with edge weight equal to the co-
+occurrence count. This yields a weighted graph that captures the local co-activation structure induced
+by the feature across many contexts. In addition to the primary graph specification, we later test
+the robustness of our conclusions to reasonable variations in the window size, top-K token cutoff,
+and co-occurrence threshold used to instantiate these graphs. We note that GPT-2’s autoregressive
+architecture implies a natural temporal ordering of tokens; we therefore also evaluate a directed
+variant of these graphs (Appendix E) in which edges respect a frequency-based proxy for causal
+ordering.
+4.3
+Comparing features with a WL-style graph kernel
+Once each feature is represented as a labelled weighted graph Gf, we compare pairs of features using
+a custom WL-style graph kernel. We perform h = 3 refinement iterations starting from initial node
+labels derived from log-scaled co-occurrence frequencies (log(1 + c), where c is the row-sum of co-
+occurrences for each node), discretised into 64 bins. At each iteration, every node label is updated as
+a weighted average of its neighbours’ labels (weighted by edge co-occurrence counts), and re-binned.
+The resulting per-graph histogram of node-label counts is treated as an explicit feature map, and
+the kernel value K(Gf, Gf ′) is the inner product of these histograms. This implementation departs
+from the canonical WL subtree kernel of Shervashidze et al. [14] in three respects: (i) the initial
+labels encode co-occurrence strength rather than raw token identity; (ii) label refinement aggregates
+neighbour information through weighted averaging and binning, rather than label hashing; and (iii)
+the final kernel sums over a single histogram rather than concatenating per-iteration histograms. We
+therefore refer to it as a "WL-style frequency-binned graph kernel" rather than as the standard WL
+subtree kernel.
+The resulting kernel matrix K ∈RN×N for N features captures shared local neighbourhood structure.
+We normalise K to [0, 1] by dividing each entry Kij by the geometric mean of the diagonal entries
+p
+KiiKjj, then symmetrise as K ←(K +K⊤)/2. We embed features into a low-dimensional space
+by applying kernel PCA with the precomputed kernel to 2 dimensions (random_state=42), and
+perform clustering via k-means (n_init=20, random_state=42) in this embedding space to obtain
+groups of features that share similar structural motifs.
+Throughout, we compare this WL-style representation to two baselines: (i) clustering in the space of
+SAE decoder vectors using cosine similarity, and (ii) clustering based on token histograms constructed
+from each feature’s top-K tokens.
+4.4
+Token-type labels and cluster purity
+To evaluate whether clusters correspond to interpretable token-type families, we use a heuristic
+labelling scheme and a standard cluster-purity metric, both of which we summarise here and de-
+fine formally in Appendix B. Each token t is decoded to a string and assigned a coarse label
+ℓ(t) ∈{symbolic, alphabetic, numeric, mixed} based on the dominant character class of its decoded
+form (Python string.punctuation/digits for symbolic, ASCII letters for alphabetic, digits for
+numeric, and mixed for tokens that fall in none of these majority classes). Each feature f then receives
+the plurality label ˆℓ(f) over its top-K tokens. Given a clustering {Ic}K
+c=1, the dominant label ˆyc of
+cluster c is the plurality of ˆℓover its members, the per-cluster purity is the fraction of members whose
+label matches ˆyc, and the overall purity P is the size-weighted average:
+P = 1
+N
+K
+X
+c=1
+{i ∈Ic : ˆℓ(i) = ˆyc}
+.
+(1)
+Category-specific purities (e.g. alphabetic, symbolic) average per-cluster purity over clusters whose
+dominant label equals the target category.
+Experimental Setup
+5.1
+Data
+Our main experiments use a synthetic mixed-domain corpus whose released snapshot contains
+n_tokens_collected = 78,749 token positions (approximately 79k), generated procedurally
+from a fixed set of templates spanning 13 surface registers: Python and JavaScript code, Bash
+commands, mathematical expressions, URLs and file paths, JSON structures, social-media-style
+posts, natural-language paragraphs, formal e-mail headers, and short passages in Spanish, French,
+German, and Japanese. The mixture is constructed (with random seed 42) to elicit a wide range of
+surface motifs-punctuation density, alphabetic structure, code syntax, multi-script tokens-so that
+any motif families surfaced by the WL-style kernel are not artefacts of a single text register. The full
+templates, domain weights, and exact token budget are listed in the released code (main.py). Tokens
+are encoded with the GPT-2 byte-pair tokeniser; the corpus is fed through GPT-2 Small [17] with the
+6-RES-JB SAE hooked at layer 6 to record activations for all selected features.
+This synthetic-corpus design is a deliberate scope choice: the SAE itself was trained on a real
+OpenWebText-like corpus, but our analysis only inspects how its features partition across texts we
+feed in. Using a templated corpus exchanges naturalistic frequency statistics for explicit control over
+which surface registers are present, at the cost of distributional realism. Generalisation to natural
+distributions such as OpenWebText [18] or to a code corpus such as The Stack [19] therefore remains
+an empirical question; we report a small Python-code spot check in Appendix F and discuss this
+limitation explicitly in Section 8.
+5.2
+Feature selection and graph construction
+From the full set of 24,576 features in the SAE, we select a subset of N = 2048 features for analysis,
+retaining features whose nonzero activation fraction lies between 0.1% and 98%. For each selected
+feature we build a co-occurrence graph as described in Section 4.2, yielding a collection of N = 2048
+labelled graphs. Each feature is also assigned a heuristic token-type label as defined in Section 4.4,
+which is used to compute cluster purity scores. The sensitivity of clustering results to the choice of
+αmin and αmax is examined in Section 6.5.
+5.3
+Kernel configuration and baselines
+For the WL-style kernel, we use a custom implementation (not GraKeL [15] or graphkit-learn [16])
+with the configuration introduced in Section 4.3: h = 3 refinement iterations, log-scaled initial node
+labels, 64 label bins per iteration, and geometric-mean normalisation to [0, 1]. We compute the full
+N × N kernel matrix and symmetrise it before applying kernel PCA and clustering.
+For baselines, we construct two alternative similarity matrices: (i) cosine similarity between SAE
+decoder vectors (normalised to unit L2 norm), and (ii) cosine similarity between normalised token
+histograms for each feature, constructed from the top-K token counts per feature.
+5.4
+Complete parameter specification
+All experimental parameters are listed below for reproducibility. SAE: 6-RES-JB from open-sae-
+soup [3], layer 6 residual stream (resid_pre), dmodel = 768, dsae = 24,576, expansion factor 32,
+ReLU activation. Corpus: synthetic mixed-domain corpus described in Section 5, generated with
+seed 42. Token budget: M = 78,749 token positions. Feature selection: percentile threshold
+p = 50, min nonzero = 0.1%, max nonzero = 98%, yielding N = 2048 features. Graph: window
+size W = 10, top-K tokens = 30, co-occurrence threshold C = 3, minimum 5 high-activation events,
+max 200 events per feature. Kernel: h = 3 WL-style iterations, 64 bins, log-scaled labels, geometric-
+mean normalisation. Clustering: k-means (K = 10 clusters, n_init=20, random_state=42).
+Kernel PCA: 2 components, random_state=42. Motif example selection: feature closest to
+cluster centroid in the kernel PCA embedding. Seed: all random states = 42 unless reported
+otherwise.
+To test whether the clustering structure depends strongly on a single graph-construction choice, we
+evaluate a small grid of reasonable hyperparameters on the primary SAE layer and main corpus.
+We compare window sizes W ∈{5, 10, 15}, top-token cutoffs K ∈{30, 50}, and co-occurrence
+thresholds C ∈{3, 5}, while keeping the remaining parts of the pipeline fixed. We compare the
+resulting cluster assignments using stability metrics: Adjusted Rand Index (ARI) and Normalised
+Mutual Information (NMI), measured relative to the default configuration and across pairs of settings.
+Results
+6.1
+RQ1: Do graph-based clusters correspond to structural motif families?
+To obtain a global view of the feature space, we embed the WL-style kernel matrix into two dimensions
+using kernel PCA and apply k-means clustering with K = 10 clusters. Figure 1a shows the
+resulting 2D embedding, coloured by cluster assignment. Under the heuristic token-type labels
+of Section 4.4, features form visually coherent regions that we interpret as broadly distinct motif
+families: punctuation-heavy patterns, code-like structures with operator and bracket tokens, and a
+smaller set of multi-script and natural-language token clusters.
+To make these motifs more concrete, we inspect several clusters in detail. For each cluster, we select
+a few prototype features closest to the cluster centroid in the embedding space, and visualise their
+graphs along with their top-activating tokens. Figure 1b shows representative graphs, illustrating
+tightly connected punctuation subgraphs, mixed alphanumeric patterns reminiscent of identifiers, and
+loosely connected token communities tied to specific languages or domains. These visualisations are
+illustrative rather than exhaustive: a quantitative comparison against baselines is given in Section 6.2,
+and a small-scale verification on a Python code corpus in Appendix F.
+0.4
+0.2
+0.0
+0.2
+0.4
+0.6
+0.8
+Kernel PCA dimension 1
+0.6
+0.4
+0.2
+0.0
+0.2
+0.4
+0.6
+Kernel PCA dimension 2
+Kernel PCA Embedding of SAE Features (WL Graph Kernel)
+Cluster 0
+Cluster 1
+Cluster 2
+Cluster 3
+Cluster 4
+Cluster 5
+Cluster 6
+Cluster 7
+Cluster 8
+Cluster 9
+(a) Kernel PCA embedding coloured by k-means
+cluster assignment (K = 10).
+1
+3
+5
+7
+9
+11
+13
+15
+17
+19
+21
+23
+25
+27
+29
+Cluster 0, Feature 50
+(30 nodes, 234 edges)
+1
+3
+5
+7
+9
+11
+13
+15
+17
+19
+21
+23
+25
+27
+29
+Cluster 0, Feature 66
+(30 nodes, 242 edges)
+1
+3
+5
+7
+9
+11
+13
+15
+17
+19
+21
+23
+25
+27
+29
+Cluster 0, Feature 76
+(30 nodes, 225 edges)
+1
+3
+5
+7
+9
+11
+13
+15
+17
+19
+21
+23
+25
+27
+29
+Cluster 1, Feature 12
+(30 nodes, 290 edges)
+1
+3
+5
+7
+9
+11
+13
+15
+17
+19
+21
+23
+25
+27
+29
+Cluster 1, Feature 22
+(30 nodes, 238 edges)
+1
+3
+5
+7
+9
+11
+13
+15
+17
+19
+21
+23
+25
+27
+29
+Cluster 1, Feature 25
+(30 nodes, 259 edges)
+Structural Motifs from WL-based Clustering
+(b) Representative co-occurrence graphs from selected
+clusters.
+Figure 1: (a) Kernel PCA embedding of the N = 2048 selected SAE features from layer 6 (6-RES-
+JB), based on the custom WL-style frequency-binned graph kernel (h = 3, W = 10, K = 30,
+C = 3), coloured by k-means cluster assignment (ninit = 20). The 2048 features are selected from
+the 24,576 SAE features at activation-percentile threshold p = 50 (Section 5). (b) Representative co-
+occurrence graphs drawn from the WL-style clusters, illustrating qualitatively distinct surface motifs
+(punctuation-heavy patterns, code-like structures, language- and script-specific token communities).
+A larger gallery is provided in the released code.
+6.2
+RQ2: Does the graph view capture structure beyond token and decoder baselines?
+We next compare the WL-style clustering to two simpler baselines: clustering in the space of
+SAE decoder vectors, and clustering based on token histograms. To quantify the extent to which
+clusters align with simple heuristics, we automatically assign each feature a coarse label based on the
+composition of its top-activating tokens, distinguishing predominantly symbolic, alphabetic, numeric,
+and mixed patterns. We then compute cluster purity (Section 4.4, Eq. 1) with respect to these heuristic
+labels under each similarity measure.
+Table 1 reports the average cluster purity for WL-style, decoder-based, and token-histogram-based
+similarity.
+In this evaluation, WL captures structural regularities not reflected in decoder vectors alone: it
+achieves an alphabetic purity of 0.516 versus 0.000 for decoder cosine, indicating that under a
+K = 10 k-means partition the decoder-cosine clustering does not isolate any cluster whose plurality
+token-type label is alphabetic, whereas the WL-style clustering does. WL also achieves a slightly
+higher overall purity than decoder cosine (0.760 vs. 0.754) and a higher symbolic purity (0.781
+vs. 0.754). The token histogram baseline, however, achieves the highest overall purity (0.854) by
+directly leveraging token-frequency information. We therefore read these numbers as showing that
+the token-histogram baseline is a strong competitor for overall feature organisation, and that WL’s
+marginal advantage lies in capturing alphabetic structural patterns that survive after factoring out
+marginal token frequencies, rather than in dominating broad clustering quality. Differences this small
+(e.g., 0.760 vs. 0.754) should be read with caution: we report multi-seed variability below but do not
+compute bootstrap confidence intervals over the underlying feature sample.
+Method
+Symbolic
+Alphabetic
+Overall
+WL-style kernel
+0.781
+0.516
+0.760
+Decoder cosine
+0.754
+0.000
+0.754
+Token histogram
+0.894
+0.749
+0.854
+Table 1: Cluster purity (Eq. 1) with respect to heuristic token-type labels under our WL-style
+frequency-binned graph kernel, decoder-cosine similarity, and top-K token-histogram cosine similar-
+ity. Higher is more aligned with the heuristic labels; differences below ∼0.01 are within multi-seed
+noise (Table 2).
+Per-cluster sizes (range 91-484) and per-cluster purity values are listed in Appendix C (Table 3). The
+dominant type is symbolic (punctuation-heavy motifs) for nine of ten clusters; cluster 8 is the sole
+alphabetic-dominant cluster, with purity 51.6%.
+6.3
+Robustness to graph construction hyperparameters
+We next examine how sensitive the clustering is to the graph-construction hyperparameters introduced
+in Section 4.2. Across all 3 × 2 × 2 = 12 grid points with W ∈{5, 10, 15}, K ∈{30, 50}, and
+C ∈{3, 5}, overall purity ranges from 0.655 to 0.812 (mean 0.748 ± 0.051, default W = 10,
+K = 30, C = 3). Qualitatively, the main motif families are preserved: symbol clusters stay tightly
+grouped, language and script communities still form distinct regions, and code-like motifs continue to
+appear as separate families. We read this as evidence that the graph-structured view is not an artefact
+of a single window size or sparsification threshold, although the exact cluster boundaries do shift
+modestly under more aggressive or more permissive settings.
+6.4
+Ablation study and multi-seed stability
+We assess sensitivity to k-means initialisation by re-running clustering with 10 random seeds
+({42, 0, 7, 13, 21, 33, 47, 64, 99, 123}) on the WL-style embedding. Mean overall purity across seeds
+is 0.7573 ± 0.0019, with σ < 0.01 for every metric in Table 2, indicating stability with respect to
+initialisation. We further ablate across seven similarity measures: the default WL-style kernel, the
+same kernel with edge weights zeroed, the same kernel with node labels randomly shuffled, decoder
+cosine, token histogram, co-occurrence-matrix cosine, and Jaccard similarity on top-token sets.
+Method
+Overall
+Alphabetic
+ARI vs. default
+WL-style (default)
+0.757
+0.500
+-
+WL-style, edges removed
+0.754
+0.000
+0.088
+WL-style, labels shuffled
+0.768
+0.584
+0.618
+Decoder cosine
+0.754
+0.000
+0.002
+Token histogram
+0.853
+0.755
+0.208
+Co-occurrence cosine
+0.769
+0.729
+0.030
+Jaccard top-token
+0.839
+0.658
+0.190
+Table 2: Ablation with multi-seed k-means (10 seeds; σ ≤0.01 for every column, omitted for
+space). Zeroing the edges of the WL-style kernel drops alphabetic purity to 0 while leaving overall
+purity essentially unchanged: edges (not just node-label histograms) are what give the WL view its
+alphabetic-dominant cluster. Shuffling node labels keeps purity above the default and yields ARI
+0.618 with the default, indicating that the kernel relies mostly on edge structure and marginal label
+frequencies, not specific label identities. Token-histogram and co-occurrence-matrix baselines also
+achieve high alphabetic purity, so much of the broader signal is recoverable from token-frequency or
+co-occurrence marginals.
+The headline observation is the gap on alphabetic purity between the WL-style kernel (0.500) and
+decoder cosine (0.000); we report it as an empirical observation under the heuristic metric, not as a
+statistically tested claim. The reported point estimates are stable to k-means initialisation but remain
+artefacts of a single feature sample, a single SAE layer, and a single probing corpus.
+6.5
+Sensitivity to feature selection cutoffs
+We additionally probe whether the clustering depends on the specific activation-fraction cutoffs
+αmin, αmax used to select the N = 2048 features (Section 4.2). Sweeping five configurations span-
+ning [αmin, αmax] ∈{[0.001, 0.98], [0.005, 0.95], [0.010, 0.90], [0.001, 0.99], [0.0005, 0.98]} keeps
+mean purity in the range 0.7547-0.7573 with σ ≤0.002 across 10 k-means seeds, all within multi-
+seed noise of the baseline (full table in Appendix D). The 0.1%-98% thresholds therefore do not
+appear to introduce a material selection bias.
+6.6
+Directed graphs and cross-corpus spot checks
+Two further checks, deferred to the appendix for space, probe robustness along orthogonal axes.
+(i) Directed graphs (Appendix E): replacing each undirected co-occurrence graph with a lower-
+triangular approximation that mimics autoregressive ordering preserves overall purity (0.754 vs.
+undirected 0.757) but eliminates the alphabetic-dominant cluster (ARI 0.123 vs. undirected). The
+triangular approximation discards roughly half of the co-occurrence signal, and the sparser alphabetic
+structure appears to fall below the threshold needed for cluster formation; a fully causal treatment
+requires positional data not retained by the cached graphs used here. (ii) Python-code spot check
+(Appendix F): re-running the kernel and clustering on a generated Python corpus of order 104-105
+tokens yields 99.1% feature overlap with the main run and ARI/NMI of 0.944/0.928 against the
+main-corpus clustering, so the cluster structure is largely stable when activations are recomputed on a
+focused code corpus. Within the main clustering, clusters 6 and 7 carry the highest density of Python
+keywords, operators, and brackets (33.1% and 32.5% of top tokens), consistent with code-like motifs
+being concentrated in specific clusters. We treat both checks as suggestive rather than definitive; an
+evaluation on a naturalistic code corpus such as The Stack [19] remains future work.
+Discussion
+WL-style kernels aggregate local neighbourhood information: what matters is not only which tokens
+appear near a feature’s activations, but how those tokens are connected within the same windows. In
+our setting, alphabetic patterns appear to produce topological signatures-densely connected token
+communities in predictable sequential arrangements-that the graph view reflects but decoder cosine
+does not. Decoder cosine captures what a feature "points toward" in residual-stream geometry, but
+is blind to the co-occurrence structure of activation contexts; this is consistent with its collapse to
+0.000 alphabetic purity in our K = 10 partition. We read this as a possible (not causally established)
+distinction between decoder geometry and activation-context topology, related to but weaker than the
+multi-scale geometric organisation reported by Li et al. [7].
+The higher overall purity of the token histogram (0.854 vs. 0.760 for WL) is consistent with a simple
+property of layer-6 features: marginal token distributions already capture most of the information
+needed for the broad heuristic categorisation we use. The graph view appears to add information
+specifically where the relationships among co-occurring tokens matter, most visibly for alphabetic
+features (WL: 0.516 vs. histogram: 0.749, decoder: 0.000; Table 1). The dominance of symbolic
+clusters (9 of 10) with a single alphabetic cluster is consistent with layer 6 carrying substantial
+positional and syntactic information, and suggests that graph-based analysis is most informative as a
+complement to token-frequency methods rather than as a replacement.
+Broader impact.
+This work is foundational interpretability research that analyses existing, publicly
+available language models and sparse autoencoders. Positive societal impacts include improved
+transparency and auditability of neural language models: by systematically organising the inter-
+nal representations of transformer models, this line of research contributes tools that could help
+practitioners identify potentially harmful or biased feature clusters, facilitate safety auditing of AI
+systems, and improve human understanding of model behaviour in high-stakes applications. We
+identify no direct negative societal impact: the paper does not introduce new generative capabilities,
+deployment-ready systems, or high-risk model releases. As with any interpretability methodology, a
+possible indirect risk is that a deeper understanding of model internals could in principle be exploited
+to reverse-engineer or circumvent safety measures in future systems; we consider this risk low for the
+present contribution, given its analytical and non-generative character.
+8
+Limitations
+Scalability.
+The WL-style kernel computation requires forming the full N × N pairwise kernel
+matrix, which entails O(N 2 · h) work in the number of selected features N and refinement iterations
+h. For the current setting of N = 2048 and h = 3 this is tractable on a single CPU. However, scaling
+to the full 24,576-feature dictionary or to larger modern SAEs with up to N = 131,072 features [3]
+would render the dense kernel matrix infeasible in both time and memory. Practical extensions would
+require approximate kernel methods (e.g., Nyström approximations, random feature maps for graph
+kernels) or hierarchical clustering strategies that avoid materialising the full matrix.
+Custom kernel rather than standard WL.
+The kernel used here departs from the standard WL
+subtree kernel of Shervashidze et al. [14] in three ways (Section 4.3): initial node labels encode
+log-binned co-occurrence counts rather than token identities, refinement uses weighted neighbour
+averaging rather than label hashing, and the final feature map sums over a single iteration’s histogram
+rather than concatenating across iterations. We have not benchmarked the standard WL subtree kernel
+(e.g., as implemented in GraKeL [15]) against ours; it is therefore an open question whether the
+alphabetic-cluster gap over decoder cosine survives under a standard WL implementation, or is in
+part an artefact of our choice of label and refinement schemes. The label-shuffle ablation (Table 2)
+suggests that purity is largely insensitive to the specific log-binned identities, mitigating but not
+eliminating this concern.
+Causal graph structure.
+Our default graph construction treats co-occurrence edges as undi-
+rected, ignoring GPT-2’s autoregressive causal structure. We partially address this in Appendix E
+with a directed graph variant. Our released code (src/graph_construction.py) also exposes a
+directed=True mode that records true positional ordering at graph-construction time; we left the
+experimental evaluation of that mode to future work, since it requires recomputing the full set of
+feature graphs.
+Scope of evaluation.
+This study focuses on a single base model (GPT-2 Small) and a single
+SAE architecture (6-RES-JB) at a single residual layer; stronger claims about layerwise or model-
+family generalisation require broader sweeps. The probing corpus is a synthetic mixed-domain
+mixture (Section 5) chosen to expose surface-form variation, not a sample from any particular natural
+distribution; the SAE itself was trained on an OpenWebText-like corpus and we do not retrain or
+reanalyse it on naturalistic text in this paper. Our evaluation relies on heuristic token-type labels
+that capture broad surface structure but do not constitute causal or mechanistic proofs about what
+each feature actually represents; probe-based or human validation would be needed to confirm that
+motif families correspond to meaningful interpretability categories. The cross-corpus spot check
+(Appendix F) uses generated Python templates rather than a naturalistic code corpus; evaluation on
+The Stack [19] at scale remains an important direction. Finally, small differences in purity between
+methods (e.g., 0.760 vs. 0.754) should be interpreted cautiously without bootstrap confidence intervals
+over the underlying feature sample.
+Conclusion
+We introduced a graph-structured perspective on sparse autoencoder features in transformer language
+models, in which each feature is represented as a weighted graph capturing co-occurrence relationships
+among tokens in the neighbourhood of its activations. By comparing these graphs with a custom
+WL-style frequency-binned kernel and clustering the resulting similarity matrix, we surfaced families
+of features corresponding to heuristic motif categories that are not separated by clustering on decoder
+vectors alone. Our headline empirical observation is that the graph view recovers an alphabetic-
+dominant cluster (purity 0.516) that decoder cosine does not (0.000), while a token-histogram baseline
+outperforms the graph view on overall purity (0.854 vs. 0.760). We therefore present graph-based
+representations as a complementary lens rather than a replacement for token-frequency analyses, and
+limit our claims to surface-level structural motifs. Future work should validate motif families through
+human evaluation, scale the analysis to multiple SAEs, layers, and natural corpora, and compute
+statistical uncertainty (e.g., bootstrap confidence intervals) for purity and similarity metrics. Code is
+publicly available; the repository URL is anonymised for double-blind review and will be provided in
+the camera-ready version. Full reproduction steps are given in Appendix A.
+Acknowledgments and Disclosure of Funding
+References
+[1] Elhage, N., Hume, T., Olsson, C., Schiefer, N., Henighan, T., Kravec, S., Hatfield-Dodds,
+Z., Lasenby, R., Drain, D., Chen, C., Grosse, R., McCandlish, S., Kaplan, J., Amodei, D.,
+Wattenberg, M., and Olah, C. Toy models of superposition. Transformer Circuits Thread, 2022.
+
+[2] Bricken, T., Templeton, A., Batson, J., Chen, B., Jermyn, A., Conerly, T., Turner, N., Anil, C.,
+Denison, C., Askell, A., Lasenby, R., Wu, Y., Kravec, S., Schiefer, N., Maxwell, T., Joseph, N.,
+Hatfield-Dodds, Z., Tamkin, A., Nguyen, K., McLean, B., Burke, J. E., Hume, T., Carter, S.,
+Henighan, T., and Olah, C. Towards monosemanticity: Decomposing language models with
+dictionary learning. Transformer Circuits Thread, 2023. 
+pub/2023/monosemantic-features/
+[3] Gao, L., Dupré la Tour, T., Tillman, H., Goh, G., Troll, R., Radford, A., Sutskever, I., Leike, J.,
+and Wu, J. Scaling and evaluating sparse autoencoders. arXiv:2406.04093, 2024.
+[4] Templeton, A., Conerly, T., Marcus, J., Lindsey, J., Bricken, T., Chen, B., Pearce, A., Citro,
+C., Ameisen, E., Jones, A., Cunningham, H., Turner, N. L., McDougall, C., MacDiarmid,
+M., Freeman, C. D., Sumers, T. R., Rees, E., Batson, J., Jermyn, A., Carter, S., Olah, C.,
+and Henighan, T. Scaling monosemanticity: Extracting interpretable features from Claude 3
+Sonnet. Transformer Circuits Thread, 2024. 
+scaling-monosemanticity/
+[5] Rajamanoharan, S., Conmy, A., Smith, L., Lieberum, T., Varma, V., Kramár, J., Shah, R., and
+Nanda, N. Improving dictionary learning with gated sparse autoencoders. arXiv:2404.16014,
+2024.
+[6] Rajamanoharan, S., Lieberum, T., Sonnerat, N., Conmy, A., Varma, V., Kramár, J., and Nanda,
+N. Jumping ahead: Improving reconstruction fidelity with JumpReLU sparse autoencoders.
+arXiv:2407.14435, 2024.
+[7] Li, Y., Michaud, E. J., Baek, D. D., Engels, J., Sun, X., and Tegmark, M. The geometry of
+concepts: Sparse autoencoder feature structure. arXiv:2410.19750, 2024.
+[8] Marks, S., Rager, C., Michaud, E. J., Belinkov, Y., Bau, D., and Mueller, A. Sparse
+feature circuits: Discovering and editing interpretable causal graphs in language models.
+arXiv:2403.19647, 2024.
+[9] Dunefsky, J., Chlenski, P., and Nanda, N. Transcoders find interpretable LLM feature circuits.
+arXiv:2406.11944, 2024.
+[10] Karvonen, A., Rager, C., Marks, S., Lin, J., Tigges, C., Bloom, J., Bau, D., Belinkov, Y.,
+Lindsey, J., Mueller, A., and Smith, L. SAEBench: A comprehensive benchmark for sparse
+autoencoders in language model interpretability. arXiv:2503.09532, 2025.
+[11] Shu, D., Wu, X., Zhao, H., Rai, D., Yao, Z., Liu, N., and Du, M. A survey on sparse autoencoders:
+Interpreting the internal mechanisms of large language models. arXiv:2503.05613, 2025.
+[12] Paulo, G., Mallen, A., Juang, C., and Belrose, N. Automatically interpreting millions of features
+in large language models. arXiv:2410.13928, 2024.
+[13] Weisfeiler, B. and Leman, A. A reduction of a graph to a canonical form and an algebra arising
+during this process. Nauchno-Tekhnicheskaya Informatsia, Ser. 2, 9:12-16, 1968. (English
+translation by G. Ryabov, 2018.)
+[14] Shervashidze, N., Schweitzer, P., van Leeuwen, E. J., Mehlhorn, K., and Borgwardt, K. M.
+Weisfeiler-Lehman graph kernels. Journal of Machine Learning Research, 12(77):2539-2561,
+2011.
+[15] Siglidis, G., Nikolentzos, G., Limnios, S., Giatsidis, C., Skianis, K., and Vazirgiannis, M.
+GraKeL: A graph kernel library in Python. Journal of Machine Learning Research, 21(54):1-5,
+2020.
+[16] Jia, L., Gaüzère, B., and Honeine, P. graphkit-learn: A Python library for graph kernels based
+on linear patterns. Pattern Recognition Letters, 143:113-121, 2021.
+[17] Radford, A., Wu, J., Child, R., Luan, D., Amodei, D., and Sutskever, I. Language models are
+unsupervised multitask learners. OpenAI Technical Report, 2019.
+[18] Gokaslan, A. and Cohen, V. OpenWebText corpus. 
+OpenWebTextCorpus, 2019.
+[19] Kocetkov, D., Li, R., Ben Allal, L., Li, J., Mou, C., Muñoz Ferrandis, C., Jernite, Y., Mitchell,
+M., Hughes, S., Wolf, T., Bahdanau, D., von Werra, L., and de Vries, H. The Stack: 3 TB of
+permissively licensed source code. arXiv:2211.15533, 2022.
+A
+Reproducibility
+All code required to reproduce the experiments will be made publicly available. The entire exper-
+imental pipeline can be executed sequentially, covering the following general stages:Model and
+SAE Initialization: Load the standard GPT-2 Small model alongside the targeted layer-6 Sparse
+Autoencoder (specifically, the 6-RES-JB SAE from standard open-source repositories).Corpus Gener-
+ation and Activation Collection: Construct the synthetic mixed-domain corpus using a fixed random
+seed (42). Process this corpus through the model to collect activations for all 24,576 SAE features
+across the target token positions (approximately 78,749 tokens, using a standard batch size such as
+512).Feature Selection: Filter the features based on their activation frequency, retaining those within
+a specific nonzero activation fraction (e.g., [0.1%, 98%]), and select the top N = 2048 features based
+on activity using a 50th-percentile threshold.Graph Construction: For each selected feature, build
+a weighted co-occurrence graph using a window size of W = 10, considering the top K = 30
+tokens, and applying a co-occurrence threshold of C = 3.Kernel Computation: Compute the N × N
+kernel matrix using a Weisfeiler-Lehman-style approach with h = 3 iterations, log-scaled labels,
+64 bins per iteration, and geometric-mean normalization.Clustering: Reduce dimensionality using
+Kernel PCA (2 components) and apply k-means clustering (K = 10 clusters, 20 initializations) using
+fixed random seeds to ensure consistency.Evaluation and Ablations: Compute standard evaluation
+metrics, including heuristic token-type labels, cluster purity, and ARI/NMI. The pipeline also includes
+steps to systematically reproduce the robustness grid, ablation studies (such as multi-seed checks,
+similarity measures, and cutoff variations), and cross-corpus analyses discussed in the main text and
+appendices.DependenciesThe experimental framework requires Python 3.10 or higher and relies on
+standard machine learning, scientific computing, and graph processing libraries (including PyTorch,
+Transformers, Accelerate, NumPy, SciPy, scikit-learn, NetworkX, GraKeL, and pandas). All random
+seeds are set to 42 by default to ensure exact reproducibility across runs.
+B
+Heuristic token-type labels and cluster purity
+This appendix gives the formal definitions summarised in Section 4.4.
+Character-type partition.
+We partition the Unicode code points into three (overlapping) sets,
+derived from Python’s string module:
+S = string.punctuation ∪string.digits ∪{’ ’, ’\n’, ’\t’},
+A = string.ascii_letters,
+N = string.digits.
+Note that N ⊂S; digits are counted in both symbolic and numeric tallies.
+Token label ℓ(t).
+Given a token t decoded to a string st, define character-type counts
+cS(t) =
+X
+x∈st
+1[x ∈S],
+cA(t) =
+X
+x∈st
+1[x ∈A],
+cN (t) =
+X
+x∈st
+1[x ∈N],
+and let total(t) = cS(t) + cA(t) + cN (t). The character-fraction scores are πS(t) = cS(t)/total(t),
+and analogously for πA and πN . The token label is assigned by the priority rule
+ℓ(t) =
+
+
+
+
+
+
+
+symbolic
+if πS(t) > 0.5,
+alphabetic
+else if πA(t) > 0.5,
+numeric
+else if πN (t) > 0.3,
+mixed
+otherwise.
+Feature label ˆℓ(f) and cluster purity.
+For a feature f with top-K tokens Tf = {t1, . . . , tK},
+the feature label is the plurality vote ˆℓ(f) = arg maxy
+{t ∈Tf : ℓ(t) = y}
+, with y ∈
+{symbolic, alphabetic, numeric, mixed}. Given a clustering {Ic}K
+c=1 of the N features, the dom-
+inant label of cluster c is ˆyc = arg maxy
+{i ∈Ic : ˆℓ(i) = y}
+, and per-cluster purity is
+purity(c) = |{i ∈Ic : ˆℓ(i) = ˆyc}|/|Ic|. The overall purity reported in Eq. 1 is the size-weighted
+mean. Category-specific purity for label y averages purity(c) over Cy = {c : ˆyc = y}:
+Py =
+|Cy|
+X
+c∈Cy
+purity(c).
+C
+Per-cluster summary
+Table 3 lists the ten WL-style clusters with their sizes, dominant heuristic token type, and per-
+cluster purity (corresponding to the partition described in Section 6.2). Cluster sizes range from
+91 to 484 features. The dominant type is symbolic for nine of ten clusters; cluster 8 is the only
+alphabetic-dominant cluster, with purity 51.6%.
+Cluster
+Size
+Dominant
+Purity
+207
+symbolic
+63.8%
+484
+symbolic
+87.4%
+154
+symbolic
+82.5%
+91
+symbolic
+79.1%
+143
+symbolic
+56.6%
+134
+symbolic
+71.6%
+289
+symbolic
+92.7%
+226
+symbolic
+86.7%
+161
+alphabetic
+51.6%
+159
+symbolic
+49.1%
+Table 3: Summary of the ten WL-style clusters. Bold row is the only alphabetic-dominant cluster; all
+others are symbolic (punctuation-heavy).
+D
+Sensitivity to feature-selection cutoffs
+Table 4 reports the full sweep over activation-fraction cutoffs summarised in Section 6.5. For each
+configuration we identify which of the 24,576 SAE features would be selected, intersect that set with
+our current 2048 features (for which the WL-style embedding is precomputed), and re-run k-means
+(K = 10, 10 seeds) on the resulting subset of the embedding.
+Config
+Cutoff range [αmin, αmax]
+N (intersect)
+Mean purity
+Std
+A (baseline)
+[0.001, 0.98]
+0.7573
+0.0019
+B (tighter)
+[0.005, 0.95]
+0.7563
+0.0020
+C (tightest)
+[0.010, 0.90]
+0.7547
+0.0015
+D (wider upper)
+[0.001, 0.99]
+0.7573
+0.0019
+E (wider lower)
+[0.0005, 0.98]
+0.7573
+0.0019
+Table 4: Sensitivity of k-means purity to feature-selection cutoffs. N (intersect) is the number of
+features common to each configuration and the current 2048-feature set. Mean purity and standard
+deviation are over 10 random seeds.
+E
+Directed graph variant
+GPT-2 is autoregressive: token i can attend only to positions j ≤i. Our default co-occurrence
+graphs ignore this causal ordering by using undirected edges.
+To probe whether respecting
+temporal ordering changes the clustering, we construct a directed variant. The released code
+(src/graph_construction.py, directed=True) supports recording true positional ordering at
+graph-construction time, but rebuilding the full set of feature graphs would invalidate the cached
+kernel matrix; we therefore use a faster post-hoc approximation here and leave the full re-run to
+future work.
+For each symmetric adjacency matrix we retain only its strict lower triangle (i > j). The top-tokens
+list is ordered by frequency (most frequent at index 0), so this approximation directs edges from
+less-frequent to more-frequent tokens, reflecting the intuition that a rarer contextual token tends to
+precede a frequent trigger token in the autoregressive context window. We then apply a directed
+variant of the WL-style kernel that aggregates in-neighbour and out-neighbour labels separately for
+each node. The full implementation is in experiments/directed_graph_experiment.py.
+Method
+Overall
+Alphabetic
+ARI vs. undirected
+Undirected WL-style (default)
+0.757 ± 0.002
+0.500
+-
+Directed WL-style (lower-triangular)
+0.754 ± 0.000
+n/a
+0.123
+Table 5: Directed versus undirected variants of the WL-style kernel (10 seeds, K = 10 clusters).
+Alphabetic purity is "n/a" because no alphabetic-dominant cluster forms under the directed variant.
+The directed variant achieves overall purity 0.754, comparable to the undirected baseline (0.757).
+However, it fails to produce any alphabetic-dominant cluster across all 10 seeds: every cluster is
+dominated by symbolic features. The low ARI (0.123) indicates that the two variants partition the
+feature space quite differently despite similar overall purity: the lower-triangular approximation
+discards roughly half of the co-occurrence signal. A more complete treatment would require raw
+positional data during graph construction so that true temporal direction can be assigned to each edge.
+F
+Cross-corpus spot check on Python code
+Although the main mixed-domain corpus already contains Python and JavaScript snippets, the paper’s
+claim of "code-like template motifs" is worth probing on a focused code corpus. We run two
+complementary spot checks.
+Token-type analysis (Analysis A). We decode each cluster’s top tokens with the GPT-2 tokeniser and
+classify each token as: Python keyword (def, class, for, etc.), operator (=, +, *, etc.), bracket/code-
+structure character, number, alphabetic, punctuation, or other. The code-token ratio per cluster is
+(Python keywords + operators + brackets) divided by total tokens across all features in the cluster
+(Table 6).
+Cluster
+Size
+Code ratio
+Keywords
+Operators
+Brackets
+289
+0.331
+946
+7
+0.325
+755
+1
+0.324
+1445
+2
+0.317
+522
+3
+0.310
+296
+5
+0.310
+425
+0
+0.309
+658
+8
+0.304
+483
+9
+0.297
+456
+4
+0.294
+425
+Table 6: Code-token ratio per WL-style cluster (Analysis A). Clusters 6 and 7 carry the highest
+concentration of Python keywords, operators, and brackets (33.1% and 32.5%). Cross-cluster
+differences are modest, so the result should be read as suggestive rather than conclusive.
+Small-scale code corpus run (Analysis B). We generate a Python code corpus of 600 synthesised
+snippets drawn from 33 diverse templates (function definitions, class definitions, loops, list compre-
+hensions, decorators, etc.); the resulting tokenised corpus is on the order of 104-105 tokens. We run
+this corpus through GPT-2 Small with the SAE hooked at layer 6, apply the same feature-selection
+criteria as in the main experiments, and intersect the resulting active features with the original 2048.
+We subset the WL-style kernel matrix to this intersection, re-run kernel PCA + k-means (K = 10),
+and compare the cluster assignments against the main-corpus clustering via ARI and NMI (Table 7).
+Metric
+Value
+Code-corpus snippets
+SAE features active on code
+23,591 / 24,576
+Intersection with original 2048
+2,030 (99.1%)
+ARI vs. main-corpus clustering
+0.944
+NMI vs. main-corpus clustering
+0.928
+Code-corpus cluster purity
+0.761
+Table 7: Cross-corpus spot check (Analysis B). High ARI (0.944) and NMI (0.928) against the
+clustering obtained on the main mixed-domain corpus indicate that the cluster structure is largely
+stable when activations are recomputed on a focused Python-code corpus. This is a small-scale check
+on generated Python templates; an evaluation on a naturalistic code corpus such as The Stack [19]
+remains future work.

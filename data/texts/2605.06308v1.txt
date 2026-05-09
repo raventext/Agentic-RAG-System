@@ -1,0 +1,2071 @@
+Measuring Black-Box Confidence via Reasoning
+Trajectories:
+Geometry, Coverage, and Verbalization
+Marc Boubnovski Martell1
+Josefa Lia Stoisser1
+Kaspar Märtens1
+Jialin Yu2
+Robert Kitchen1
+Philip Torr2
+Jesper Ferkinghoff-Borg1
+1Novo Nordisk
+2University of Oxford
+Abstract
+Reliable confidence estimation gates safe deployment of chain-of-thought (CoT)
+reasoning through text-only APIs, yet the dominant black-box baseline, self-
+consistency over K samples, is linearly expensive and ignores the geometry of the
+trace. We introduce a black-box trajectory-confidence score that embeds a CoT as
+a sliding-window trajectory and measures its convergence toward external answer
+anchors with a one-parameter softmax, requiring no logits, hidden states, or su-
+pervised calibrators. On six (benchmark, reasoner) settings over MedQA-USMLE,
+GPQA Diamond, and MMLU-Pro × {Gemini 3.1 Pro, Claude Sonnet 4.6}, fus-
+ing this score with coverage and verbalized-confidence channels at K=4 Pareto-
+improves self-consistency at K=8 in 6/6 settings (median AUC 0.78 vs. 0.71,
+∆AUC = +0.075); a fixed-pick control (+0.060) and an E5 cross-embedder repli-
+cation rule out answer-switching and single-vendor artifacts. Mechanistically, the
+geometry signal peaks in the penultimate reasoning window across all benchmarks
+and reasoners and inverts at the terminal window on GPQA Diamond, exposing
+answer commitment before literal verbalization. Three increasingly unscaffolded
+regimes decompose black-box confidence into a judge-mediated Coverage prior
+(C), within-trace Geometry (G), and a conditional Verbalization channel (V );
+across 18 benchmark×reasoner×proposer settings, C and G carry independent
+signal in 18/18 and 16/18, while V contributes residual signal in only 6/18. A
+judge-family swap (GPT-5-mini →Claude Sonnet 4.6) leaves G-only AUC un-
+changed (|∆| ≤0.013) and shifts C-only AUC by at most ±0.02 (κ=0.82), and
+fusion beats the best single channel in 17/18 settings (median AUC 0.78, max
+0.92). Together, these results show that black-box CoT confidence can be read
+more reliably from a trace’s geometric convergence in embedding space than from
+sample-vote agreement, at lower sampling cost and without access to logits or
+hidden states.
+Introduction
+Chain-of-thought (CoT) reasoning Wei et al. [2022] is often deployed through text-only APIs Stoisser
+et al. [2025a], where logits, hidden states, and retrieval support are unavailable and confidence must
+be estimated from the generated text alone Kuhn et al. [2023], Lin et al. [2023], Pedapati et al.
+[2024]. The dominant black-box baseline is self-consistency: sample many CoTs and use vote
+concentration as confidence Wang et al. [2022b], Martell et al. [2026]. It is effective, but linearly
+expensive in K, blind to the internal geometry of the trace, and produces an inherently discrete
+confidence, a k/K ratio over a finite ballot, which loses resolution at small K and cannot rank
+ties Martell et al. [2025]. We study a different signal: the trajectory of the CoT itself. By embedding
+sliding windows of the trace and scoring their convergence toward external answer anchors with
+arXiv:2605.06308v1 [cs.AI] 7 May 2026
+
+a one-parameter softmax calibration model (a single inverse-temperature slope β fit by maximum
+likelihood), we read out a continuous numerical black-box confidence score from text alone, one
+logit-shaped probability per option per question, with the same sign and significance of ˆβ under
+three embedders (gemini-embedding-001, OpenAI text-embedding-3-large, E5 Wang et al.
+[2022a]).
+Multiple-choice benchmarks provide the cleanest controlled setting because they supply both can-
+didate anchors and a gold answer. We use three regimes: visible-option multiple-choice (MCQ;
+multiple-choice question answering, MCQA, when referring to the task) as a sanity check, blinded
+option anchors as the main single-channel configuration, and an open-ended proposer/judge regime
+where even the candidate set is generated rather than given. In the blinded regime the fitted slope of
+the one-parameter softmax (formally ˆβ in Section 3) is strongly negative in every benchmark-model
+combination, the geometry-based composite reaches AUC 0.752-0.826 on MedQA and 0.701-0.727
+on GPQA, and the window-position sweep gives a falsifiable mechanistic signature: the slope is most
+negative in the penultimate window and flips sign on the terminal one.
+But single-trace geometry has a structural ceiling: if no sampled trace ever reaches the correct
+hypothesis, no score defined on that trace can recover it. Moving to the open-ended regime separates
+this coverage failure from within-trace commitment failure. This yields three complementary black-
+box channels, Coverage, Geometry, and Verbalization (C+G+V), whose fusion Pareto-improves
+matched self-consistency (better AUC at comparable end-to-end API cost, accounting for proposer,
+judge, verbalization, and embedding calls; Appendix D.4).
+Contributions.
+1. A black-box trajectory-confidence score. A one-parameter sliding-window cosine softmax
+mapping (text, embedder, anchor set) 7→confidence, with sign and significance of the fitted
+softmax slope replicating across three embedders, three reasoners, and three benchmarks.
+2. A late-trace commitment signature. The fitted softmax slope is deepest negative in the
+penultimate CoT window across all three benchmarks (GPQA, MedQA, MMLU-Pro) and
+both reasoners (6/6 combinations), validating the penultimate-window default as a robust
+scoring position. On GPQA Diamond the slope additionally inverts at the terminal window
+(ˆβall=+22.1, +23.7), identifying a regime in which closing-token verbalization measurably
+reorients the trajectory toward the model’s committed pick; the penultimate-window default
+avoids this regime by construction.
+3. A three-channel decomposition with an asymmetric role for V . Replacing closed-set
+options with a proposer/judge hypothesis pool splits black-box confidence into a judge-
+mediated reachability prior (C, a question-difficulty signal) and within-trace Geometry as
+primary channels (independent signal in 18/18 and 16/18 benchmark-reasoner-proposer
+combinations) and Verbalization as a conditional third channel that contributes residual
+signal in only 6/18 combinations, validated as a matched-protocol gain over self-consistency:
+C+G+V at K=4 Pareto-improves SC@8 in all six closed-set settings at comparable total
+API cost (median ∆AUC = +0.075, Stouffer z = 5.67), and a fixed-pick control isolates
+calibration from selection (+0.060 median AUC at SC’s own pick on the 18-setting open-
+ended panel).
+Related Work
+Methods for estimating LLM confidence differ along three axes: access to the generator (white-
+box logits and activations vs. black-box text only), the object being scored (final answer sets vs.
+intermediate reasoning traces), and the reference the score is computed against (self-referential
+agreement/self-report vs. external answer anchors). Our setting, black-box text, trace-level scoring,
+and external answer reference, is sparsely explored.
+White-box methods use token probabilities, post-hoc calibration, hidden-state probes, contrastive
+decoding, and lens-style readouts Shorinwa et al. [2025], Jiang et al. [2020], Kadavath et al. [2022],
+Azaria and Mitchell [2023], Li et al. [2023], Belrose et al. [2023], Ali et al. [2025], but these signals
+are unavailable on most commercial APIs. Black-box baselines instead use verbalized confidence Lin
+et al. [2022], Tian et al. [2023], Xiong et al. [2023], self-consistency Wang et al. [2022b], semantic
+entropy ?, and lexical or NLI-based answer-set agreement ??; these score completed answers or
+self-reports rather than the geometry of the intermediate trace ?.
+Closest in spirit are geometry-based analyses of generations: Lin et al. [2023], ? embed clouds of
+completed responses and score their dispersion, while ?? study kinematic statistics of reasoning
+traces; neither uses external answer anchors. Our method instead scores sliding windows of a single
+CoT against fixed answer anchors, yielding a black-box measurement of late-stage commitment.
+Process-reward models require step-level supervision and white-box generation ?; CoT-faithfulness
+asks whether the surface trace reflects the underlying computation Turpin et al. [2023], Lanham et al.
+[2023], whereas we ask where correctness signal concentrates in embedding space. A complementary
+line treats uncertainty as a downstream control signal: Stoisser et al. [2025b] use confidence to gate
+tool use and abstention in agentic structured reasoning, and Stoisser et al. [2025c] use uncertainty
+filtering to curate label-free synthetic biological reasoning data; our work supplies the trace-level
+confidence primitive such pipelines need under black-box access. Concurrent work by ? finds the same
+late-stage divergence in hidden-state trajectories of open-weight math reasoners; it is complementary
+rather than directly comparable because it is white-box and self-referential, whereas ours is black-box
+and externally anchored. Throughout, we evaluate under selective classification Cole et al. [2023],
+Wen et al. [2025], since abstention under an accuracy-coverage tradeoff is the deployment setting in
+which CoT confidence matters.
+Isolating the Geometric Channel
+We first isolate Geometry (G), the within-trace spatial commitment of a CoT trajectory toward
+an external answer anchor. On closed-set MedQA, GPQA, and MMLU-Pro, G alone reaches
+single-feature selective AUC 0.71-0.82 with no proposer, judge, or self-report. Coverage (C) and
+Verbalization (V ) become necessary only in the open-ended regime of Section 5, where a trace
+can fail by missing the gold (G cannot recover) or by committing to the wrong in-set hypothesis (C
+cannot recover). This section formalizes G alone.
+We isolate the trajectory-geometry signal in a blinded multiple-choice protocol: the generator reasons
+about a closed-set question without seeing the option list, and we score its trace against the dataset
+options externally. This forces the CoT-to-option mapping to be performed geometrically rather than
+by the generator itself.
+3.1
+Setup and Trajectory Construction
+A multiple-choice question q has J=4 options {a1, . . . , aJ} with gold index y⋆. We prompt the
+generator with q alone, withholding the option list, and sample K=4 free-form chains of thought
+C(1), . . . , C(K) at T=0.7. The target is (i) a pick ˆy ∈{1, . . . , J} and (ii) a confidence c ∈[0, 1] for
+{ˆy = y⋆}. Withholding options at generation time forces the CoT-to-option map to be performed
+externally and geometrically rather than by the generator itself.
+Each CoT is embedded as a trajectory of overlapping sliding windows under a fixed embedding
+model ϕ : text →Rp (gemini-embedding-001, p=3072). With window size W=30 and stride
+S=15 words,
+T (k) =
+ z(k)
+0 , z(k)
+1 , . . . , z(k)
+Mk
+
+,
+z(k)
+≡ϕ(q),
+z(k)
+m
+= ϕ
+ w(k)
+(m−1)S+1: (m−1)S+W
+
+for m ≥1.
+(1)
+Here, T represents the embedded reasoning trace and Mk is the total number of sliding windows for
+trace k. Option anchors are the embeddings of the benchmark-supplied option texts, yj = ϕ(aj),
+fixed across samples and independent of the generator. The trajectory-to-anchor distance we score is
+the cosine distance from the penultimate sliding window z(k)
+Mk−1 to each anchor, averaged over the K
+samples:
+D(k)
+j
+= 1 −⟨z(k)
+Mk−1, yj⟩
+∥z(k)
+Mk−1∥∥yj∥
+,
+Dj = Dj(T ) =
+K
+X
+k
+D(k)
+j
+.
+(2)
+Using the penultimate rather than the final window is a fixed a-priori guard against the terminal-
+verbalization regime in which a CoT literally restates its answer; the choice is validated empirically
+by the window-position sweep of Section 4.5 and Appendix B. Euclidean and PCA-reduced distance
+variants behave similarly and are reported in Section 4.5.
+3.2
+Scoring Rule and Composite Confidence
+Geometric pick and softmax probability.
+The pick is the closest anchor in mean cosine distance,
+ˆy = arg minj Dj, with correctness label ℓ= ⊮[ˆy = y⋆] serving as the target of every selective-
+prediction AUC reported in this paper. Conditional on the option set, we score correctness with a
+one-parameter softmax over option distances,
+GEO(q) =
+exp(ˆβall Dˆy)
+P
+j′ exp(ˆβall Dj′)
+,
+ˆβall = arg max
+β
+X
+q′
+log
+exp(β Dy⋆
+q′)
+P
+j′ exp(β Dj′,q′),
+(3)
+fit on the training fold. A strongly negative ˆβall means closer anchors are more likely correct; we
+verify this empirically in Section 4.2, and Table 4 reports ˆβall per (dataset, model). The softmax
+probability GEO(q) is our single geometric feature.
+One posterior, three readouts.
+GEO, the null-standardized top-two distance-margin score ˜D =
+(D(2) −D(1) −µq)/σq used in the committed-rationale-anchor evaluation of Appendix A (with
+µq, σq estimated from a cross-question null pool of trajectories embedded with the same model), and
+the binary correctness probability P(ˆy = y⋆| T ) ( see Appendix H) are three projections of one
+Bayesian posterior with uniform priors. The binary projection is the Fermi-Dirac distribution
+P(ˆy = y⋆| T ) = σ
+
+ˆβbin ˜D(T ) −α
+
+,
+σ(t) = 1/(1 + e−t),
+(4)
+fitted on the same training folds. The null-standardization is doing real work: µq subtracts the
+question-stem confound (vocabulary overlap that pulls any trace toward this question’s options
+regardless of reasoning), and σq removes the anchor-cohesion confound (questions with tightly-
+clustered options need finer resolution than questions with widely-spread options). After both, ˜D is
+in units of standard deviations of null-trajectory similarity, so ˆβbin has the same units, and the same
+operational meaning, across embedders, benchmarks, and reasoners. The two estimators are not equal
+but algebraically related: under the unified posterior the all-option and binary fits should satisfy
+ˆβall = −ˆβbin/¯σq,
+(5)
+where ¯σq is the mean per-question null scale; we verify this in Appendix Table 18 as a falsification
+check on the unified posterior. The all-option fit ˆβall in Table 4 retains the units of the underlying
+cosine distances, so its sign and significance, not its raw magnitude, is the comparable invariant
+across protocols. We derive the equivalence and verify it experimentally in Appendix H.
+Composite confidence.
+We fuse GEO with four auxiliary features computed on the same K=4 sam-
+ples: STR (string consensus of condensed answers), SEM (mean pairwise cosine among condensed-
+answer embeddings), VOL (sample- and window-averaged cosine distance between consecutive
+trajectory windows, VOL =
+K
+P
+k
+Mk−1
+P
+m d(z(k)
+m−1, z(k)
+m )), and ENS (cross-model agreement
+of the modal condensed answer). Condensed answers come from a zero-shot prompt to the same
+generator (Appendix G); feature-level formulas are in Appendix F. The composite is the predicted
+probability of ℓ=1 from a logistic regression on the standardized vector (GEO, STR, SEM, VOL, ENS),
+with balanced class weights to prevent the high-accuracy settings (in which ℓ=1 dominates) from
+overwhelming the loss; the No-Geo baseline refits the same regression on the last four features, and
+∆(GEO) denotes the AUC gap. This composite assumes a fixed external option set; Section 5 drops
+that assumption and replaces option anchors with proposer-generated hypothesis anchors.
+Protocol.
+All learned parameters, ˆβall, ˆβbin, standardizer, logistic-regression weights, are refit on
+each training fold of a stratified 5-fold split on ℓand applied frozen to the held-out fold; we report
+mean AUC across folds. For the ˆβall values in Table 4 we additionally fit one full-data logit per
+(dataset, model) and report its z-statistic. Unless explicitly subscripted, "ˆβ" in the main paper
+Table 1: Selective-prediction AUC in the blinded option-anchor protocol. Geo is the fitted softmax
+probability of the picked option; Str/Sem/Vol/Ens are auxiliary agreement features; Composite is a
+logistic fusion and No-Geo removes Geo. Geo is en-par or better than Composite in all four settings.
+Dataset
+Model
+Geo
+Str
+Sem
+Vol
+Ens
+Composite
+No-Geo
+∆(Geo)
+MedQA
+Gemini 3.1 Pro
+0.821
+0.512
+0.562
+0.558
+0.506
+0.826
+0.577
++0.249
+MedQA
+Claude Sonnet 4.6
+0.753
+0.536
+0.549
+0.490
+0.508
+0.752
+0.519
++0.234
+GPQA
+Gemini 3.1 Pro
+0.710
+0.579
+0.530
+0.593
+0.552
+0.701
+0.560
++0.141
+GPQA
+Claude Sonnet 4.6
+0.750
+0.628
+0.466
+0.496
+0.538
+0.727
+0.605
++0.122
+refers to ˆβall (Eq. 3); the binary ˆβbin (Eq. 4) is used only inside the unified-posterior consistency
+check of Appendix H. Auxiliary features additionally use a zero-shot condensation call to the same
+generator (Appendix G); questions whose condensation fails on any of the K samples are dropped,
+yielding retained N of 1272/1271 (MedQA) and 117/187 (GPQA) for Gemini/Sonnet. Scoring the
+penultimate rather than final window is a fixed a-priori guard against terminal verbalization, validated
+post-hoc by the window-position sweep (Appendix B).
+Validating the Geometric Measurement
+4.1
+Experimental Setup
+We evaluate on MedQA-USMLE Jin et al. [2021], a 1,273-question four-option benchmark, with
+retained N=1272/1271 for Gemini/Sonnet after condensation-parseability filtering. We also evaluate
+on GPQA Diamond Rein et al. [2023] (198 questions; retained N=117/187). In both benchmarks
+the generator sees only the question, we sample K=4 open-ended CoTs at T=0.7, condense each
+to a predicted answer span, and evaluate with stratified 5-fold cross-validation on whether the
+geometric argmin-pick is correct. The main generators are Gemini 3.1 Pro and Claude Sonnet 4.6.
+A stratified 200-question MMLU-Pro pilot is used only for sign-level robustness and self-consistency
+generalization; because GPQA/Gemini retains only N=117, we interpret that cell jointly with
+GPQA/Sonnet and the MMLU-Pro replication when making generality claims.
+4.2
+Result 1: A One-Parameter Softmax Tracks Correctness
+We first establish that trajectory endpoint distance is a strong statistical predictor of option correctness
+in the main blinded option-anchor protocol. In all four MedQA/GPQA benchmark-model combi-
+nations, the fitted one-parameter softmax slope is strongly negative (z = −5.48 to −25.39), and
+the single geometric score reaches Disc. AUC (discriminative AUC, i.e. the single-feature selective-
+prediction AUC of GEO) 0.71-0.82. Full coefficients for the main blinded protocol are reported in
+Appendix Table 4; replications on a third benchmark and an open-weight third-family generator under
+committed-rationale anchors are reported in Appendix Tables 6 and 10. The comparable invariant
+across protocols is the sign of ˆβ, not its raw magnitude, which depends on the anchor construction. As
+a falsification check on the unified posterior, the predicted equality of Eq. 5 is satisfied in 6/6 (dataset,
+model) combinations: the bootstrap CIs of |ˆβall|, ˆβbin, and ˆβ std
+bin /¯σq overlap pairwise everywhere
+(Appendix Table 18).
+4.3
+Result 2: A Single Confidence Signal Across Domains and Models
+Does trajectory geometry contribute signal beyond answer-set agreement? We fuse GEO with four
+consistency and ensemble covariates defined in Appendix F, and compare against a No-Geo ablation
+that refits the same logistic without the geometric feature. Table 1 shows that the composite reaches
+AUC 0.701-0.826 across all four benchmark-model combinations, while removing Geo costs 0.12-
+0.25 AUC. Geo is strongest on MedQA and remains competitive with, or stronger than, the full
+composite on GPQA.
+Single-channel (G-only) comparison to K-sample self-consistency.
+As a sanity check before the
+full three-channel decomposition of Section 5, single-channel G already exceeds budget-matched self-
+consistency Wang et al. [2022b] (SC@K, the plurality vote share over K CoTs after mapping sampled
+8
+6
+4
+2
+window position k (k = 
+1: last; k = 
+8: 8 from end)
+40
+0
+40
+all (fitted softmax slope)
+Gemini 3.1 Pro
+7
+5
+3
+1
+window position k (more negative = closer to end)
+Claude Sonnet 4.6
+Window-position sweep on GPQA Diamond (K = 5 samples per question)
+Figure 1: Fitted softmax slope ˆβall (Eq. 3) vs single-window position k on GPQA Diamond (k=−1:
+final window; k=−8: eight windows back). Negative values indicate calibrated geometry; positive
+values indicate terminal answer commitment. Bars are 95% bootstrap CIs. The penultimate-window
+choice was fixed before the sweep, and the optimum at k=−2 confirms it.
+answers into the benchmark’s answer space) in 9/10 benchmark-model-condition combinations
+(Appendix Tables 7 and 8). Semantic entropy is treated as a separate baseline rather than as the
+SC voting rule: DeBERTa-MNLI semantic entropy Kuhn et al. [2023], ? on a MedQA/Gemini
+pilot reaches AUC 0.590 versus 0.821 for the geometric composite. The fully matched C+G+V vs.
+SC@8 comparison is the headline of Section 5.3.
+4.4
+Result 3: The Signal Lives in the Penultimate Trajectory Window
+We now ask the sharper mechanistic question: is the calibration signal just a property of the pooled
+question stem, or does it arise from late trajectory dynamics? Figure 1 answers this directly by
+refitting the one-parameter softmax on a single sliding window at position k from the end of the trace
+on GPQA. Three observations together make this our cleanest mechanistic finding.
+(i) The penultimate-window choice was fixed a-priori. We committed to scoring at the penultimate
+window before running the sweep, on the prior that the terminal window contains literal answer
+verbalization and would therefore align with the model’s picked answer rather than the gold one. The
+sweep is thus an out-of-sample test of that prior, not a tuning loop. (ii) The sign flip at k=−1 falsifies
+the naive account and confirms the answer-commitment account. A "geometry-tracks-correctness
+everywhere" reading predicts ˆβall < 0 throughout the trace; instead, the final window flips positive on
+both generators (+22.1 for Gemini, +23.7 for Claude). This is exactly what the answer-commitment
+account predicts: at k=−1 the trajectory is closest to whichever option the model is about to commit
+to, regardless of correctness, so ˆβall inverts. The deepest negative slopes occur at k=−2 and k=−3
+(−43.4/−48.9 for Gemini; −28.8/−39.1 for Claude), and earlier windows attenuate steadily toward
+zero. (iii) The phase structure replicates across model families. Both Gemini and Claude show the
+identical three-phase shape, terminal flip, penultimate trough, early-window attenuation, despite
+different vendors, training data, and rationale styles, so this is a property of late-stage CoT trajectories
+rather than of any one model. The pattern also makes a falsifiable prediction for the white-box probing
+literature ?: hidden-state probes trained on the penultimate trajectory window should outperform
+probes trained on the terminal window, with a sign-flip in the linear-probe weight at the same position.
+4.5
+Ablations
+The result is robust to the main design choices. Metric/PCA changes leave the sign and significance
+of ˆβ unchanged; W ∈{20, 30, 40} is stable, whereas W>50 or W<15 degrades. Swapping the
+embedder to OpenAI text-embedding-3-large preserves the geometry-vs-SC sign in the four
+matched MedQA/GPQA combinations and lifts the geometry-plus-SC composite over SC in 7/7
+open-ended settings. Trace-length residualization changes AUC by at most +0.008, so the signal is
+not a length artifact. String Consensus alone remains far below the composite and removing GEO
+costs 0.12-0.25 AUC, isolating a non-lexical component. The one design choice that materially
+matters is anchor source: trajectory-derived anchors collapse to near chance, whereas dataset-
+option and independently generated committed-rationale anchors preserve answer-directed geometry
+(Appendix A).
+5
+Three Channels of Black-Box Confidence
+Section 4 established that G is a valid black-box measurement: the geometric score tracks correctness
+in every benchmark-model setting and beats budget-matched self-consistency in 9/10 single-channel
+settings. This section asks the orthogonal deployment question: is one channel sufficient? We argue
+(and quantify) that it is not, that the residual failure decomposes cleanly into a coverage failure
+and a commitment failure, and that a three-channel fusion at K=4 Pareto-improves SC@8 in 6/6
+closed-set settings.
+5.1
+Why a Second Channel Is Necessary
+The geometric score measures how strongly a CoT trace concentrates near one option region in
+embedding space; it is invariant to whether that region happens to contain the gold option. To make
+this concrete, we stratify the closed-set blinded protocol into three buckets: (i) CORRECT (the picked
+option is gold); (ii) WRONG-IN-SET (gold was proposed by some sample but not picked); and (iii) NO-
+HYPOTHESIS-CORRECT (gold was not proposed by any sample). Bucket (ii) and bucket (iii) are both
+"wrong" from the user’s standpoint, so a calibrated confidence score should rank them equivalently
+low. It does not. Across all six closed-set (benchmark, model) combinations, every embedding-
+based and vote-based score we evaluate, GEO, the Bayesian top-2 projection, self-consistency vote
+share, normalized cluster entropy, and an anchor-cohesion control (−¯ρ, with the cloud-cohesion ρq
+defined in Appendix H.1), ranks bucket (iii) above bucket (ii), with AUCs in the 0.06-0.44 range
+(i.e. systematically anti-correlated with correctness; Appendix H.1). The single score family that
+escapes this inversion is verbalized confidence (AUC 0.45-0.62), which the same model produces
+conditional on its own CoT and which depends on no embedding geometry. The asymmetry is not
+numerical noise; it is a structural fingerprint of the channel.
+The mechanism is direct. Under the parameterization of Section 3.2, the geometric channel is fully
+summarized by per-option distances; bucket-(iii) traces simply have small D to their (in-set, but
+wrong) committed option, indistinguishable from bucket-(i) traces by construction. The calibration
+knobs internal to the channel, increasing K, swapping the anchor variant (condensed-answer vs.
+reasoning-tail vs. dataset-option, App. A), rescaling the softmax temperature β, and reweighting via a
+rejection prior over options, all preserve the bucket ordering or trivialize it (Appendix H.1). Reliable
+abstention therefore requires a second channel whose evidence does not flow through option-distance
+likelihoods, and verbalization is the only black-box source we have that meets that constraint.
+5.2
+Setup: Proposer, Judge, and the Three Channels
+We replace the closed-set option list with a hypothesis pool generated by an independent proposer
+LLM and delegate gold-equivalence to a third judge LLM. The three agent roles are: a reasoner
+(Gemini 3.1 Pro, Claude Sonnet 4.6, or Llama 3.3 70B; K=5 CoT traces), a proposer (Gemini 3.1 Pro
+or Claude Sonnet 4.6; KP =3 temperature-varied hypothesis pools), and a fixed judge (Azure-hosted
+openai_gpt5_mini, publication date 2025-08-07; J=4 strict-matching samples, with inputs and
+outputs archived for re-evaluation). What is new here is not proposer-judge plumbing per se but
+treating proposer-pool reachability of the gold answer as a first-class confidence channel, distinct
+from within-trace geometric concentration. This separates two failure modes that closed-set MCQA
+conflates, the model never raised gold (C) versus the model raised gold but did not commit (G),
+and assigns them to different model families so that no single vendor’s idiosyncrasies drive both
+signals. The bucket-(iii) failure of Section 5.1 now splits cleanly into two sub-cases that closed-set
+MCQA cannot separate: absent_gold (proposer never raised the gold) is the coverage failure;
+no_path_in_set (gold raised but vgold=0 in the reasoner’s votes) is the commitment failure. We
+define three confidence channels, each tied to one source of evidence:
+• Coverage (C). Features are ¯cq, Kvalid
+P
+(parseable pools among the KP =3 proposer draws),
+and the entropy of judge labels across valid pools. No reasoner trace is consumed.
+• Geometric (G). Trajectory-anchor geometry as in Section 3, with proposer-hypothesis
+anchors in place of dataset options. Features: top-2 cosine margin, mean cosine to top-1
+hypothesis, vote concentration, vote entropy across K=5 traces.
+• Verbalized (V ). The same generator is shown its own CoT (no option list, no proposer pool)
+and asked for an integer 0-100 confidence in its committed answer. Features: mean, std,
+min over K scores.
+Each channel is converted to a per-question signal under stratified 5-fold logistic regression on its
+own bundle; the three channel scores are then fused by a second 5-fold logistic. The nesting prevents
+leakage between channel selection and fusion. The open-ended panel uses K=5 reasoner samples
+per question; the closed-set protocol of Section 3 uses K=4, and the budget-matched headline of
+Section 5.3 compares fused C+G+V at K=4 against SC@8.
+5.3
+Decomposition Results and Headline Gain
+The practical payoff is a matched-protocol gain over self-consistency. Here and below, SC@8
+means the plurality vote share over eight sampled CoTs after mapping sampled answers into the
+benchmark answer space. Across the six closed-set (benchmark, model) combinations spanning
+MedQA-USMLE, GPQA Diamond, and MMLU-Pro × {Gemini 3.1 Pro, Claude Sonnet 4.6}, the
+fused C+G+V score at K=4 Pareto-improves SC@8 in 6/6 combinations with median ∆AUC =
++0.075, mean +0.077, and pooled one-sided Stouffer z = 5.67 (p = 7.1 × 10−9);1 4/6 per-
+combination bootstrap CIs exclude zero, and the largest gap is MedQA / Gemini at +0.091 (95% CI
+[+0.035, +0.152]). To rule out the alternative explanation that the gain comes from picking different
+answers, we hold the chosen answer fixed at SC’s plurality pick on every question and ask only
+whether the geometric score evaluated at SC’s own pick is better calibrated than SC’s vote share.
+Across the broader 18-setting open-ended panel of Table 2 (which adds Llama 3.3 70B as a third
+reasoner), the geometric margin at SC’s pick beats SC’s vote-share AUC by a median +0.060 AUC
+under matched 5-fold CV, with SC and Geo agreeing on the picked answer in 94% of questions. The
+matched-protocol Pareto gain therefore reflects calibration of the same answer, not switching to a
+different one. The same fusion advantage holds under an independently trained external embedder:
+re-running the matched K=4 vs. SC@8 protocol on its N≈200-per-cell subset with E5-large-v2 in
+place of gemini-embedding-001 leaves C+G+V above SC@8 in 6/6 combinations with pooled
+Stouffer z = 3.14 (p = 8.5 × 10−4, Appendix D.2), so the headline gain is not a single-vendor
+artifact.
+The rest of this subsection unpacks where that gain comes from: how each channel behaves on its
+own, how they overlap, and when verbalization in particular contributes residual signal. Table 2
+reports proposer-median AUC across the two proposers for each benchmark-reasoner pair; the full
+18-combination panel is deferred to Appendix Table 11.
+Coverage behaves like a question-level prior. Mean ¯c moves by at most 1 pp under proposer swaps
+on GPQA (0.716 →0.711) and MedQA (0.835 →0.827), against a cross-benchmark range of
+12 pp, and the transfer audit gives in-setting / within-benchmark / cross-benchmark medians of
+0.767/0.767/0.768 for C, versus 0.696/0.663/0.659 for G and 0.627/0.620/0.617 for V .
+Limitation: judge confound on C.
+The Coverage signal flows through an LLM judge, so a
+component of C could reflect judge-side linguistic priors rather than reasoner-intrinsic difficulty.
+We treat C throughout as a judge-mediated reachability prior, i.e. a question-difficulty signal as
+scored by the judge, and report two robustness checks. (i) On a stratified 100-question MedQA
+spot-check, judge labels agree with exact-string matching on the gold answer span at Cohen’s
+κ=0.81 (the 19% disagreements are paraphrases the string baseline cannot resolve); substituting
+string labels for judge labels reduces C-only AUC by 0.02-0.04 across combinations and leaves the
+fused C+G+V ranking unchanged. (ii) A judge-family swap (GPT-5-mini →Claude Sonnet 4.6) on
+two combinations (MedQA / Gemini-proposer N=200, GPQA / Gemini-proposer N=192) yields
+κ=0.82 (5-class, MedQA), leaves G-only AUC unchanged within noise (∆=−0.013, −0.001), and
+shifts C-only AUC by at most ±0.02 under cross-judge evaluation (matched outcome label); the
+C+G ranking is preserved in both combinations (Appendix D.3). The judge-mediated component of
+C is therefore bounded; the model-specific signal lives in G and V .
+Fusion dominates the single channels, and each channel carries non-redundant signal. C+G+V beats
+the best single channel in 17/18 combinations (median gain +0.05 AUC over the single-channel
+1For each combination Stouffer’s z Stouffer et al. [1949] pools one-sided p-values pi via zpool = P
+i zi/√n with
+zi = Φ−1(1 −pi) and n the number of combinations; we report it as a single-number summary of the across-combination
+direction of the effect.
+Table 2: Three-channel selective-prediction AUC in open-ended MCQA, median over the two
+proposers for each benchmark-reasoner pair. Bold marks the best single channel among C/G/V .
+The fused C+G+V column is a 5-fold cross-validated logistic fusion and exceeds the best single
+channel in 8/9 rows (tie: MMLU-Pro / Llama). Full proposer-level panel in Appendix Table 11.
+Bench
+Reasoner
+C
+G
+V
+C+G+V
+GPQA
+Gemini
+0.82
+0.74
+0.69
+0.87
+GPQA
+Claude
+0.75
+0.74
+0.71
+0.85
+GPQA
+Llama
+0.68
+0.64
+0.56
+0.75
+MedQA
+Gemini
+0.75
+0.68
+0.59
+0.82
+MedQA
+Claude
+0.73
+0.66
+0.76
+0.86
+MedQA
+Llama
+0.73
+0.64
+0.58
+0.78
+MMLU-Pro
+Gemini
+0.72
+0.70
+0.57
+0.75
+MMLU-Pro
+Claude
+0.64
+0.67
+0.65
+0.70
+MMLU-Pro
+Llama
+0.67
+0.61
+0.53
+0.67
+Median (GPQA, 3 reasoners)
+0.75
+0.74
+0.69
+0.85
+Median (MedQA, 3 reasoners)
+0.73
+0.66
+0.59
+0.82
+Median (MMLU-Pro, 3 reasoners)
+0.67
+0.67
+0.57
+0.70
+Median across all 9 pairs
+0.73
+0.67
+0.59
+0.78
+baseline; bootstrap 95% CI excludes zero in 12/18); median fused AUC is 0.78, peaking at 0.92.
+A logistic-regression LRT rejects redundancy of C given (G, V ) in 18/18 combinations (every
+p ≤0.002), of G in 16/18, and of V in 6/18. The V asymmetry is itself a finding: verbalized
+confidence carries unique residual signal only when the reasoner has metacognitive access we can
+elicit, which we return to below.
+Residualizing C, G, and V on a leave-this-reasoner-out difficulty proxy still leaves fused AUC
+0.50-0.72 across the 18 combinations, so the three-channel signal is not reducible to shared question
+difficulty. Appendix audits further show that the signal localizes to ¯c and the top-2 cosine margin,
+and that a nonlinear second-stage model does not improve on the linear fusion (median ∆= −0.023;
+Appendix D.5).
+Verbalization remains a gated metacognitive channel rather than a universal pillar: AUC(V ) correlates
+with reasoner accuracy across closed-set settings (Spearman ρ= + 0.71, N=6), the LRT adds signal
+in only 6/18 open-ended settings, and the MedQA / Gemini / Gemini-proposer counterexample
+shows that strong standalone V need not lift C+G. The deployment rule is therefore to use C and G
+unconditionally and gate V on setting-level calibration and orthogonality tests (Appendix D.5).
+Conclusion
+Black-box confidence in chain-of-thought reasoning is a structured signal with three distinct channels:
+Coverage (whether the correct hypothesis is reachable at all), Geometry (how strongly a trajectory
+commits within the reachable set), and Verbalization (the model’s own self-rating when metacognitive
+access is available). Fusing C+G+V at K=4 Pareto-improves SC@8 in 6/6 matched closed-set
+settings, with median ∆AUC = +0.075 and pooled Stouffer z = 5.67 (p = 7.1 × 10−9); the gain
+survives a fixed-pick falsification (+0.060 median AUC at SC’s own plurality answer, 94% pick-
+agreement) and re-running with an external embedder (E5-large-v2: 6/6, z = 3.14). Mechanistically,
+the geometric channel provides black-box evidence of answer commitment: answer-bearing semantic
+content accumulates in the embedding trajectory and the confidence signal peaks in the penultimate
+window before literal answer verbalization.
+The practical takeaway is that black-box confidence is a fusion problem rather than a single scalar:
+self-consistency, verbalized confidence, and trajectory geometry measure judge-mediated reachability,
+self-report, and within-trace commitment, and the gain comes from combining them rather than
+picking one, at the modest cost of K extra rollouts plus one embedding pass with no access to logits,
+weights, or hidden states.
+Limitations.
+(i) The Coverage channel is mediated by an LLM judge: a component of C reflects
+judge interpretation rather than pure reasoner reachability, which we bound with a string-match
+spot-check and a judge-family swap (see Appendix D.3); a full multi-judge / human-adjudication /
+retrieval-grounded equivalence study is left as future work. (ii) Verbalization carries unique residual
+signal in only 6/18 open-ended settings and should be treated as a gated channel rather than a
+universal pillar. (iii) The protocol is tested on three English benchmarks and three frontier reasoners;
+non-English, non-text-only, or much weaker reasoners may behave differently. (iv) The structural
+point remains that no within-trace score can recover a hypothesis that was never proposed.
+References
+Riccardo Ali, Francesco Caso, Christopher Irwin, and Pietro Liò. Entropy-lens: The information
+signature of transformer computations. arXiv preprint arXiv:2502.16570, 2025.
+Amos Azaria and Tom Mitchell. The internal state of an llm knows when it’s lying. In Findings of
+the Association for Computational Linguistics: EMNLP 2023, pages 967-976, 2023.
+Nora Belrose, Igor Ostrovsky, Lev McKinney, Zach Furman, Logan Smith, Danny Halawi, Stella
+Biderman, and Jacob Steinhardt. Eliciting latent predictions from transformers with the tuned lens.
+arXiv preprint arXiv:2303.08112, 2023.
+Jeremy Cole, Michael Zhang, Dan Gillick, Julian Eisenschlos, Bhuwan Dhingra, and Jacob Eisenstein.
+Selectively answering ambiguous questions. In Proceedings of the 2023 Conference on Empirical
+Methods in Natural Language Processing, pages 530-543, 2023.
+Zhengbao Jiang, Frank F Xu, Jun Araki, and Graham Neubig. How can we know what language
+models know? Transactions of the Association for Computational Linguistics, 8:423-438, 2020.
+Di Jin, Eileen Pan, Nassim Oufattole, Wei-Hung Weng, Hanyi Fang, and Peter Szolovits. What
+disease does this patient have? a large-scale open domain question answering dataset from medical
+exams. Applied Sciences, 11(14):6421, 2021.
+Saurav Kadavath, Tom Conerly, Amanda Askell, Tom Henighan, Dawn Drain, Ethan Perez, Nicholas
+Schiefer, Zac Hatfield-Dodds, Nova DasSarma, Eli Tran-Johnson, et al. Language models (mostly)
+know what they know. arXiv preprint arXiv:2207.05221, 2022.
+Lorenz Kuhn, Yarin Gal, and Sebastian Farquhar. Semantic uncertainty: Linguistic invariances for
+uncertainty estimation in natural language generation. arXiv preprint arXiv:2302.09664, 2023.
+Tamera Lanham, Anna Chen, Ansh Radhakrishnan, Benoit Steiner, Carson Denison, Danny Hernan-
+dez, Dustin Li, Esin Durmus, Evan Hubinger, Jackson Kernion, et al. Measuring faithfulness in
+chain-of-thought reasoning. arXiv preprint arXiv:2307.13702, 2023.
+Xiang Lisa Li, Ari Holtzman, Daniel Fried, Percy Liang, Jason Eisner, Tatsunori B Hashimoto, Luke
+Zettlemoyer, and Mike Lewis. Contrastive decoding: Open-ended text generation as optimization.
+In Proceedings of the 61st annual meeting of the association for computational linguistics (volume
+1: Long papers), pages 12286-12312, 2023.
+Stephanie Lin, Jacob Hilton, and Owain Evans. Teaching models to express their uncertainty in
+words. arXiv preprint arXiv:2205.14334, 2022.
+Zhen Lin, Shubhendu Trivedi, and Jimeng Sun. Generating with confidence: Uncertainty quantifica-
+tion for black-box large language models. arXiv preprint arXiv:2305.19187, 2023.
+Marc Boubnovski Martell, Kaspar Märtens, Lawrence Phillips, Daniel Keitley, Maria Dermit, and
+Julien Fauqueur. A scalable LLM framework for therapeutic biomarker discovery: Grounding Q/A
+generation in knowledge graphs and literature. In ICLR 2025 Workshop on Machine Learning for
+Genomics Explorations, 2025.
+Marc Boubnovski Martell, Josefa Lia Stoisser, Lawrence Phillips, Aditya Misra, Robert Kitchen,
+Jesper Ferkinghoff-Borg, Jialin Yu, Philip Torr, and Kaspar Märtens. Mechpert: Mechanistic
+consensus as an inductive bias for unseen perturbation prediction. arXiv preprint arXiv:2602.13791,
+2026.
+Tejaswini Pedapati, Amit Dhurandhar, Soumya Ghosh, Soham Dan, and Prasanna Sattigeri. Large
+language model confidence estimation via black-box access. arXiv preprint arXiv:2406.04370,
+2024.
+David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien Dirani,
+Julian Michael, and Samuel R Bowman. Gpqa: A graduate-level google-proof q&a benchmark.
+arXiv preprint arXiv:2311.12022, 2023.
+Ola Shorinwa, Zhiting Mei, Justin Lidard, Allen Z Ren, and Anirudha Majumdar. A survey on
+uncertainty quantification of large language models: Taxonomy, open research challenges, and
+future directions. ACM Computing Surveys, 58(3):1-38, 2025.
+Josefa Lia Stoisser, Marc Boubnovski Martell, Kaspar Märtens, Lawrence Phillips, Stephen Michael
+Town, Rory Donovan-Maiye, and Julien Fauqueur. Query, don’t train: Privacy-preserving tabular
+prediction from ehr data via sql queries. arXiv preprint arXiv:2505.21801, 2025a.
+Josefa Lia Stoisser, Marc Boubnovski Martell, Lawrence Phillips, Gianluca Mazzoni, Lea Mørch
+Harder, Philip Torr, Jesper Ferkinghoff-Borg, Kaspar Martens, and Julien Fauqueur. Towards
+agents that know when they don’t know: Uncertainty as a control signal for structured reasoning.
+arXiv preprint arXiv:2509.02401, 2025b.
+Josefa Lia Stoisser, Lawrence Phillips, Aditya Misra, Tom A Lamb, Philip Torr, Marc Boubnovski
+Martell, Julien Fauqueur, and Kaspar Märtens. Towards label-free biological reasoning synthetic
+dataset creation via uncertainty filtering. arXiv preprint arXiv:2510.05871, 2025c.
+Samuel A Stouffer, Edward A Suchman, Leland C DeVinney, Shirley A Star, and Robin M Williams Jr.
+The american soldier: Adjustment during army life.(studies in social psychology in world war ii),
+vol. 1, volume 1 of Studies in Social Psychology in World War II. Princeton Univ. Press, 1949.
+Katherine Tian, Eric Mitchell, Allan Zhou, Archit Sharma, Rafael Rafailov, Huaxiu Yao, Chelsea
+Finn, and Christopher D Manning. Just ask for calibration: Strategies for eliciting calibrated
+confidence scores from language models fine-tuned with human feedback. In Proceedings of the
+2023 Conference on Empirical Methods in Natural Language Processing, pages 5433-5442, 2023.
+Miles Turpin, Julian Michael, Ethan Perez, and Samuel Bowman. Language models don’t always
+say what they think: Unfaithful explanations in chain-of-thought prompting. Advances in Neural
+Information Processing Systems, 36:74952-74965, 2023.
+Liang Wang, Nan Yang, Xiaolong Huang, Binxing Jiao, Linjun Yang, Daxin Jiang, Rangan Majumder,
+and Furu Wei. Text embeddings by weakly-supervised contrastive pre-training. arXiv preprint
+arXiv:2212.03533, 2022a.
+Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc Le, Ed Chi, Sharan Narang, Aakanksha Chowdh-
+ery, and Denny Zhou. Self-consistency improves chain of thought reasoning in language models.
+arXiv preprint arXiv:2203.11171, 2022b.
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny
+Zhou, et al. Chain-of-thought prompting elicits reasoning in large language models. Advances in
+neural information processing systems, 35:24824-24837, 2022.
+Bingbing Wen, Jihan Yao, Shangbin Feng, Chenjun Xu, Yulia Tsvetkov, Bill Howe, and Lucy Lu
+Wang. Know your limits: A survey of abstention in large language models. Transactions of the
+Association for Computational Linguistics, 13:529-556, 2025.
+Miao Xiong, Zhiyuan Hu, Xinyang Lu, Yifei Li, Jie Fu, Junxian He, and Bryan Hooi. Can llms
+express their uncertainty? an empirical evaluation of confidence elicitation in llms. arXiv preprint
+arXiv:2306.13063, 2023.
+Table 3: Anchor-design ablation on GPQA Diamond. All three variants use the same trajectory and
+the same softmax scoring; only the per-option anchor differs. Geo AUC measures selective prediction
+from the single-feature softmax probability; PickAcc is top-1 accuracy of the argmin-distance rule.
+Anchor design
+Model
+N
+Geo AUC
+Composite
+∆(Geo)
+Answer (condensed)
+Gemini 3.1 Pro
+0.437
+0.520
+n/a
+Reasoning tail
+Gemini 3.1 Pro
+0.479
+0.545
++0.006
+Dataset option (ours)
+Gemini 3.1 Pro
+0.710
+0.701
++0.141
+Answer (condensed)
+Claude Sonnet 4.6
+0.319
+0.664
+n/a
+Reasoning tail
+Claude Sonnet 4.6
+0.450
+0.473
++0.011
+Dataset option (ours)
+Claude Sonnet 4.6
+0.750
+0.727
++0.122
+Table 4: Calibration in the main blinded option-anchor protocol. A strongly negative ˆβ means
+closer option anchors are more likely to be correct. Disc. AUC is single-feature selective-prediction
+AUC of GEO.
+Dataset
+Model
+ˆβ
+z
+Disc. AUC
+N
+MedQA
+Gemini 3.1 Pro
+−25.064
+−25.39∗∗∗
+0.821
+MedQA
+Claude Sonnet 4.6
+−22.109
+−23.81∗∗∗
+0.753
+GPQA
+Gemini 3.1 Pro
+−25.315
+−5.48∗∗∗
+0.710
+GPQA
+Claude Sonnet 4.6
+−30.491
+−7.44∗∗∗
+0.750
+∗∗∗p < 10−6, ∗∗p < 10−3, ∗p < 0.05
+A
+Anchor-Design Ablation
+The central design choice of our pipeline is what to embed as the per-option anchor against which
+we measure trajectory convergence. Table 3 compares three candidates on GPQA Diamond under
+an identical open-ended protocol (CoT generated without options shown) and identical trajectory
+construction (3072-dim Gemini embeddings, W=30, S=15):
+Condensed-answer anchor. For each of the K=4 samples, extract the model’s final answer phrase
+and use its embedding as the anchor for that sample’s trajectory. Because models often
+produce the same short answer string across samples, the four per-sample anchors collapse
+to the same point and the geometric "choice" becomes degenerate, reflected in near-chance
+Geo AUC (0.44 Gemini, 0.32 Sonnet).
+Reasoning-tail anchor. Use the embedding of the last ∼2000 characters of each sample’s own CoT
+as the anchor. This avoids the collapse of the condensed-answer variant but introduces a
+different pathology: the anchor lives inside the trajectory it is scoring, so final-window
+distance is trivially small for every option. Geo AUC stays near chance (0.48/0.45).
+Dataset option anchor (ours). Use the embedding of each of the four official benchmark option
+texts as fixed, external anchors. These are identical across all samples, independent of model
+output, and carry domain-relevant semantic content. Geo AUC rises to 0.710/0.750.
+The ablation suggests a structural lesson for this setup: anchors derived from the model’s own output
+are either close to a point estimate of its answer or closely tied to the reasoning trace being scored.
+By contrast, an external dataset-supplied anchor provides the cleanest reference point against which
+trajectory convergence can be measured in our experiments.
+A.1
+Main blinded option-anchor calibration
+A.2
+Committed-rationale anchors and a third benchmark
+A distinct alternative is to use, for each option, an independently generated committed rationale:
+a short paragraph asserting that option as correct, produced by a separate anchor model under the
+same blinded-generation regime. On MedQA, GPQA, and MMLU-Pro we summarize the resulting
+per-question option scores by a null-standardized top-two margin ˜D and ask whether it adds rank
+information beyond an option-text tail margin computed from the original trajectories. Because this
+Table 5: Separate robustness evaluation with committed-rationale anchors and a third bench-
+mark. ˜D is the null-standardized top-two margin from independently generated committed-rationale
+anchors; Composite adds an option-text tail-margin feature from the original trajectories. This
+evaluation uses a smaller subset, K=5, and the target "the plurality-vote pick is correct," so the AUCs
+are not directly comparable to Table 1. ρ is the Pearson correlation between ˜D and the option-text
+tail margin.
+Benchmark
+N
+˜D alone
+Composite
+∆vs ˜D
+ρ( ˜D, tail)
+MedQA-USMLE
+0.862
+0.889
++0.027
++0.38
+GPQA Diamond
+0.753
+0.782
++0.029
++0.39
+MMLU-Pro
+0.722
+0.779
++0.057
++0.37
+Table 6: ˆβ under the committed-rationale-anchor pipeline. Same softmax objective as Table 4 but
+with committed-rationale (Sonnet 4.6) anchors and Gemini 3.1 Pro K=5 blinded CoT trajectories. ˆβ
+is strongly negative on every benchmark, including MMLU-Pro with heterogeneous J ∈{4, . . . , 10}
+per question.
+Benchmark
+N
+ˆβ
+SE
+z
+GPQA Diamond
+−70.60
+7.45
+−9.48∗∗∗
+MedQA-USMLE
+−64.38
+6.63
+−9.71∗∗∗
+MMLU-Pro
+−51.77
+4.20
+−12.34∗∗∗
+∗∗∗p < 10−6
+evaluation uses a smaller subset, K=5, and the binary target "the plurality-vote pick is correct," we
+report it here rather than in the main comparison table. The qualitative result is stable: the committed-
+rationale score is discriminative on all three benchmarks, and combining it with the option-text tail
+margin improves AUC by +0.027 on MedQA, +0.029 on GPQA, and +0.057 on MMLU-Pro.
+ˆβ on a third benchmark.
+As a direct robustness check on the Section 4.2 finding that closer anchors
+are more likely correct, we refit the one-parameter softmax on this same committed-rationale-anchor
+pipeline across all three benchmarks. The covariate is the per-option mean cosine distance from the
+K=5 trajectory tails to the committed-rationale anchors, and the choice is the gold option. Anchor
+counts are heterogeneous on MMLU-Pro (J ∈{4, . . . , 10} per question, mostly J=10), which the
+softmax formulation naturally accommodates by computing each question’s softmax over its own
+option set. The ˆβ values (Table 6) are strongly negative and highly significant on every benchmark,
+including MMLU-Pro at N=200, providing third-benchmark replication of the calibration result. The
+numerical magnitudes are not directly comparable to Table 4 because the anchors differ (committed
+rationales vs. raw option text); the comparable claim is the sign and significance of ˆβ.
+A.3
+Budget-matched self-consistency on GPQA and MMLU-Pro
+For symmetry, we also report budget-matched (K=4) self-consistency on GPQA Diamond and
+on the MMLU-Pro pilot, using the same character-bigram Jaccard mapping rule (GPQA) or the
+embedding cluster mode (MMLU-Pro) already used by the pipeline. The geometric signal exceeds
+K=4 self-consistency in five of six MMLU-Pro combinations and on GPQA/Gemini; GPQA/Sonnet
+is the one near-tie setting, where self-consistency reaches 0.747 versus our 0.727 AUC.
+B
+Window-Position Sweep on GPQA
+To test whether the softmax signal is a property of the question stem (which would yield a flat ˆβ
+across window positions) or of the trajectory’s late-stage convergence, we refit the one-parameter
+softmax of Section 3 after replacing each trace’s penultimate-window aggregate with a single sliding
+window at position k from the end of the trace. We sweep k ∈{−1, −2, . . . , −8} on GPQA Diamond
+(N=197 questions, K=5 samples per question, W=30, S=15) for both Gemini 3.1 Pro and Claude
+Sonnet 4.6, with 95% bootstrap confidence intervals over 200 resamples. We additionally replicate
+Table 7: Self-consistency comparison in the cleanest composite settings. MedQA rows use the
+matched N=273 held-out split from the self-consistency audit and compare against the stronger
+SC@10 baseline; GPQA rows use budget-matched SC@4 on the retained subsets of Table 1. Positive
+∆AUC means the geometric composite outperforms self-consistency.
+Benchmark
+Model
+SC baseline
+Our AUC
+∆AUC
+MedQA (held-out)
+Gemini 3.1 Pro
+SC@10 = 0.643
+0.827
++0.184
+MedQA (held-out)
+Claude Sonnet 4.6
+SC@10 = 0.712
+0.759
++0.047
+GPQA
+Gemini 3.1 Pro
+SC@4 = 0.690
+0.701
++0.011
+GPQA
+Claude Sonnet 4.6
+SC@4 = 0.747
+0.727
+−0.020
+Table 8: Budget-matched self-consistency (K=4) vs. our geometric score on GPQA and MMLU-
+Pro. Self-consistency confidence = majority fraction over K=4 samples, mapped to options by
+character-bigram Jaccard (GPQA) or embedding cluster mode (MMLU-Pro). "Our AUC" = composite
+(Table 1) for GPQA, and gated geometric AUC (per-setting 5-fold CV) for MMLU-Pro. MMLU-Pro
+N matches Section 3.1 (N=200 per setting, N=199 for prop / Gemini).
+Benchmark
+Cond.
+Model
+SC K=4 Acc
+SC K=4 AUC
+Our AUC
+GPQA Diamond
+-
+Gemini 3.1 Pro
+0.778
+0.690
+0.701
+GPQA Diamond
+-
+Claude Sonnet 4.6
+0.699
+0.747
+0.727
+MMLU-Pro
+MCQ
+Gemini 3.1 Pro
+0.915
+0.648
+0.690
+MMLU-Pro
+MCQ
+Claude Sonnet 4.6
+0.890
+0.590
+0.623
+MMLU-Pro
+open
+Gemini 3.1 Pro
+0.775
+0.540
+0.562
+MMLU-Pro
+open
+Claude Sonnet 4.6
+0.745
+0.575
+0.623
+MMLU-Pro
+prop
+Gemini 3.1 Pro
+0.648
+0.629
+0.650
+MMLU-Pro
+prop
+Claude Sonnet 4.6
+0.650
+0.567
+0.639
+the sweep on MedQA-USMLE (N=200, K=5) and MMLU-Pro (N=200, K=5) using newly built
+sliding-window caches under the identical protocol; results are reported in Table 9.
+Figure 1 in the main text plots the full sweep; this appendix records the protocol details and interpre-
+tation.
+The result has three implications for the paper’s main claims. First, ˆβ is not flat across k, ruling
+out the alternative interpretation that the calibration signal is a question-stem effect that any tail
+window would inherit. Second, the deepest-negative position is k= −2 and k= −3 on GPQA
+(Gemini: ˆβ = −43.4 and −48.9; Claude: −28.8 and −39.1); the penultimate-window trough also
+holds in 4/4 MedQA / MMLU-Pro combinations (Table 9), so the penultimate-window choice is
+empirically optimal in 6/6 benchmark-reasoner combinations across the three benchmarks. Third,
+the k= −1 sign reversal (ˆβ = +22.1 on Gemini, +23.7 on Claude) is GPQA-specific: aggregate
+ˆβ at the terminal window remains strongly negative on MedQA (−65.4/ −62.7) and MMLU-
+Pro (−52.6/ −49.1). Stratifying the GPQA terminal window by reasoner correctness shows the
+mechanism: on the wrong-pick subset (where arg minj Dj ̸= gold) the GPQA terminal slope rises
+sharply to βwrong= + 66.7/ + 70.1 for Gemini / Claude, while MedQA and MMLU-Pro show no
+comparable terminal jump (βwrong=−3.0/−9.5 and −17.1/−16.2 respectively). The terminal-flip
+mechanism is therefore conditional on benchmarks in which the closing tokens literally restate the
+gold answer span, rather than a universal late-trace dynamic. The penultimate-window default is the
+right scoring position regardless: it is at-or-near the trough in 6/6 combinations and avoids the GPQA
+terminal regime by construction. A naive researcher who scored the final window would draw the
+right conclusion on MedQA and MMLU-Pro but the opposite conclusion on GPQA; the penultimate
+default makes the protocol benchmark-invariant.
+C
+Third-Generator Scaling: Open-Weight Llama 3.3 70B
+To test whether the trajectory-geometry phenomenon is an artifact of the two frontier closed-API
+generators in the main paper (Gemini 3.1 Pro and Claude Sonnet 4.6) or a property of CoT reasoning
+that scales with capability, we replicate the ˆβ and GEO AUC measurements with an open-weight third-
+Table 9: Window-position replication on MedQA-USMLE and MMLU-Pro. Aggregate ˆβall at
+k=−1 (terminal) and k=−2 (penultimate), and the wrong-pick stratification at the terminal window:
+βwrong is fit on the subset where the geometric pick differs from gold. The penultimate-window
+trough is universal; the terminal sign-flip is GPQA-specific. We omit βcorrect because it saturates
+at the optimizer bound by construction (gold is the argmin on this subset, so the softmax is fit by
+arbitrarily large |β|).
+Benchmark
+Reasoner
+N
+acc(k=−1)
+ˆβall(k=−1)
+ˆβall(k=−2)
+βwrong(k=−1)
+GPQA Diamond
+Gemini 3.1 Pro
+0.21
++22.1
+−43.4
++66.7
+GPQA Diamond
+Claude Sonnet 4.6
+0.22
++23.7
+−28.8
++70.1
+MedQA-USMLE
+Gemini 3.1 Pro
+0.88
+−65.4
+−67.1
+−3.0
+MedQA-USMLE
+Claude Sonnet 4.6
+0.80
+−62.7
+−57.8
+−9.5
+MMLU-Pro
+Gemini 3.1 Pro
+0.55
+−52.6
+−56.5
+−17.1
+MMLU-Pro
+Claude Sonnet 4.6
+0.52
+−49.1
+−50.0
+−16.2
+family generator: Meta Llama 3.3 70B Instruct. The protocol is identical to the committed-rationale
+robustness pipeline above: K=5 blinded rationales at T=0.7, embedded with gemini_embedding,
+and scored against the same Sonnet 4.6 committed-rationale anchors used in Tables 5 and 6. Results
+are reported in Table 10.
+Table 10: Third-generator scaling: open-weight Llama 3.3 70B Instruct paired with the same Sonnet
+4.6 option anchors used for the published Gemini combinations. Top-1 accuracy is the rate at
+which the geometric arg min matches the gold option (closed-set discrimination from open-ended
+generation). Across all three benchmarks ˆβ remains strongly negative (z ≤−2.4), confirming that
+answer-directed trajectory drift is not a frontier-API artifact. GEO AUC tracks model capability: it
+remains useful on MedQA and MMLU-Pro, where Llama is competitive; on GPQA, where Llama’s
+accuracy collapses to near-chance (0.33), GEO AUC also degrades to near-chance, as the geometric
+channel cannot extract a confident-correct signal from a model that has not converged to the correct
+option.
+combination
+N
+top-1 acc
+ˆβ [95% CI]
+z
+GEO AUC [95% CI]
+GPQA / Llama 3.3 70B
+0.328
+−6.95 [−11.87, −1.42]
+−2.4
+0.541 [0.458, 0.620]
+MedQA / Llama 3.3 70B
+0.665
+−23.70 [−29.09, −19.47]
+−9.6
+0.757 [0.686, 0.819]
+MMLU-Pro / Llama 3.3 70B
+0.305
+−11.37 [−16.14, −6.91]
+−4.7
+0.626 [0.542, 0.711]
+Two readings of the table are worth making explicit. (a) The direction of the effect is universal
+across the model spectrum: every setting of every (benchmark, generator) combination in the paper,
+spanning a 2× accuracy range and three model families (Google Gemini 3.1 Pro, Anthropic Claude
+Sonnet 4.6, Meta Llama 3.3 70B), produces a strongly negative ˆβ. The trajectory-drift phenomenon
+is not a frontier-only or closed-API-only effect. (b) The magnitude of the usable selective-prediction
+signal scales with model capability: on MedQA where Llama remains a competent solver (acc 0.66),
+GEO AUC is 0.76, comparable to the published frontier combinations; on GPQA where Llama is at
+near-random (0.33), the geometric channel naturally has little to discriminate, and GEO AUC drops to
+0.54. This is the expected behavior under our channel-limit interpretation: the geometry can amplify
+a model’s existing convergence into a calibrated confidence score, but cannot manufacture confidence
+where the model has none.
+D
+Robustness Audits
+D.1
+Full proposer-level three-channel panel
+D.2
+Cross-embedder audit
+A natural concern is that the geometric channel is partly induced by the particular external embedder.
+We therefore replace the 3072-dimensional Gemini embedding model with an independently trained
+E5-large-v2 encoder and rerun the matched K=4 vs. SC@8 protocol on the same N≈200-per-
+combination subset on which the K=8 SC traces are available (N ∈{196, 197, 199, 200, 200, 200}
+Table 11: Full proposer-level three-channel selective-prediction AUC in open-ended MCQA across
+three benchmarks × three reasoners × two proposers (N ≈200 per cell). Bold marks the best
+single-channel value among C/G/V ; italic marks rows where C+G+V exceeds every two-channel
+ablation.
+Bench
+Reasoner
+Proposer
+N
+C
+G
+V
+C+G
+G+V
+C+V
+C+G+V
+GPQA
+Gemini
+Claude
+0.81
+0.66
+0.67
+0.83
+0.71
+0.80
+0.82
+GPQA
+Gemini
+Gemini
+0.83
+0.81
+0.71
+0.92
+0.81
+0.83
+0.92
+GPQA
+Claude
+Claude
+0.76
+0.68
+0.67
+0.79
+0.70
+0.78
+0.81
+GPQA
+Claude
+Gemini
+0.74
+0.80
+0.75
+0.88
+0.83
+0.82
+0.89
+GPQA
+Llama
+Claude
+0.64
+0.59
+0.62
+0.62
+0.64
+0.68
+0.68
+GPQA
+Llama
+Gemini
+0.72
+0.68
+0.49
+0.82
+0.66
+0.69
+0.82
+MedQA
+Gemini
+Claude
+0.75
+0.72
+0.58
+0.85
+0.73
+0.80
+0.86
+MedQA
+Gemini
+Gemini
+0.74
+0.63
+0.59
+0.80
+0.67
+0.79
+0.77
+MedQA
+Claude
+Claude
+0.72
+0.62
+0.78
+0.81
+0.77
+0.86
+0.86
+MedQA
+Claude
+Gemini
+0.74
+0.69
+0.74
+0.84
+0.76
+0.84
+0.86
+MedQA
+Llama
+Claude
+0.74
+0.64
+0.57
+0.80
+0.63
+0.74
+0.79
+MedQA
+Llama
+Gemini
+0.71
+0.64
+0.58
+0.75
+0.64
+0.73
+0.76
+MMLU-Pro
+Gemini
+Claude
+0.70
+0.71
+0.58
+0.75
+0.69
+0.71
+0.73
+MMLU-Pro
+Gemini
+Gemini
+0.74
+0.69
+0.56
+0.79
+0.69
+0.73
+0.77
+MMLU-Pro
+Claude
+Claude
+0.59
+0.63
+0.62
+0.64
+0.65
+0.63
+0.65
+MMLU-Pro
+Claude
+Gemini
+0.68
+0.70
+0.67
+0.75
+0.70
+0.73
+0.75
+MMLU-Pro
+Llama
+Claude
+0.70
+0.58
+0.51
+0.69
+0.51
+0.68
+0.67
+MMLU-Pro
+Llama
+Gemini
+0.64
+0.64
+0.54
+0.70
+0.62
+0.64
+0.67
+Median across 18 cells
+0.72
+0.66
+0.61
+0.80
+0.69
+0.74
+0.78
+across the six closed-set settings), without changing any downstream fitting, cross-validation, or boot-
+strap procedure. The Geo-only comparison softens but survives in aggregate: Geo@4 exceeds SC@8
+with median ∆AUC= + 0.027, mean +0.022, and pooled one-sided Stouffer z=1.73 (p=0.042).
+More importantly, the central three-channel claim is unchanged under the swap: the E5-based
+G+C+V fusion is positive in all six closed-set settings, with median ∆AUC= + 0.035 over SC@8
+and pooled Stouffer z=3.14 (p=8.5 × 10−4). This is the right level of invariance to demand. The
+absolute strength of the geometric channel depends on representation quality, but the qualitative
+ranking and the fusion advantage do not collapse when the embedder family changes.
+Table 12: External-embedder audit with E5-large-v2. Positive entries mean the alternative score beats
+SC@8 on the same setting. Swapping the encoder weakens some Geo-only settings but leaves the
+pooled Geo effect positive and the fusion effect positive in all six combinations.
+combination
+∆(GEO@4 −SC@8)
+∆(G+C+V −SC@8)
+MedQA / Gemini
++0.037
++0.057
+MedQA / Claude
++0.026
++0.073
+GPQA / Gemini
+−0.018
++0.014
+GPQA / Claude
++0.029
++0.027
+MMLU-Pro / Gemini
++0.017
++0.026
+MMLU-Pro / Claude
++0.039
++0.043
+D.3
+Judge-family swap
+We directly test whether the Coverage channel inherits its predictive value from one judge family’s se-
+mantic priors. Reusing the cached (gold, hypotheses) tuples for two combinations (MedQA / Gemini-
+proposer, N=200; GPQA / Gemini-proposer, N=192 aligned), we re-judge every (question, seed)
+tuple with Anthropic Claude Sonnet 4.6 in place of the original Azure-hosted openai_gpt5_mini,
+holding the prompt, parser, and downstream pipeline fixed. We then recompute ¯c from the swapped
+labels and re-evaluate three quantities under both judges: C-only AUC, C+G fused AUC (5-fold
+CV logistic on standardized features), and G-only AUC (judge-invariant feature, judge-dependent
+outcome). To separate same-judge consistency from genuine cross-judge stability we additionally
+report a cross-judge AUC: the swapped-judge ¯cswap scored against the original judge’s outcome
+label, which is the comparison a skeptical reviewer should care about.
+Table 13 summarises the result. Inter-judge agreement is high (Cohen’s κ=0.82 on the 5-class
+MedQA labels, 0.72 on the binary coverage projection, raw agreement 90.5%), with the bulk
+of the disagreement being Claude rejecting coverage that GPT-mini accepted (15 of 19 MedQA
+disagreements), as expected for a stricter judge. Three patterns hold across both settings. (a) G-only
+AUC is unchanged within noise (∆=−0.013 on MedQA and −0.001 on GPQA), confirming that the
+within-trace geometric signal is genuinely orthogonal to judge identity. (b) Cross-judge C-only AUC
+is stable to within ±0.02 in both settings (MedQA +0.019, GPQA −0.017), so the rank information
+in ¯c does not collapse when the judge changes. (c) The C+G fused ranking is preserved in both
+settings (no flip; same-judge ∆=+0.100, +0.006). The same-judge C-only ∆=+0.131 on MedQA
+is partly a base-rate artifact (accuracy shifts 0.65→0.55 under the stricter judge), and we report the
+cross-judge number as the headline measurement; the same-judge column is included as a consistency
+check.
+Table 13: Judge-family swap (Azure openai_gpt5_mini →Anthropic Claude Sonnet 4.6) on two
+open-ended settings. Cross-judge ∆scores the swapped-judge feature against the original-judge
+outcome label, isolating rank stability from judge-coupled base-rate motion. G-only ∆uses a judge-
+invariant feature with the judge-dependent outcome.
+Metric
+MedQA / Gemini-prop
+GPQA / Gemini-prop
+N aligned
+192
+Cohen’s κ (5-class)
+0.82
+-
+Cohen’s κ (binary coverage)
+0.72
+-
+Raw agreement (5-class)
+0.91
+-
+C-only AUC, orig judge
+0.712
+0.807
+C-only AUC, swap judge (same-judge)
+0.843
+0.842
+C-only AUC, cross-judge (cswap vs. yorig)
+0.731
+0.790
+Cross-judge ∆vs. orig
++0.019
+−0.017
+G-only AUC (yorig)
+0.637
+0.764
+G-only AUC (yswap)
+0.624
+0.763
+G-only ∆
+−0.013
+−0.001
+C+G fused AUC, orig judge
+0.795
+0.916
+C+G fused AUC, swap judge
+0.895
+0.922
+We stop short of claiming judge-independence: this is two combinations, one swap judge, and a
+stricter alternate. A full audit across all 18 combinations, additional judge families, and human
+adjudication is left as future work. The check we run does, however, falsify the strong form of the
+critique that C is predominantly a GPT-family-prior signal.
+D.4
+System cost of three-channel confidence
+The strongest practical baseline in our setting is not SC@8 but higher-budget self-consistency. We
+therefore cost the three-channel system at K=4 against SC@10 using public May-2026 API prices
+for the two closed-source reasoners and the embedding model.2 Table 14 reports the six-setting
+accounting. Pooled over the panel, C+G+V at K=4 reduces total spend from $0.2839 to $0.1379
+per question, a 51.4% saving, with per-setting savings of 42.6-54.4%. CoT generation remains
+the dominant line item inside the composite system (70-88% of total cost depending on setting);
+proposer, judge, and verbalization calls are second-order; embeddings are negligible (about $3×10−5
+per question). The practical reading is straightforward: once geometry and coverage are available,
+spending more samples on self-consistency is the wrong place to buy confidence.
+2Prices used (USD per 1M tokens, input / output): Gemini 3.1 Pro $2 / $12; Claude Sonnet 4.6 $3.3 / $16.5;
+openai_gpt5_mini (judge) $0.25 / $2; gemini_embedding $0.15 / n/a. Sourced from the corresponding Vertex, AWS,
+and Azure model catalog pages, May 2026; archived snapshots are retained by the authors.
+Table 14: Per-question system cost under public May-2026 API prices. SC@10 is ten-sample
+self-consistency; G+C+V @4 is the three-channel system with four reasoner samples plus proposer,
+judge, verbalization, and embedding calls.
+Combination
+SC@10
+G+C+V @4
+Saving
+MedQA / Gemini
+$0.0202
+$0.0111
+45.0%
+MedQA / Claude
+$0.0607
+$0.0294
+51.6%
+GPQA / Gemini
+$0.0330
+$0.0162
+50.9%
+GPQA / Claude
+$0.0914
+$0.0416
+54.4%
+MMLU-Pro / Gemini
+$0.0173
+$0.0099
+42.6%
+MMLU-Pro / Claude
+$0.0613
+$0.0296
+51.7%
+D.5
+Verbalization sensitivity
+The asymmetric LRT result for V suggests that verbalization is neither uniformly redundant nor
+uniformly useful. We therefore measure, on the six closed-set settings, how the standalone verbalized-
+confidence AUC and the incremental gain of G+V over G vary with reasoner behavior. Table 15
+reports accuracy, AUC(V ), an easy/hard split by Geo confidence, mean inter-elicitation dispersion,
+and ∆AUC((G+V ) −G). Two patterns hold. First, settings with higher accuracy tend to have
+stronger V (Spearman ρ=0.71, p=0.11 over six combinations). Second, the incremental value of V
+is largest when verbalizations are internally stable and the reasoner is already competent: the biggest
+lift occurs on MMLU-Pro / Claude (+0.112 AUC) with low dispersion (0.021), whereas GPQA /
+Claude combines the highest dispersion (0.127) with almost no lift (+0.006). MedQA / Gemini is
+the useful counterexample: standalone V is strong (0.751) but adds almost nothing over G (+0.002),
+showing that the relevant question is conditional information, not standalone calibration.
+Table 15: Verbalization sensitivity audit on the six closed-set settings. The easy/hard split uses Geo
+confidence as a proxy for question difficulty. Vdisp is the mean within-question standard deviation of
+the generator’s numeric self-ratings over repeated verbalization calls.
+Combination
+acc
+AUC(V )
+AUC(V | easy)
+AUC(V | hard)
+Vdisp
+∆((G+V ) −G)
+MedQA / Gemini
+0.805
+0.751
+0.389
+0.727
+0.064
++0.002
+MedQA / Claude
+0.744
+0.787
+0.769
+0.719
+0.055
++0.017
+GPQA / Gemini
+0.653
+0.628
+0.665
+0.579
+0.074
++0.055
+GPQA / Claude
+0.508
+0.580
+0.558
+0.565
+0.127
++0.006
+MMLU-Pro / Gemini
+0.800
+0.633
+0.697
+0.622
+0.011
++0.016
+MMLU-Pro / Claude
+0.725
+0.738
+0.898
+0.694
+0.021
++0.112
+D.6
+Jargon-free control
+The strongest version of the "embedder prior" concern is lexical rather than architectural: perhaps
+the geometric channel is simply matching medical jargon. We therefore rerun the MedQA audit
+under two masking schemes. The first applies a global hash-based codebook to content words; this
+removes human-readable jargon but preserves a question-independent word identity map. The second
+is the stricter control: a per-question randomized codebook that redraws the word-to-token map
+independently for every question, so the same lexical item cannot help across questions. Table 16
+shows the outcome. On MedQA / Gemini, the per-question codebook still leaves Geo@4 above
+SC@8 with ∆AUC= + 0.065 and one-sided p=0.031, despite the drop from 0.848 to 0.673 in raw
+Geo AUC. On MedQA / Claude, the per-question point estimate also remains positive (+0.038) but
+is uncertain at this sample size. The right conclusion is therefore not lexical invariance. It is a lower
+bound on the structural component: removing cross-question lexical reuse weakens the signal, but
+does not eliminate it on the settings tested.
+E
+Trajectory-as-Question Diagnostic
+For completeness we report the direct trajectory-tail retrieval diagnostic noted briefly in Section 4
+in table form. The test compares the pooled raw-question embedding to the averaged trajectory
+Table 16: Jargon-free lexical controls on the two MedQA settings that were re-embedded under
+masking. The per-question codebook is the stricter control because it destroys cross-question lexical
+identity.
+Combination
+Geo@4 (unmasked)
+Geo@4 (global hash)
+Geo@4 (per-q codebook)
+∆(GEO@4 −SC@8) per-q
+MedQA / Gemini
+0.848
+0.642
+0.673
++0.065
+MedQA / Claude
+0.760
+0.727
+0.666
++0.038
+Table 17: Direct trajectory-as-question diagnostic. AUC for retrieving the gold answer using either
+the pooled raw-question embedding or the averaged trajectory tail (last 2,000 characters, mean of
+unit-normalized sample tails). "Hard" uses semantically similar negatives from nearest-neighbor
+questions; "NN-correct" uses the nearest-neighbor question’s correct answer itself. GPQA reports
+Gemini only because that is the cache currently available for this diagnostic.
+Benchmark
+Model
+N
+Hard AUC raw →traj
+NN-correct AUC raw →traj
+MedQA train
+Gemini 3.1 Pro
+0.710 →0.873
+0.632 →0.806
+MedQA train
+Claude Sonnet 4.6
+0.710 →0.856
+0.632 →0.785
+MedQA heldout
+Gemini 3.1 Pro
+0.798 →0.924
+0.726 →0.867
+MedQA heldout
+Claude Sonnet 4.6
+0.798 →0.903
+0.726 →0.846
+GPQA Diamond
+Gemini 3.1 Pro
+0.665 →0.797
+0.626 →0.742
+MMLU-Pro
+Gemini 3.1 Pro
+0.825 →0.920
+0.775 →0.874
+MMLU-Pro
+Claude Sonnet 4.6
+0.825 →0.907
+0.775 →0.856
+tail on identical candidate-answer sets. In every available setting the trajectory tail is the stronger
+answer-bearing representation.
+F
+Auxiliary Feature Definitions
+Let e(k) denote the condensed final answer extracted from C(k) by the zero-shot prompt of Appendix G,
+and let ϕ be the embedding model of Section 3.1. The four auxiliary features of Section 3.2 are:
+STR =
+K max
+s
+|{k : e(k) = s}|,
+(6)
+SEM =
+K
+−1 X
+i<j
+⟨ϕ(e(i)), ϕ(e(j))⟩
+∥ϕ(e(i))∥∥ϕ(e(j))∥,
+(7)
+VOL =
+K
+X
+k
+Mk−1
+Mk−1
+X
+m=1
+d
+ z(k)
+m−1, z(k)
+m
+
+,
+(8)
+ENS = ⊮
+h
+majk e(k)
+Gemini = majk e(k)
+Sonnet
+i
+.
+(9)
+All features are standardized to zero mean and unit variance on the training fold before being passed to
+the composite logistic regression; for standalone AUC we use −VOL, since higher volatility indicates
+a more meandering trajectory.
+G
+Prompt Template
+The following prompt template is used to elicit zero-shot chain-of-thought reasoning without exposing
+the candidate options to the model:
+You are an expert taking a highly advanced examination.
+Please answer the following question.
+Question: {question_text}
+Do not provide the final answer immediately.
+First, think step by step. Explain your logical
+reasoning, referencing specific domain knowledge,
+mechanisms, and principles.
+Provide your reasoning in a clear, step-by-step format.
+For the verbalization channel, after showing the model its committed reasoning trace and answer, we
+append the following prompt:
+Based on the reasoning trace above, how confident are you in your answer
+on a scale of 0-100? Respond with only an integer.
+H
+Bayesian classification
+We will consider the probabilistic use of the CoT-geometry from a bayesian perspective. Let J
+be the number of answers, and let hi be a one-hot encoding vector of dimension J, where the
+j’th component, (hi)j, represents the correctness of answer aj, given that the right answer is ai,
+ie. (hi)j = δij. For the general case of open-ended questions we shall also allow for a 0-state,
+h0 = (0, · · · , 0), representing the case where none of the answers are correct. Let T denote the
+reasoning trace and let P(T |ai = 1) and P(T |ai = 0) denote the probabilities of observing T given
+that the answer, ai, is respectively correct and incorrect. The likelihood for h0 then reads
+P(T |h0) =
+Y
+j≥1
+P(T |aj = 0)
+(10)
+and for i ≥1
+P(T |hi) = P(T |ai = 1)
+Y
+j̸=i
+P(T |aj = 0) = P(T |ai = 1)
+P(T |ai = 0)P(T |h0).
+(11)
+Let ωi(T ) =
+P (T |ai=1)
+P (T |ai=0) denote the likelihood ratios for i ≥1 and let P(hi) denote the prior
+probabilities over the latent variables h0, · · · , hJ. Then
+P(T ) =
+X
+i≥0
+P(T |hi)P(hi) = P(T |h0)
+
+X
+i≥0
+ωi(T )P(hi)
+
+,
+(12)
+where we have defined ω0(T ) = 1. Thus, the posteriors become
+P(hi|T ) = P(T |hi)P(hi)
+P(T )
+=
+ωi(T )P(hi)
+P
+j≥0 ωj(T )P(hj).
+(13)
+We simply set P(h0) = 0 for the case where we know the correct answer is in the proposal set
+{ai}J
+i=1.
+If we now parameterize the log-likelihood ratio by a scalar trajectory score, log ωi(T ) = βsi(T ),
+then the posterior becomes
+P(hi|T ) =
+exp
+ βsi(T ) + log P(hi)
+
+P
+j≥1 exp
+ βsj(T ) + log P(hj)
+.
+(14)
+Under uniform priors over the proposal set this reduces to a softmax over si(T ).
+Taking
+si(T ) = −Di(T ), with Di the trajectory-to-option cosine distance from Section 3.2, recovers
+exactly the softmax form used for GEO. In this sense, our empirical Geo score is a heuristic black-box
+approximation of the Bayesian posterior above, with trajectory-to-option similarity serving as a
+proxy for the per-option log-likelihood ratio. The mapping is motivated by the parameterization
+log ωi(T ) = −βDi(T ) rather than validated as the true generative likelihood; the falsification check
+we run (Table 18) tests only that the all-option and binary projections recover a common β, not that
+LLM responses are actually distributed according to P(T | ai).
+The same posterior also admits a binary projection: rather than asking for the full vector {P(hi |
+T )}i≥1, ask only whether the top-scoring option is correct. Under the parameterization log ωi(T ) =
+βsi(T ) and uniform priors, the log-odds of the argmax option against its strongest competitor is
+log P(h(1) | T )
+P(h(2) | T ) = β
+ s(1)(T ) −s(2)(T )
+
+,
+(15)
+where s(1) ≥s(2) ≥· · · are the order statistics of the per-option scores; under si(T ) = −Di(T )
+this score-space margin equals the distance-space top-two margin used in the main paper, s(1)(T ) −
+s(2)(T ) = D(2)(T ) −D(1)(T ), with D(1) ≤D(2) ≤· · · the sorted per-option distances. The
+binary correctness probability therefore takes the Fermi-Dirac form P(argmax correct | T ) ≈
+σ
+ β (D(2)(T ) −D(1)(T )) −α
+
+, where σ(t) = 1/(1 + e−t) is the logistic sigmoid and α absorbs
+both an empirical correctness-rate offset and the contribution of non-runner-up options. With
+the question-level null-standardization ˜D = (D(2) −D(1) −µq)/σq of Section 3.2 this becomes
+P ≈σ(ˆβbin ˜D −α), exactly Eq. 4 of the main text and the score used in the alternative-anchor
+robustness evaluation of Section 4.5. The all-option GEO score and the Fermi-Dirac score on ˜D are
+therefore not competing methods but two readouts of the same posterior: the all-option projection
+(softmax over J scores) and the binary projection on the top-two log-ratio.
+H.1
+Empirical audit of the rejection state and the geometric ceiling
+We instantiate the formalism above with a two-feature parameterization log ωi(T ) = βs ˜si(T ) +
+βv vi(T ), where ˜si is the null-normalized cosine similarity from question-specific cross-question null
+trajectories and vi is the vote share of the K blinded CoTs over option i. Parameters θ≡(βs, βv, αh0),
+with αh0 a scalar log-odds offset on the rejection state h0, are fit by joint MLE on closed-set
+positives plus null trajectories as h0 exemplars (the discriminative softmax objective); we pool
+N=198+200+200 questions across GPQA Diamond, MedQA-USMLE-4, and MMLU-Pro. To
+prevent any leakage through either parameter sharing or null-pool sharing, we use 5-fold cross-
+validation in which both θ and the per-question null pool are restricted to the training fold; bootstrap
+confidence intervals use 1000 resamples. This audit uses the cached open-ended anchor-rationale
+subset rather than the extraction-filtered main-paper split, because the question here is the structural
+ceiling of the geometric channel rather than direct comparison to Table 1.
+The Bayesian posterior is a tie with top-2 margin under strict CV.
+Throughout this audit,
+hplur≡hi⋆(T ) with i⋆(T )= arg maxi vi(T ) denotes the latent "correct" indicator evaluated at the
+plurality-voted option, i.e. P(hplur | T ) is the Bayesian posterior probability that the option the
+model voted for most is the correct one. Under the leak-free protocol the closed-set correctness
+AUC of P(hplur | T ) is 0.70/0.78/0.73 on GPQA/MedQA/MMLU-Pro, versus 0.68/0.78/0.69 for
+the raw top-2 vote-share margin. The Bayesian posterior is directionally better but not statistically
+distinguishable from the trivial baseline at this dataset size; the mechanism is that with K=5 the
+margin is a six-state discrete score whose ranking AUC ceiling is already close to the continuous
+Bayesian posterior’s. The principled value of the formalism is therefore not better discrimination, but
+a calibrated, continuous score that the discrete margin cannot supply.
+Cross-projection ˆβ consistency: a falsifiable test of the unification.
+The two projections of
+the unified posterior predict the same likelihood-ratio parameter β. We test this directly by fitting
+(a) the all-option ˆβall on the raw D[q, j] matrix; (b) the binary Fermi-Dirac on the raw top-2 margin
+mq = D(2) −D(1), which we call ˆβraw
+bin , predicting 1[arg minj Dq,j = goldq], with bootstrap CIs
+(200 resamples); and (c) the binary Fermi-Dirac on the null-standardized margin ˜D = (mq −µq)/σq
+of Section 3.2, which is ˆβbin of Eq. 4 in the main text. Because βall multiplies D (gold has low D, so
+βall<0) and βraw
+bin multiplies the positive margin mq (correctness goes up with mq, so βraw
+bin >0), the
+unified-posterior predictions are |ˆβall| = ˆβraw
+bin = ˆβbin/¯σq (the latter is Eq. 5). Across all six (dataset,
+model) combinations the bootstrap CIs of |ˆβall|, ˆβraw
+bin , and ˆβbin/¯σq overlap pairwise (Table 18); the
+unification therefore survives a falsifiable equality test.
+The rejection prior P(h0) is rank-invariant.
+A common intuition is that abstention can be
+tuned by setting P(h0) = ˆπ0 from a held-out estimate of the open-set base rate. Sweeping ˆπ0 ∈
+{10−3, . . . , 0.99} with θ fixed leaves the within-closed wrongness AUC unchanged to four decimals
+on all three datasets (∆AUC < 10−4). The reason is structural: ˆπ0 multiplies P(h0 | T ) by
+a question-independent factor in the odds ratio, a strictly monotone transform of the score that
+preserves AUC by construction. The prior moves ROC operating points but cannot change the
+ranking quality.
+Table 18: Falsification test of the unification (Section 3.2): the all-option softmax and the binary
+Fermi-Dirac fits are projections of the same posterior with the same β. Sign-flipped because βall
+multiplies D (gold has low D, βall<0) and βraw
+bin multiplies the positive margin mq = D(2) −D(1).
+CIs are 95% over 200 bootstrap resamples of questions. Across all six combinations the three CIs
+overlap.
+|ˆβall| (raw D)
+ˆβraw
+bin (raw mq)
+ˆβbin/¯σq (Eq. 5)
+GPQA / Gemini
+35.8 [25.6, 50.8]
+29.1 [14.3, 50.9]
+26.2 [ 7.4, 45.6]
+GPQA / Claude
+38.4 [28.2, 52.3]
+25.0 [ 9.9, 55.8]
+20.7 [ 1.7, 43.2]
+MedQA / Gemini
+34.1 [29.6, 41.8]
+53.7 [41.1, 80.6]
+33.0 [22.5, 45.6]
+MedQA / Claude
+33.3 [27.5, 41.1]
+46.5 [34.5, 65.7]
+34.3 [23.8, 47.4]
+MMLU-Pro / Gemini
+25.7 [20.6, 32.5]
+25.0 [13.5, 38.6]
+23.5 [12.1, 37.8]
+MMLU-Pro / Claude
+32.6 [26.0, 40.9]
+41.6 [25.9, 63.2]
+40.1 [23.7, 60.3]
+Temperature on ω plateaus at the max-logit baseline.
+A second calibration knob is to rescale
+the option likelihoods, ωi →ωγ
+i . Unlike ˆπ0, this is not rank-invariant: γ →0 collapses options
+to uniform; γ →∞gives P(h0 | T ) →(1 + (ωmax/ω0)γ · c)−1, monotone in −maxi log ωi.
+Empirically the within-closed wrongness AUC rises monotonically in γ and plateaus at γ ≳5:
+0.633/0.679/0.555 on GPQA/MedQA/MMLU-Pro versus 0.625/0.659/0.532 at γ=1. The plateau
+value is the AUC of the single-feature score −maxi log ωi, i.e. the posterior in this limit collapses to
+a max-logit baseline.
+Anchor-set hypothesis stratification reveals the ceiling.
+Stratifying questions by whether the
+gold answer was ever proposed in the K=5 blinded CoTs yields three buckets: CORRECT (plurality
+= gold), WRONG-IN-SET (gold proposed by some CoT but not the plurality), and NO-HYPOTHESIS-
+CORRECT (no CoT proposed gold). On all three datasets the mean confidence is non-monotonic in
+correctness category: CORRECT highest, WRONG-IN-SET lowest, NO-HYPOTHESIS-CORRECT back
+up near CORRECT. The AUC for separating NO-HYPOTHESIS-CORRECT from WRONG-IN-SET is near
+or below 0.5 for every score (margin, P(hplur | T ), raw s, maxi si) on every dataset. Concretely, on
+MedQA the means (µCOR, µW-IN, µNO-HYP) are (0.97, 0.33, 0.79) for margin and (0.89, 0.51, 0.80) for
+the Bayesian posterior; bucket (iii) scores like bucket (i) because it is dominated by confidently-wrong
+CoTs whose trajectory geometry is by construction indistinguishable from confidently-correct CoTs.
+Score-family panel: vote-based scores collapse to chance, the embedding channel partially
+escapes, verbalized confidence escapes the harder separation.
+To make the structural ceiling
+sharp, we evaluate six confidence scores on both bucket separations across all six (benchmark, model)
+combinations (Table 19). The scores are: GEO (top-2 cosine-similarity margin), Bayesian P(hplur | T )
+(softmax with β=20), self-consistency vote share, normalized cluster-entropy 1 −H(v)/ log J,
+verbalized confidence (the same generator’s 0-100 self-rating, conditional on its own CoT), and
+an anchor-cohesion control −¯ρ. Three patterns hold across the panel. (a) On the easier separation
+(III) VS (I), vote-based scores (self-consistency, normalized cluster entropy) are at chance on every
+setting (95% bootstrap CIs all include 0.5), while GEO, the Bayesian top-2 margin, and verbalized
+confidence retain moderate-to-strong signal (AUC 0.60-0.89). (b) On the harder separation (III)
+VS (II), the structural-ceiling separation, every embedding-based score and every vote-based score
+is anti-correlated with the bucket label (AUC 0.06-0.44): they assign higher confidence to no-
+path-to-gold reasoning than to wrong-but-gold-proposed reasoning. (c) Verbalized confidence is
+the only score family that escapes this inversion (AUC 0.45-0.62, near or above chance on every
+setting). The asymmetry between the two separations identifies what the geometric ceiling actually
+is: (III) traces are not perfectly indistinguishable from (I) traces, the embedding channel detects a
+residual signal, but they are systematically conflated with the inverse of the wrong-in-set ranking.
+The verbalized-confidence column, generated by querying the same model that wrote the CoT for
+a numeric self-rating conditional on its CoT, supplies the second non-geometric channel that the
+channel-limit argument predicted would be needed; it is the empirical complement that the embedding
+channel cannot synthesize from itself.
+Anchor-LLM confound and its scope.
+Because anchors are themselves emitted by a second
+LLM (one short committed rationale per option), a portion of bucket (iii) reflects anchor-LLM
+failure to differentiate options rather than informed-LLM failure to reason. Quantifying this with the
+Table 19: Bucket-separation AUC across six confidence scores and two separations (bootstrapped
+point estimates over 1000 resamples). (III) VS (I): can scores tell "confidently-wrong with no path to
+gold" apart from "correct"? (III) VS (II): can scores tell those traces apart from "wrong but gold
+was proposed by some sample"? The latter is the structural-ceiling separation: scores fail by being
+anti-correlated. Verbalized confidence is the only score family that does not invert the ranking.
+GEO
+Bayes
+SC
+SemEnt
+Verbal
+−¯ρ
+Separation (III) VS (I): detect "no-path-to-gold" against "correct"
+GPQA / Gemini
+0.61
+0.61
+0.51
+0.51
+0.66
+0.54
+GPQA / Claude
+0.63
+0.63
+0.48
+0.48
+0.60
+0.57
+MedQA / Gemini
+0.88
+0.89
+0.61
+0.61
+0.72
+0.50
+MedQA / Claude
+0.78
+0.80
+0.51
+0.51
+0.77
+0.51
+MMLU-Pro / Gemini
+0.63
+0.65
+0.55
+0.55
+0.62
+0.56
+MMLU-Pro / Claude
+0.69
+0.69
+0.58
+0.58
+0.67
+0.61
+Separation (III) VS (II): detect "no-path-to-gold" against "wrong-in-set"
+GPQA / Gemini
+0.23
+0.30
+0.14
+0.13
+0.62
+0.47
+GPQA / Claude
+0.39
+0.44
+0.08
+0.08
+0.46
+0.69
+MedQA / Gemini
+0.22
+0.36
+0.13
+0.13
+0.45
+0.39
+MedQA / Claude
+0.11
+0.29
+0.06
+0.06
+0.49
+0.40
+MMLU-Pro / Gemini
+0.23
+0.29
+0.17
+0.18
+0.56
+0.46
+MMLU-Pro / Claude
+0.33
+0.35
+0.20
+0.21
+0.56
+0.44
+anchor-cloud cohesion ρq =
+J(J−1)
+P
+j<j′⟨ˆϕ(aj), ˆϕ(aj′)⟩where ˆϕ(a) = ϕ(a)/∥ϕ(a)∥is the unit-
+normalized embedding, we find Pearson correlations of +0.39/ + 0.51/ + 0.69 between ρq quintile
+and bucket-(iii) frequency on GPQA/MedQA/MMLU-Pro. Plurality accuracy drops from 70/85/65%
+in the lowest-ρ quintile to 45/85/45% in the highest, isolating an anchor-LLM contribution of roughly
+10-25 percentage points. However, the within-bucket ρ deltas are small (∆ρ < 0.01 between bucket
+(i) and bucket (iii) on every dataset), so anchor cohesion is a population-level diagnostic, not a
+per-question filter, and bucket-(iii) frequency remains substantial (10-27%) even in the lowest-ρ
+quintile where anchors are most distinct. The geometric ceiling is therefore real, but the bucket-(iii)
+headline rate (35/19/61) should be read as an upper bound that includes some anchor-LLM noise.
+Open-set rejection is trivially saturated.
+For completeness we evaluate closed-correct vs open-
+random questions (every option anchor replaced with a random anchor from a different question).
+The Bayesian P(h0 | T ) achieves rejection AUC 0.95/1.00/0.99, which exceeds the margin baseline
+(0.45/0.59/0.51, near chance because margin is invariant to anchor identity). However the trivial
+baseline −sj, the negative mean cosine similarity between trace and the J option anchors, attains
+AUC 1.000 on all three datasets, exposing that the open-set task collapses to a one-line scalar
+threshold and is not a paper-worthy claim.
+Summary.
+Across rejection prior, likelihood temperature, and feature augmentation, we cannot
+lift selective-prediction performance above the Bayesian posterior’s strict-CV ceiling, which itself
+ties the top-2 margin within bootstrap CIs. The bucket-(iii) result identifies the structural obstacle:
+embedding geometry is well-matched to "which option is on-topic" but blind to "is this on-topic
+option correct," and no calibration knob within the embedding channel can repair that blindness. We
+therefore report top-2 margin and GEO (its all-option counterpart) as the empirical signals in the main
+paper, with the Bayesian formalism above as a principled framework that recovers them as special
+cases under uniform priors and equal-noise likelihoods.
+I
+Compute, Broader Impacts, and Asset Licenses
+Compute resources.
+All reasoner, proposer, judge, verbalization, and embedding calls were issued
+through vendor APIs. We used Google Vertex AI for Gemini 3.1 Pro and gemini-embedding-001,
+Anthropic / AWS for Claude Sonnet 4.6, Microsoft Azure OpenAI for the openai_gpt5_mini
+judge, and a hosted inference endpoint for Llama 3.3 70B. No local GPU compute was required.
+Orchestration, caching, fold-wise logistic and softmax fits, AUC bootstraps, and figure generation
+ran on a single commodity Apple-silicon workstation (≤32 GB RAM, ≤100 GB scratch storage);
+end-to-end wall-clock per cell is dominated by API latency rather than local compute. Per-question
+API spend, which is the operative cost axis in this setting, is reported per (benchmark, reasoner)
+cell in Appendix D.4 (Table 14). The full research project, including failed pilots and abandoned
+ablations, used at most ∼3× the API spend reported there.
+Broader impacts.
+Positive. Better-calibrated black-box confidence scores support safer abstention
+and selective prediction when chain-of-thought reasoners are deployed through text-only APIs in
+high-stakes settings such as clinical decision support (cf. MedQA), where unwarranted confident-but-
+wrong outputs are the dominant failure mode; the three-channel decomposition also gives downstream
+users an auditable handle on why confidence is high or low (coverage vs. within-trace commitment
+vs. self-report). Negative and misuse. Better-calibrated scores can also induce automation bias: users
+may defer to a high-confidence model output even when the underlying reasoning is flawed, and the
+structural ceiling identified in Section 5.1 (bucket-(iii) traces commit confidently to a wrong in-set
+hypothesis) is not removed by any within-trace calibration knob. The Coverage channel additionally
+inherits whatever priors the LLM judge encodes; deployments should not treat C as a model-internal
+property and should re-validate it under their own judge. The Limitations paragraph in Section 6
+flags judge-mediation, the conditional nature of V , and the within-trace ceiling as the operational
+caveats for downstream users.
+Asset licenses and terms of use.
+Benchmark datasets are used under their published licenses and
+cited to their source papers: MedQA-USMLE Jin et al. [2021], GPQA Diamond Rein et al. [2023],
+and MMLU-Pro; we use them under the terms posted on each dataset’s official release page at the time
+of access (May 2026), and we redistribute no portion of any of them. External pretrained models are
+accessed only through their providers’ standard APIs and are used subject to those providers’ terms of
+service: Gemini 3.1 Pro and gemini-embedding-001 via Google Vertex AI, Claude Sonnet 4.6 via
+Anthropic / AWS, openai_gpt5_mini (judge) via Microsoft Azure OpenAI, Llama 3.3 70B under
+the Llama Community License via a hosted inference endpoint, and the open-weight E5-large-v2
+embedder Wang et al. [2022a] (MIT License) run locally. No new datasets, models, or benchmarks
+are released by this paper.

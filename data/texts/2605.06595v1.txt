@@ -1,0 +1,1832 @@
+Cross-Modal Navigation with Multi-Agent
+Reinforcement Learning
+Shuo Liu, Xinzichen Li, Christopher Amato
+Khoury College of Computer Sciences
+Northeastern University
+Boston, MA, 02120
+{liu.shuo2,li.xinzi,c.amato}@northeastern.edu
+Abstract
+Robust embodied navigation relies on complementary sensory cues. However, high-
+quality and well-aligned multi-modal data is often difficult to obtain in practice.
+Training a monolithic model is also challenging as rich multi-modal inputs induce
+complex representations and substantially enlarge the policy space. Cross-modal
+collaboration among lightweight modality-specialized agents offers a scalable
+paradigm. It enables flexible deployment and parallel execution, while preserv-
+ing the strength of each modality. In this paper, we propose CRONA, a Multi-
+Agent Reinforcement Learning (MARL) framework for Cross-Modal Navigation.
+CRONA improves collaboration by leveraging control-relevant auxiliary beliefs and
+a centralized multi-modal critic with global state. Experiments on visual-acoustic
+navigation tasks show that multi-agent methods significantly improve performance
+and efficiency over single-agent baselines. We find that homogeneous collabora-
+tion with limited modalities is sufficient for short-range navigation under salient
+cues; heterogeneous collaboration among agents with complementary modalities is
+generally efficient and effective; and navigation in large, complex environments
+requires both richer multi-modal perception and increased model capacity.
+Introduction
+Vision Agent 2
+Audio Agent 1
+Global Information
+Based on the visual observation,
+find a table in the living room
+and pictures in a bedroom. 
+ 
+The environment contains sounds
+from a camera photographing
+pictures and silverwares droping
+on a table. Please locate both
+sound-emitting objects.
+ 
+Figure 1: A collaborative navigation task in a Ranch scene
+from Matterport3D. An audio agent (blue) collaborates with
+a vision agent (green) to locate a table and pictures. Each agent
+receives only local observations during execution, while global
+information is captured by a global monitor (yellow) and used
+only during training. Gray curves denote agents’ trajectories.
+In embodied navigation, agents perceive the
+environment through diverse sensory inputs,
+e.g., RGB-D images, audio, radar, LiDAR, and
+language instructions [1, 2, 3, 4, 5].
+These
+inputs provide rich geometric, semantic, and
+acoustic cues across modalities, enabling agents
+to locate target objects and navigate in com-
+plex environments, such as autonomous driving,
+robotic systems, and human-computer interac-
+tion [6, 7, 8, 9, 10, 11, 12].
+However, real-world observations are often
+noisy, incomplete, and asynchronous.
+Low-
+quality and misaligned training signals can make
+policy learning unstable and ineffective [13, 14].
+Although many methods align different modal-
+ities within the model, they differ substantially
+in dimensionality, noise levels, and temporal
+structure [15, 16, 17]. This mismatch often leads to imbalanced joint optimization, where domi-
+nant modalities drive most gradient updates while weaker or noisier modalities are underutilized
+arXiv:2605.06595v1 [cs.RO] 7 May 2026
+
+[18, 19, 20, 21]. Rich-modal models also tend to rely on large architectures to align diverse signals,
+making them hard to deploy and costly at test time [22, 23, 24].
+Many studies leverage multi-agent collaboration to improve navigation efficiency and robustness
+[25, 26, 27, 28]. However, most existing approaches focus on collaboration under limited sensory
+configurations [29, 30, 31, 32, 33, 34, 35]. Even in more complex embodied settings, collaborative
+agents are typically homogeneous, with each receiving inputs from the same modalities [36, 37, 38].
+Heterogeneous collaboration with rich sensory modalities are less explored [39, 40, 41]. Specifically,
+it remains unclear which modalities improve collaborative capability, which team configurations
+support both effective and efficient navigation, and what cooperative behaviors emerge among agents.
+In this paper, we study fully-decentralized collaborative navigation without any inter-agent communi-
+cation [42, 43]. We construct a multi-modal collaborative navigation benchmark based on diverse
+Matterport3D scenes, as illustrated in Figure 1. We propose CRONA, a cooperative Multi-Agent
+Reinforcement Learning (MARL) framework for Cross-Modal Navigation. CRONA employs aux-
+iliary belief predictors to extract control-relevant features from complex multi-modal observations
+and a centralized critic with state information to facilitate training. Our experiments demonstrate
+that collaborative navigation consistently outperforms single-agent navigation in both effectiveness
+and efficiency. Moreover, we identify five modality-dominance patterns across scenarios (i.e., no
+clear dominance, vision dominance, audio dominance, cross-modal, and multi-modal dominance).
+We find that homogeneous collaboration with few modalities is sufficient for short-range navigation;
+cross-modal collaboration among complementary modalities is generally efficient and effective when
+targets have clean, modality-specific cues; large and complex environments typically require both
+full-modal inputs and higher-capacity models.
+Our core contributions are summarized as follows: (i) we construct a collaborative navigation
+benchmark where multi-modal agents collaborate to navigate; (ii) we propose CRONA, a MARL
+framework for cross-modal navigation; (iii) we identify five dominance patterns in our experiments
+and explain when and why they emerge, respectively.
+Related Work
+Multi-Modal Navigation
+Embodied navigation has been studied under a wide range of input
+modalities. Most work considers visual observations (RGB-D images), while specifying navigation
+goals or instructions in language [4, 44, 45, 46, 47, 48, 49]. Acoustic and 3D spatial signals can
+also provide semantic and geometric cues that complement visual observations that are degraded by
+occlusions or obstacles [50, 15, 51, 52, 53, 54, 55]. While it has been shown that richer multi-modal
+context can improve performance in certain settings [56, 57, 58, 40], it remains unclear how different
+modalities contribute under different conditions and how to align modalities with substantially
+different representations [18, 19, 20, 24, 21].
+Collaborative Navigation
+Recent studies have explored multi-agent collaboration for navigation.
+However, collaborative navigation remains challenging because agents need to coordinate in real time
+during execution. Early methods rely on centralized planning, where a central controller coordinates
+all agents [59, 60, 61]. Such designs suffer from limited scalability and robustness [62, 63, 64].
+Recent approaches therefore shift toward decentralized collaboration, where agents take action based
+on their local observations with limited or even without communication [29, 30, 31, 35, 34, 38].
+However, most decentralized navigation studies still assume homogeneous agents or agents with
+similar sensory inputs [37, 32, 33]. How agents with heterogeneous modalities collaborate effectively
+remains largely underexplored [39, 40, 41].
+Cooperative MARL
+Cooperative MARL studies how multiple agents learn to coordinate under
+a shared objective [65, 66, 67]. A simple and scalable approach is independent learning, where
+agents are separately trained [68, 69]. But as all agents update their policies concurrently, each
+agent faces a non-stationary learning environment, which often leads to instability and convergence
+issues [70, 71, 72]. Centralized training with decentralized execution (CTDE) mitigates this issue by
+exploiting centralized information during training [73]. For example, a centralized critic can estimate
+joint values from joint histories and global states [74, 75, 76, 77, 78]. Since the critic is discarded at
+execution time, each agent remains execute in a decentralized manner. CRONA follows this paradigm
+and incorporates task progress into a multi-modal centralized critic for joint value estimation.
+3
+Background
+3.1
+Problem Formulation
+In cooperative navigation (Figure 1), agents need to infer task assignments and learn cooperative
+policies under partial observations. This setting follows the standard cooperative MARL formulation
+and can be modeled as a Decentralized Partially Observable Markov Decision Process (Dec-POMDP)
+[43], denoted by ⟨I, S, {Oi}, {Ai}, R, T, γ, H⟩.
+• I is a set of n decentralized agents, where each agent i is controlled by an individual policy
+πi. Each agent is equipped with specialized sensors to perceive the environment.
+• S denotes the global state space. At each time step t, the global state st ∈S includes the
+scene layout, all agent poses, target object locations and categories, sound-source states, and
+task-completion status. This state is not directly observed by decentralized agents.
+• Each agent i receives a local observation oi,t ∈Oi. The observation contains the agent pose
+opose
+i,t
+= (xi,t, yi,t, ϑi,t, t), where (xi,t, yi,t) is the agent position and ϑi,t is its orientation.
+It also includes a natural-language description of the navigation target, denoted by ogoal
+i,t .
+Depending on its sensor configuration, an agent may also receive visual input ovision
+i,t
+=
+(orgb
+i,t , odepth
+i,t
+) ∈RHv×Wv×4, binaural audio input oaudio
+i,t
+∈R2×L, where Hv and Wv denote
+the image height and width, and L denotes the length of the binaural audio segment. Oi is
+the local observation space of agent i, and O = ×iOi is the joint observation space.
+• Agents share a joint reward function R : S × A →R, which depends on the global state and
+their joint action. The reward incentives agents to approach targets and stop in their vicinity.
+• The environment evolves according to a transition function T : S × A →∆(S). Given the
+current state st and joint action at, the next state is sampled as st+1 ∼T(· | st, at).
+• γ is the discount factor and H is the episode horizon.
+Since the full state is not directly observable, each agent maintains a local observation-action history
+hi,t = {oi,0, ai,0, · · · , oi,t} to infer information about st. The history of agents forms a joint history
+ht = {h1,t, · · · , hn,t}, and agents’ policies forms a joint policy π = {π1, · · · , πn}. The objective is
+to find an optimal joint policy, π∗= {π∗
+1, · · · , π∗
+n}, that maximizes the expected cumulative reward
+over the horizon H, π∗= arg maxπ Eπ
+hPH−1
+t=0 γtrt
+i
+.
+3.2
+Acoustic Representation
+Audio signals provide semantic information for source recognition and spatial cues for source
+localization. However, raw audio waves are high-dimensional and contain complex temporal depen-
+dencies. These make them difficult to model directly. Spectrograms represent audio as structured
+time-frequency features, making local acoustic patterns more explicit and easier to learn.
+Given a binaural waveform oaudio
+i,t
+∈R2×L, its magnitude spectrogram ospec
+i,t
+∈R2×K×F can be
+computed via short-time Fourier transform (STFT),
+ospec
+i,t (κ, ω, τ) =
+
+L−1
+X
+ℓ=0
+oaudio
+i,t
+(κ, ℓ) w(ℓ−τδ) e−j2πωℓ/Nfft
+ .
+(1)
+Here, κ ∈{1, 2} denotes the left and right audio channels. For each time frame τ, the window
+w(·) extracts a short segment of the waveform around sample position τδ. The Fourier basis then
+decomposes this segment into frequency components indexed by ω. δ denotes the hop size between
+adjacent time frames, and Nfft denotes the FFT size. The resulting spectrogram contains K frequency
+bins over F time frames.
+Sounds emitted by different objects produce distinct patterns in the spectrogram. Targets with salient
+acoustic cues, such as strong energy and clean, stable patterns, are typically easier to localize, whereas
+distant or occluded sounds tend to be weak, unclear, and difficult to identify.
+4
+Method
+Figure 2 gives an overview of CRONA. Each agent processes its sensory observations with the
+corresponding encoder. Audio-based agents use an auxiliary belief predictor to estimate control-
+relevant beliefs (target category and location). Each agent combines its observations, beliefs, and
+previous actions into a local history, where multi-head attention layers capture important features and
+temporal dependencies. A centralized critic estimates the joint value from the joint history, beliefs,
+and global state during training, which is used to update decentralized agent policies.
+4.1
+Auxiliary Belief Predictor
+Audio observations are often noisy and stochastic (Section 3.2), making it difficult to learn effective
+policies directly from raw inputs. However, control-relevant beliefs can be inferred from these signals
+to facilitate training. CRONA uses target location and target category as auxiliary beliefs.
+For an agent i with audio sensor, given its spectrogram observation ospec
+i,t , a convolutional encoder
+extracts acoustic features zaudio
+i,t
+. A location head predicts an instantaneous sound-source goal
+ˆbgoal
+i,t
+∈R2 in global coordinate based on zaudio
+i,t
+. Given the current pose opose
+i,t
+= (xi,t, yi,t, ϑi,t, t),
+the predicted relative location ˆbloc
+i,t can be calculated by,
+ˆbloc
+i,t = T(ϑi,t)
+
+ˆbgoal
+i,t
+−
+
+xi,t
+yi,t
+
+,
+(2)
+where T(ϑ) =
+ cos ϑ
+sin ϑ
+−sin ϑ
+cos ϑ
+
+is a 2D rotation matrix from the global frame to the agent’s frame.
+In addition, a category head with fully connected layers also predicts a belief ˆbcat
+i,t ∈RC over all
+categories c ∈C based on zaudio
+i,t
+. To reduce prediction variance, we smooth the auxiliary beliefs with
+an exponential moving average using coefficient α ∈[0, 1],
+bloc
+i,t = αˆbloc
+i,t + (1 −α) bloc
+i,t−1,
+bcat
+i,t = αˆbcat
+i,t + (1 −α) bcat
+i,t−1.
+(3)
+The location and category belief jointly form an auxiliary belief bi,t = (bloc
+i,t, bcat
+i,t) for agent i, and
+since they are inferred from local histories, they remain consistent with the information available to
+decentralized policies. During training, the goal point bgoal,∗
+i,t
+of the closest target to agent i and the
+multi-hot category label ycat,∗
+i,t
+over all targets are provided. The belief predictor is optimized as,
+Lbelief =
+ˆbgoal
+i,t
+−bgoal,∗
+i,t
+2−
+X
+c∈C
+h
+ycat,∗
+i,t
+(c) logˆbcat
+i,t (c) +
+ 1 −ycat,∗
+i,t
+(c)
+
+log
+
+1 −ˆbcat
+i,t (c)
+i
+. (4)
+4.2
+Attention-Based History Encoder
+In collaborative navigation, each agent selects actions based on its history. However, maintaining all
+raw images and audio over time is computationally expensive and difficult to optimize. We use a
+short-term history cache and apply multi-head attention to extract spatial and temporal features.
+We use convolutional encoders to capture the local patterns of RGB-D images and spectrograms,
+i.e., zrgb
+i,t , zdepth
+i,t
+, and zaudio
+i,t
+, respectively. The visual inputs orgb
+i,t and odepth
+i,t
+often have higher
+dimensionalities and exhibit richer spatial structures, whereas ospec
+i,t
+are computed over short temporal
+windows, so we use deeper convolutional neural networks as visual encoders (i.e., ResNet-18 [79]).
+The encoded features are concatenated with the agent pose and the goal instruction to form a
+latent observation embedding zo
+i,t = zrgb
+i,t ⊕zdepth
+i,t
+⊕opose
+i,t
+⊕ogoal
+i,t
+for vision-based agents, and
+zo
+i,t = zaudio
+i,t
+⊕opose
+i,t
+⊕ogoal
+i,t
+for audio-based agents. Each agent stores the current observation
+embedding, the previous k observation embeddings {zo
+i,t−k, . . . , zo
+i,t−1}, and the previous k actions
+{ai,t−k, . . . , ai,t−1} in a fixed-size memory cache.
+The cached observation-action sequence is then processed by transformer blocks to produce a history
+representation zh
+i,t over hi,t. zh
+i,t can capture geometric cues, sound information, and motion patterns,
+and provide a compact context for each agent to select its action, i.e., ai,t ∼πi(· | hi,t).
+Policy Head
+Transformer
+Blocks
+Based on the visual observation,
+find a table in the living room
+and pictures in a bedroom. 
+ 
+The environment contains sounds from a
+camera photographing pictures and
+silverwares droping on a table. Please
+locate both sound-emitting objects.
+Vision Agent 
+Audio Agent 
+Policy Head
+Transformer
+Blocks
+Audio Agent 
+Replay Buffer 
+GAE
+Vision Agent 
+Global Information 
+(a)
+(b)
+Multi-Modal
+Critic 
+Audio
+Encoder
+Vision
+Encoder
+AC-Shared Encoders
+Value Head
+Belief 
+Predictor
+Figure 2: Illustration of CRONA framework. 2 decentralized agents, one with audio inputs (blue) and another with vision
+inputs (green), cooperate to navigate toward a table with silverware-dropping sounds and pictures with camera-shutter sounds.
+(a) Observation-action history embeddings and auxiliary belief predictors of agents. (b) A multi-modal critic (red) estimates
+the value with joint history, the auxiliary belief, and the global information, while each agent updates its individual policy.
+4.3
+Centralized Critic with Global Information
+CRONA employs a centralized critic for joint value estimation during training. Since the reward
+directly depends on the state, incorporating state information can improve value estimation without
+introducing bias [78]. The critic and agent policies also depend on auxiliary belief predictions (Sec-
+tion 4.1), which are consistent with the information available in local observations. The centralized
+critic is not used during execution, where all agents take action under decentralized policies [66, 73].
+During training, the centralized critic Vϕ(zh
+t , bt, st) estimates the joint value using the joint history
+embedding zh
+t , the auxiliary beliefs of audio-based agents bt = {b1,t, . . . , bn,t}, and the global state
+st (e.g., target locations, agent positions and orientations, and completion indicators for each target).
+As proved in Appendix A, augmenting the critic with these history-induced beliefs and the global
+state does not introduce bias in value estimation. At each time step t, the joint history embedding is
+obtained by concatenating all agents’ history embeddings, zh
+t = Ln
+i=1 zh
+i,t.
+To improve representation learning and accelerate training, CRONA shares the modality-specific
+encoders, auxiliary belief predictor, and history transformer between the decentralized actors and the
+centralized critic, while using separate heads for policy and value prediction. To stabilize training, we
+use clipped surrogate objectives for both policy and value updates. The advantage ˆAt is computed
+using generalized advantage estimation (GAE),
+ˆAt =
+T −t−1
+X
+l=0
+(γλ)l 
+rt+l + γVϕold(ht+l+1, bt+l+1, st+l+1) −Vϕold(ht+l, bt+l, st+l)
+
+,
+(5)
+and the corresponding return target is ˆRt = ˆAt + Vϕold(ht, bt, st). We train the value head of the
+centralized critic by minimizing a clipped value surrogate objective against the return target ˆRt,
+L(ϕ) = Et
+
+max
+
+Vϕ(ht, bt, st) −ˆRt
+2
+,
+
+¯Vϕ(ht, bt, st) −ˆRt
+2
+,
+¯Vϕ(ht, bt, st) = clip
+ Vϕ(ht, bt, st), Vϕold(ht, bt, st) −ξ, Vϕold(ht, bt, st) + ξ
+
+,
+(6)
+where ¯Vϕ denotes the clipped value prediction and ξ is the value clipping range. Each agent’s policy
+is conditioned only on its local history and auxiliary belief, ai,t ∼πθi(· | hi,t, bi,t), and is updated
+using the shared advantage estimate ˆAt. Specifically, each agent i maximizes
+J(θi) = Et
+h
+min
+
+ρi,t ˆAt, clip(ρi,t, 1 −ϵ, 1 + ϵ) ˆAt
+
++ β H
+ πθi(· | zh
+i,t, bi,t)
+i
+,
+(7)
+where ρi,t =
+πθi(ai,t|zh
+i,t,bi,t)
+πθi,old(ai,t|zh
+i,t,bi,t) is the importance sampling ratio, ϵ is the policy clipping range, β is
+the entropy regularization coefficient, and H(·) is the policy entropy to encourage exploration.
+The decentralized actors and the multi-modal critic share encoders and transformers. Gradients from
+both actor and critic objectives are backpropagated through the shared modules, which are optimized
+by a weighted sum of the policy gradient and averaged temporal difference loss with µ ∈[0, 1],
+L(θzi
+i , ϕzi) = −µJ(θi) + 1 −µ
+n
+L(ϕ).
+(8)
+Experiments
+We evaluate CRONA in Matterport3D scenes [80], where agent observations are simulated via
+Habitat and libsora [2, 3, 81]. Dataset details, experimental settings, additional results, instruction
+and reward designs, and compute resources are provided in Appendix B, D, E, F, and G.
+5.1
+Setup
+We construct collaborative navigation datasets with two agents using five representative
+Matterport3D scenes that span diverse layouts and difficulties.
+Studio (GdvgFV5R1Z5) is a single-room scene with a picture target with a camera-shutter sound.
+Corridor (ac26ZMwG7aT) consists of a passage connecting two spatially separated areas, where
+agents are finding a sink that is dripping water. Apartment (17DRP5sb8fy) has one bedroom and
+two bathrooms, with a creaking bed and a counter with coin-dropping sound as targets. Ranch
+(JeFG25nYj2p) contains five bedrooms and two bathrooms, with a picture with a camera-shutter
+sound and a table with silverware-dropping sounds as targets. Maze (B6ByNegPMKs) is the largest
+scene with the most complex layout, agents need to find a table with silverware dropping, a dragging
+chair, and a drawer with a pulling sound while navigating through the scene within the episode limit.
+Each dataset entry corresponds to a task in an episode. At the beginning of each episode, agents’
+positions and orientations are randomly initialized. Agents move on the navigable mesh grids to find
+all targets. They must stop within a specified distance of a target to mark it as found. Each target
+sound is assigned to an eligible object with the matching semantic category; sounds from multiple
+targets are mixed and removed once the corresponding target is found. An episode ends when all
+targets are found or all agents stop simultaneously. We set the horizon to H =70, 150, 500, 1000,
+1500 for five scenes. Bird’s-eye-view visualizations and dataset statistics are provided in Appendix B.
+Since most objects in Matterport3D are large and visually distinctive, an agent can effortlessly
+localize them without requiring collaboration. However, real-world visual perception is often
+constrained (e.g., darkness, fog, or blind spots). To make the benchmark more challenging, we restrict
+vision to depth maps with a sensing range of 0-5 m, a resolution of 16 × 16 pixels, and an HFoV of
+10◦. Details about agent configurations and model architectures are provided in Appendix C.2.
+5.2
+Baselines
+We consider the Single-Agent baseline, where a large monolithic model takes all available modalities
+as input [15]. For a fair comparison, we use the same episode horizon, and the agent’s initial position
+is randomly selected from existing initial positions in our collaborative navigation dataset.
+We further compare CRONA with three homogeneous collaboration baselines, where all agents
+receive the same input modalities. Several recent studies have explored Vision-Language-Action
+(VLA) models for collaborative navigation. Hao et al. [39] propose the CoNav framework in
+which one agent has access to a bird’s-eye view, while Wang et al. [38] put forward VLA-based
+collaborative navigation, CoNavBench, with inter-agent communication. Both settings involve
+centralized information and differ substantially from ours in environments, agent observability,
+architectures, and language information. To enable an informative comparison under our task
+setting, we implement a fully decentralized VLA collaboration baseline as a representative in our
+scenes, denoted as VLA-Collab. Although audio-language-action (ALA) collaboration has been less
+explored in navigation, we nevertheless include ALA-Collab as the audio counterpart to VLA-Collab.
+Both VLA-Collab and ALA-Collab use restricted modality inputs. So we include AVLA-Collab,
+0
+0.1
+0.2
+0.3
+0.4
+0.5
+Million Steps
+0.0
+6.0
+12.0
+18.0
+Return
+VLA-Collab
+ALA-Collab
+AVLA-Collab
+CRONA
+(a) Studio | Picture
+0.1
+0.2
+0.3
+0.4
+0.5
+Million Timesteps
+-12.0
+-6.0
+0.0
+6.0
+12.0
+Return
+VLA-Collab
+ALA-Collab
+AVLA-Collab
+CRONA
+(b) Corridor | Sink
+0.1
+0.2
+0.3
+0.4
+0.5
+Million Timesteps
+0.0
+8.0
+16.0
+24.0
+32.0
+Return
+VLA-Collab
+ALA-Collab
+AVLA-Collab
+CRONA
+(c) Apartment | Bed & Counter
+0.1
+0.2
+0.3
+0.4
+0.5
+Million Timesteps
+0.0
+6.0
+12.0
+18.0
+Return
+VLA-Collab
+ALA-Collab
+AVLA-Collab
+CRONA
+(d)
+Ranch | Picture & Table
+0.1
+0.2
+0.3
+0.4
+0.5
+Million Timesteps
+0.0
+8.0
+16.0
+24.0
+32.0
+Return
+VLA-Collab
+ALA-Collab
+AVLA-Collab
+CRONA
+(e) Maze | Drawer & Table & Chair
+0.1
+0.2
+0.3
+0.4
+0.5
+Million Timesteps
+0.2
+0.4
+0.6
+0.8
+1.0
+Success Rate
+VLA-Collab
+ALA-Collab
+AVLA-Collab
+CRONA
+(f)
+Aggregated Success Rate
+Figure 3: Evaluation of CRONA and collaborative navigation baselines across 5 Matterport3D scenes: (a)-(e) show the
+episode return; (f) shows the aggregated results of success rate. The x-axis indicates the environment steps. Curves are
+smoothed by an exponential moving average. Shadows denote 90% bootstrapped CI. Results are averaged over 5 runs.
+where all agents receive audio, vision, and language inputs, to represent homogeneous full-modality
+collaboration in our settings [37, 40]. For a fair comparison, all baselines use the same configurations
+and hyperparameters, and agents in collaborative baselines have the same number of parameters.
+5.3
+Results
+Figure 3 shows the evaluation during training, averaged over five runs. Table 1 provides a detailed
+comparison between CRONA and the baselines on task completion and navigation efficiency. The
+effectiveness of collaborative navigation is domain-dependent. We group them into 5 patterns: no
+clear dominance, vision dominance, audio dominance, cross-modal, and multi-modal dominance.
+No Clear Dominance As shown in Figure 4a and the Studio columns of Table 1, all collaborative
+navigation methods perform well on Studio, achieving an average success rate of 90.80 ± 4.93%.
+CRONA achieves the highest success rate, at 95.72%. All collaborative methods substantially outper-
+form the single-agent baseline. This is because decentralized agents can cover a larger exploration
+area and reduce the impact of premature stopping near the target. These results demonstrate the
+advantage of collaborative navigation: with proper training, even fully decentralized agents can
+coordinate effectively without communication.
+Audio Dominance As shown in Figure 3b and the Corridor columns of Table 1, audio cues
+dominate policy learning in this task. Most methods perform poorly, whereas ALA-Collab achieves
+the best performance with a 25.31% success rate. This pattern is mainly due to the corridor geometry.
+Agents initialized near the middle of the corridor receive few informative visual cues and must rely on
+weak acoustic signals to infer the sound-source direction. As a result, VLA-Collab and AVLA-Collab
+perform worst among the collaborative baselines, with success rates around 14%. Moreover, incorrect
+early decisions require long U-turns to recover, as indicated by more than 87.36% timeouts. This
+audio-dominant pattern suggests that vision is not always the most reliable cue: certain targets can be
+localized more effectively via audio. This suggests the potential of cross-modal collaboration.
+Vision Dominance Figure 3c and the Apartment columns demonstrate a vision-dominant regime.
+The collaboration between two vision agents achieves the best performance, reaching a success rate
+of 78.96%, since the targets are large and visually salient. Audio observations are less reliable in this
+setting, where two audio agents achieve only 38.23% success, mainly because mixed audio from
+two distinct sound sources can disrupt auxiliary belief prediction and lead to unstable policy updates.
+Audio agents struggle to identify the precise stopping location, as reflected by the high early-stop
+failure rate of 21.45%, compared with 4.96%-11.98% for the other methods. Notably, CRONA
+outperforms AVLA-Collab by 5.14% in this environment. This suggests that weak or unreliable
+modalities can hurt multi-modal policies: with limited model capacity, noisy inputs may divert
+representational capacity away from useful cues. We find that lower target distances and higher
+detection rates are associated with higher success rates, indicating that task completion is primarily
+governed by localization quality rather than by a single bottleneck object.
+Table 1: Comparison between CRONA and baselines across five scenes: Studio, Apartment, Ranch, Corridor, and Maze.
+Dist, Detect, and Succ denote the average distance from each agent to its nearest target object (m), target detection rate (%),
+and task success rate (%), respectively. Steps and Timeout denote the average number of steps used per episode and the
+episode timeout rate (%), respectively. Underlined bolds denote the best performance across baselines on each domain.
+(a) Task performance comparison.
+Method
+Studio
+Corridor
+Apartment
+Ranch
+Maze
+Dist
+Succ
+Dist
+Succ
+Dist
+Detect
+Succ
+Dist
+Detect
+Succ
+Dist
+Detect
+Succ
+Single-Agent
+3.24
+32.66
+11.95
+5.71
+8.58
+0.84
+31.55
+8.68
+0.74
+12.34
+7.29
+0.18
+0.00
+VLA-Collab
+1.49
+93.65
+9.28
+14.54
+2.32
+1.78
+78.96
+5.75
+0.89
+38.97
+6.89
+1.06
+18.96
+ALA-Collab
+3.05
+88.17
+8.64
+25.31
+4.34
+1.47
+38.23
+5.33
+1.28
+42.15
+6.81
+1.17
+19.63
+AVLA-Collab
+2.91
+85.87
+9.75
+14.29
+3.93
+1.61
+63.38
+6.87
+0.78
+18.93
+6.77
+1.46
+26.16
+CRONA
+1.45
+95.72
+9.11
+21.50
+3.64
+1.69
+68.52
+5.02
+1.58
+64.62
+7.06
+0.93
+12.13
+(b) Navigation efficiency comparison.
+Method
+Studio
+Corridor
+Apartment
+Ranch
+Maze
+Steps
+Timeout
+Steps
+Timeout
+Steps
+Timeout
+Steps
+Timeout
+Steps
+Timeout
+Single-Agent
+23.40
+1.38
+146.58
+95.86
+434.60
+56.47
+260.11
+18.94
+15.32
+0.00
+VLA-Collab
+19.47
+0.71
+118.92
+87.94
+289.76
+16.08
+318.67
+22.41
+129.13
+0.79
+ALA-Collab
+20.18
+0.85
+95.66
+74.68
+342.59
+40.32
+490.26
+32.87
+156.18
+0.88
+AVLA-Collab
+21.59
+0.92
+116.34
+87.36
+308.27
+28.96
+396.28
+24.88
+624.50
+20.45
+CRONA
+16.08
+0.65
+135.51
+88.55
+293.51
+24.87
+606.53
+36.90
+293.69
+7.14
+Cross-Modal Dominance In Ranch, CRONA achieves the strongest performance, with a 64.62%
+success rate (Figure 3d). We attribute this to effective collaboration between agents with complemen-
+tary modalities. The audio agent localizes the picture using clean, transient camera-shutter sounds,
+while the vision agent identifies the table based on its large profile in an open, unobstructed dining
+room (Appendix B). Interestingly, VLA-Collab and ALA-Collab achieve reasonable performance
+of around 40%, but AVLA-Collab performs even worse, with only 18.93% success. This is be-
+cause the monolithic multi-modal with limited capacity struggles to align and effectively exploit
+different modalities (discussed in Section 5.4). We hypothesize that cross-modal collaboration
+is particularly effective when different targets have clean, modality-specific cues. It is also
+parameter-efficient, as each agent only needs to model its own sensory input rather than jointly
+aligning and reasoning over rich multi-modal observations.
+Although the success rate is generally consistent with the detection rate and average distance to targets
+as in other domains, steps, and timeout rate do not align with task success in this scene (Table 1b).
+Single-Agent, VLA-Collab, and ALA-Collab often terminate early or stop exploring, resulting in
+fewer steps but lower success. In contrast, AVLA-Collab and CRONA take more exploration steps and
+achieve higher success. This suggests that in harder, time-constrained tasks, inputs with heterogeneous
+modalities can induce more diverse behaviors and thereby promote broader exploration.
+Multi-Modal Dominance In the most complex scene, Maze, collaboration benefits from larger
+model capacity and access to all available sensory inputs. As shown in Figure 3e and Maze columns
+in Table 1, AVLA-Collab achieves the best performance in Maze, with a 26.16% success rate. This
+result is mainly consistent with the observation in Ranch: navigation in complex scenes requires
+complementary information from multiple modalities. CRONA performs only moderately worse
+than the homogeneous collaboration baselines, suggesting that cross-modal collaboration can still
+exploit partial, modality-specific inputs effectively. This finding, together with its best overall
+performance (Figure 3f), indicates that CRONA provides a robust and efficient alternative to
+multi-modal collaboration. The success rates for all scenes are shown in Appendix D.
+5.4
+Ablation Study
+Table 2 analyzes the effects of model capacity, input-signal quality, and framework components.
+We vary the embedding size and compare the homogeneous multi-modal baseline AVLA-Collab with
+CRONA. AVLA-Collab is highly sensitive to representation capacity. With a small embedding size,
+agents must compress visual, acoustic, and language information into a limited latent space, leading
+to poor collaboration performance (0.06% success at embedding size 60). Increasing the embedding
+size adds only modest overhead (roughly 1 MiB for every additional 40 dimensions), but improves
+success rate by up to 29.61%. With sufficient capacity, AVLA-Collab can even outperform CRONA
+at the same embedding size. This suggests that full-modality agents can benefit from rich inputs once
+Table 2: Ablation studies on Ranch. (a) compares AVLA-Collab and CRONA across embedding sizes, reporting model size
+(MiB) and task success rate (%). (b) compares VLA-Collab, AVLA-Collab, and CRONA across visual resolutions, reporting
+task success rate (%) and steps per episode. (c) compares AVLA-Collab with CRONA and ablates key CRONA components. †
+denotes the pivot setting used in Table 1. Subscripted arrows show absolute changes relative to the corresponding † pivot entry,
+where ↑denotes an increase and ↓denotes a decrease. Underlined bolds mark the best performance under each setting.
+(a) Embedding-size ablation.
+Method
+100†
+180
+Size
+Succ
+Size
+Succ
+Size
+Succ
+Size
+Succ
+AVLA-Collab
+36.95 ↓0.94
+0.06 ↓18.87
+37.89†
+18.93†
+38.83 ↑0.94
+43.72 ↑24.79
+39.76 ↑1.87
+73.33 ↑54.40
+CRONA
+27.11 ↓0.93
+11.38 ↓53.24
+28.04†
+64.62†
+28.98 ↑0.94
+65.54 ↑0.92
+29.92 ↑1.88
+68.75 ↑4.13
+(b) Resolution ablation.
+Method
+4 × 4
+8 × 8
+16 × 16†
+32 × 32
+Succ
+Steps
+Succ
+Steps
+Succ
+Steps
+Succ
+Steps
+VLA-Collab
+12.76 ↓26.21
+317.68 ↓0.99
+16.51 ↓22.46
+343.08 ↑24.41
+38.97†
+318.67†
+63.53 ↑24.56
+581.70 ↑263.03
+AVLA-Collab
+15.43 ↓3.50
+320.76 ↓75.52
+18.25 ↓0.68
+322.65 ↓73.63
+18.93†
+396.28†
+19.21 ↑0.28
+388.29 ↓7.99
+CRONA
+42.76 ↓21.86
+346.19 ↓260.34
+62.04 ↓2.58
+573.81 ↓32.72
+64.62†
+606.53†
+65.48 ↑0.86
+615.92 ↑9.39
+(c) Component ablation.
+Method
+w/o Category Belief
+w/o Location Belief
+w/o Any Belief
+Critic w/o State
+Full†
+AVLA-Collab
+18.21 ↓0.72
+8.78 ↓10.15
+8.75 ↓10.18
+0.06 ↓18.87
+18.93†
+CRONA
+62.58 ↓2.04
+26.16 ↓38.46
+31.40 ↓33.22
+0.13 ↓64.49
+64.62†
+capacity is no longer the bottleneck. CRONA is more stable across embedding sizes, since each agent
+processes fewer modalities and faces a simpler representation-learning problem.
+We vary image resolution to evaluate robustness to visual signal quality. The homogeneous vision-
+based methods, VLA-Collab and AVLA-Collab, degrade substantially at low resolution, achieving
+only 12.76% and 15.43% success, respectively. CRONA is more robust, maintaining 42.76%-65.48%
+success across different resolutions. This robustness comes from modality specialization. Even with
+poor visual observations, the audio-based agent may take over and help to maintain the performance.
+Finally, we ablate the auxiliary beliefs and state input of the centralized critic in Table 2c. Removing
+the category belief only slightly reduces performance, by 0.72% for AVLA-Collab and 2.04% for
+CRONA. In contrast, the location belief has a much larger effect. Once it is removed, either alone or
+together with the category belief, the success rate drops by about half for both methods. We find state
+information crucial for centralized training, where both methods almost fail (less than 0.2% success
+rate) to learn without it. Overall, each component contributes to performance, with location belief
+and state information playing the most important roles.
+Conclusion
+We propose CRONA, a decentralized MARL framework for cross-modal navigation. By assigning
+complementary sensory modalities to different agents, CRONA reduces the burden of learning dense
+multi-modal representations within each agent, while retaining fully decentralized execution at test
+time. Experiments show that homogeneous collaboration with limited modalities may suffice for
+short-range navigation, while heterogeneous collaboration with complementary modalities generally
+performs better. In more complex scenes, richer multi-modal inputs and sufficient model capacity are
+also important for navigation. Overall, cross-modal collaboration is a robust and efficient alternative
+to multi-modal collaboration, especially when targets exhibit clean, modality-specific cues.
+Limitations This work has several limitations that suggest directions for future exploration. First, we
+focus on two common modalities, vision and audio, and extending CRONA to other sensory inputs,
+such as point clouds, LiDAR, or tactile signals, requires further study. Second, we use location and
+category beliefs as a proof of concept for auxiliary belief learning. Developing control-relevant belief
+representations for broader modalities and task structures is an important direction. Finally, due
+to constraints in the environment configuration, our current tasks are instantiated in 2D navigation
+settings. Extending cross-modal collaboration to full 3D embodied environments would further test
+its generality and practical applicability.
+References
+[1] Eric Kolve, Roozbeh Mottaghi, Winson Han, Eli VanderBilt, Luca Weihs, Alvaro Herrasti, Matt
+Deitke, Kiana Ehsani, Daniel Gordon, Yuke Zhu, et al. Ai2-thor: An interactive 3d environment
+for visual ai. arXiv preprint arXiv:1712.05474, 2017.
+[2] Manolis Savva*, Abhishek Kadian*, Oleksandr Maksymets*, Yili Zhao, Erik Wijmans, Bhavana
+Jain, Julian Straub, Jia Liu, Vladlen Koltun, Jitendra Malik, Devi Parikh, and Dhruv Batra.
+Habitat: A Platform for Embodied AI Research. In Proceedings of the IEEE/CVF International
+Conference on Computer Vision (ICCV), 2019.
+[3] Andrew Szot, Alex Clegg, Eric Undersander, Erik Wijmans, Yili Zhao, John Turner, Noah
+Maestre, Mustafa Mukadam, Devendra Chaplot, Oleksandr Maksymets, Aaron Gokaslan,
+Vladimir Vondrus, Sameer Dharur, Franziska Meier, Wojciech Galuba, Angel Chang, Zsolt Kira,
+Vladlen Koltun, Jitendra Malik, Manolis Savva, and Dhruv Batra. Habitat 2.0: Training home
+assistants to rearrange their habitat. In Advances in Neural Information Processing Systems
+(NeurIPS), 2021.
+[4] Peter Anderson, Qi Wu, Damien Teney, Jake Bruce, Mark Johnson, Niko Sünderhauf, Ian Reid,
+Stephen Gould, and Anton Van Den Hengel. Vision-and-language navigation: Interpreting
+visually-grounded navigation instructions in real environments. In Proceedings of the IEEE
+conference on computer vision and pattern recognition, pages 3674-3683, 2018.
+[5] Jiafei Duan, Samson Yu, Hui Li Tan, Hongyuan Zhu, and Cheston Tan. A survey of embodied
+ai: From simulators to research tasks. IEEE Transactions on Emerging Topics in Computational
+Intelligence, 6(2):230-244, 2022.
+[6] Xiaozhi Chen, Huimin Ma, Ji Wan, Bo Li, and Tian Xia. Multi-view 3d object detection
+network for autonomous driving. In Proceedings of the IEEE conference on Computer Vision
+and Pattern Recognition, pages 1907-1915, 2017.
+[7] Abhishek Das, Satwik Kottur, Khushi Gupta, Avi Singh, Deshraj Yadav, José MF Moura, Devi
+Parikh, and Dhruv Batra. Visual dialog. In Proceedings of the IEEE conference on computer
+vision and pattern recognition, pages 326-335, 2017.
+[8] Jason Ku, Melissa Mozifian, Jungwook Lee, Ali Harakeh, and Steven L Waslander. Joint 3d
+proposal generation and object detection from view aggregation. In 2018 IEEE/RSJ international
+conference on intelligent robots and systems (IROS), pages 1-8. IEEE, 2018.
+[9] Charles R Qi, Wei Liu, Chenxia Wu, Hao Su, and Leonidas J Guibas. Frustum pointnets for 3d
+object detection from rgb-d data. In Proceedings of the IEEE conference on computer vision
+and pattern recognition, pages 918-927, 2018.
+[10] Mohit Shridhar, Lucas Manuelli, and Dieter Fox. Cliport: What and where pathways for robotic
+manipulation. In Conference on robot learning, pages 894-906. PMLR, 2022.
+[11] Anthony Brohan, Noah Brown, Justice Carbajal, Yevgen Chebotar, Joseph Dabis, Chelsea Finn,
+Keerthana Gopalakrishnan, Karol Hausman, Alex Herzog, Jasmine Hsu, et al. Rt-1: Robotics
+transformer for real-world control at scale. arXiv preprint arXiv:2212.06817, 2022.
+[12] Danny Driess, Fei Xia, Mehdi SM Sajjadi, Corey Lynch, Aakanksha Chowdhery, Brian Ichter,
+Ayzaan Wahid, Jonathan Tompson, Quan Vuong, Tianhe Yu, et al. Palm-e: An embodied
+multimodal language model. arXiv preprint arXiv:2303.03378, 2023.
+[13] Yao-Hung Hubert Tsai, Shaojie Bai, Paul Pu Liang, J Zico Kolter, Louis-Philippe Morency, and
+Ruslan Salakhutdinov. Multimodal transformer for unaligned multimodal language sequences.
+In Proceedings of the 57th annual meeting of the association for computational linguistics,
+pages 6558-6569, 2019.
+[14] Chao Jia, Yinfei Yang, Ye Xia, Yi-Ting Chen, Zarana Parekh, Hieu Pham, Quoc Le, Yun-Hsuan
+Sung, Zhen Li, and Tom Duerig. Scaling up visual and vision-language representation learning
+with noisy text supervision. In International conference on machine learning, pages 4904-4916.
+PMLR, 2021.
+[15] Changan Chen, Unnat Jain, Carl Schissler, Sebastia Vicenc Amengual Gari, Ziad Al-Halah,
+Vamsi Krishna Ithapu, Philip Robinson, and Kristen Grauman. Soundspaces: Audio-visual
+navigation in 3d environments. In European conference on computer vision, pages 17-36.
+Springer, 2020.
+[16] Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk, Adam Trischler, and
+Matthew Hausknecht. Alfworld: Aligning text and embodied environments for interactive
+learning. arXiv preprint arXiv:2010.03768, 2020.
+[17] Mohit Shridhar, Jesse Thomason, Daniel Gordon, Yonatan Bisk, Winson Han, Roozbeh Mot-
+taghi, Luke Zettlemoyer, and Dieter Fox. Alfred: A benchmark for interpreting grounded
+instructions for everyday tasks. In Proceedings of the IEEE/CVF conference on computer vision
+and pattern recognition, pages 10740-10749, 2020.
+[18] Weiyao Wang, Du Tran, and Matt Feiszli. What makes training multi-modal classification
+networks hard? In Proceedings of the IEEE/CVF conference on computer vision and pattern
+recognition, pages 12695-12705, 2020.
+[19] Nan Wu, Stanislaw Jastrzebski, Kyunghyun Cho, and Krzysztof J Geras. Characterizing and
+overcoming the greedy nature of learning in multi-modal deep neural networks. In International
+Conference on Machine Learning, pages 24043-24055. PMLR, 2022.
+[20] Yu Huang, Junyang Lin, Chang Zhou, Hongxia Yang, and Longbo Huang. Modality competi-
+tion: What makes joint training of multi-modal network fail in deep learning?(provably). In
+International conference on machine learning, pages 9226-9259. PMLR, 2022.
+[21] Xiaokang Peng, Yake Wei, Andong Deng, Dong Wang, and Di Hu. Balanced multimodal
+learning via on-the-fly gradient modulation. In Proceedings of the IEEE/CVF conference on
+computer vision and pattern recognition, pages 8238-8247, 2022.
+[22] Wonjae Kim, Bokyung Son, and Ildoo Kim. Vilt: Vision-and-language transformer without
+convolution or region supervision. In International conference on machine learning, pages
+5583-5594. PMLR, 2021.
+[23] Yuan Yao, Tianyu Yu, Ao Zhang, Chongyi Wang, Junbo Cui, Hongji Zhu, Tianchi Cai, Haoyu
+Li, Weilin Zhao, Zhihui He, et al. Minicpm-v: A gpt-4v level mllm on your phone. arXiv
+preprint arXiv:2408.01800, 2024.
+[24] Junnan Li, Dongxu Li, Silvio Savarese, and Steven Hoi. Blip-2: Bootstrapping language-image
+pre-training with frozen image encoders and large language models. In International conference
+on machine learning, pages 19730-19742. PMLR, 2023.
+[25] Reid Simmons, David Apfelbaum, Wolfram Burgard, Dieter Fox, Mark Moors, Sebastian Thrun,
+and Håkan Younes. Coordination for multi-robot exploration and mapping. In Aaai/Iaai, pages
+852-858, 2000.
+[26] Lynne E Parker. Alliance: An architecture for fault tolerant multirobot cooperation. IEEE
+transactions on robotics and automation, 14(2):220-240, 2002.
+[27] Wolfram Burgard, Mark Moors, Cyrill Stachniss, and Frank E Schneider. Coordinated multi-
+robot exploration. IEEE Transactions on robotics, 21(3):376-386, 2005.
+[28] Shanzhi Gu, Mingyang Geng, and Long Lan. Attention-based fault-tolerant approach for
+multi-agent reinforcement learning systems. Entropy, 23(9):1133, 2021.
+[29] Hailong Huang, Andrey V Savkin, and Chao Huang. Decentralized autonomous navigation
+of a uav network for road traffic monitoring. IEEE Transactions on Aerospace and Electronic
+Systems, 57(4):2558-2564, 2021.
+[30] Tong Qin, Malcolm Macdonald, and Dong Qiao. Fully decentralized cooperative navigation for
+spacecraft constellations. IEEE Transactions on Aerospace and Electronic Systems, 57(4):2383-
+2394, 2021.
+[31] Rana Azzam, Igor Boiko, and Yahya Zweiri. Swarm cooperative navigation using centralized
+training and decentralized execution. Drones, 7(3):193, 2023.
+[32] Yuchen Xiao, Joshua Hoffman, Tian Xia, and Christopher Amato. Learning multi-robot
+decentralized macro-action-based policies via a centralized q-net. In 2020 IEEE International
+conference on robotics and automation (ICRA), pages 10695-10701. IEEE, 2020.
+[33] Yuchen Xiao, Weihao Tan, and Christopher Amato. Asynchronous actor-critic for multi-agent
+reinforcement learning. Advances in Neural Information Processing Systems, 35:4385-4400,
+2022.
+[34] Yuntao Xue and Weisheng Chen. Multi-agent deep reinforcement learning for uavs navigation
+in unknown complex environment. IEEE Transactions on Intelligent Vehicles, 9(1):2290-2303,
+2023.
+[35] Weizheng Wang, Le Mao, Ruiqi Wang, and Byung-Cheol Min.
+Multi-robot cooperative
+socially-aware navigation using multi-agent reinforcement learning. In 2024 IEEE International
+Conference on Robotics and Automation (ICRA), pages 12353-12360. IEEE, 2024.
+[36] Haiyang Wang, Wenguan Wang, Xizhou Zhu, Jifeng Dai, and Liwei Wang. Collaborative visual
+navigation. arXiv preprint arXiv:2107.01151, 2021.
+[37] Hailong Zhang, Yinfeng Yu, Liejun Wang, Fuchun Sun, and Wendong Zheng. Advancing
+audio-visual navigation through multi-agent collaboration in 3d environments. In International
+Conference on Neural Information Processing, pages 502-516. Springer, 2025.
+[38] Tianhang Wang, Xinhai Li, Fan Lu, Tianshi Gong, Jiankun Dong, Weiyi Xue, Sanqing Qu,
+Chenjia Bai, and Guang Chen. Conavbench: Collaborative long-horizon vision-language navi-
+gation benchmark. In The Fourteenth International Conference on Learning Representations,
+2026.
+[39] Haihong Hao, Mingfei Han, Changlin Li, Zhihui Li, and Xiaojun Chang. Conav: Collaborative
+cross-modal reasoning for embodied navigation. arXiv preprint arXiv:2505.16663, 2025.
+[40] Rui Liu, Yu Shen, Peng Gao, Pratap Tokekar, and Ming Lin. Caml: Collaborative auxiliary
+modality learning for multi-agent systems. arXiv preprint arXiv:2502.17821, 2025.
+[41] Yupeng Hu, Kun Wang, Meng Liu, Haoyu Tang, and Liqiang Nie. Semantic collaborative
+learning for cross-modal moment localization. ACM Transactions on Information Systems,
+42(2):1-26, 2023.
+[42] Frans A Oliehoek, Matthijs TJ Spaan, and Nikos Vlassis. Optimal and approximate q-value
+functions for decentralized pomdps. Journal of Artificial Intelligence Research, 32:289-353,
+2008.
+[43] Frans A. Oliehoek and Christopher Amato. A Concise Introduction to Decentralized POMDPs.
+Springer, 2016.
+[44] Jacob Krantz, Erik Wijmans, Arjun Majumdar, Dhruv Batra, and Stefan Lee. Beyond the nav-
+graph: Vision-and-language navigation in continuous environments. In European Conference
+on Computer Vision, pages 104-120. Springer, 2020.
+[45] Daniel Fried, Ronghang Hu, Volkan Cirik, Anna Rohrbach, Jacob Andreas, Louis-Philippe
+Morency, Taylor Berg-Kirkpatrick, Kate Saenko, Dan Klein, and Trevor Darrell. Speaker-
+follower models for vision-and-language navigation. In Advances in neural information pro-
+cessing systems, volume 31, 2018.
+[46] Weituo Hao, Chunyuan Li, Xiujun Li, Lawrence Carin, and Jianfeng Gao. Towards learning
+a generic agent for vision-and-language navigation via pre-training. In Proceedings of the
+IEEE/CVF conference on computer vision and pattern recognition, pages 13137-13146, 2020.
+[47] Arjun Majumdar, Ayush Shrivastava, Stefan Lee, Peter Anderson, Devi Parikh, and Dhruv Batra.
+Improving vision-and-language navigation with image-text pairs from the web. In European
+Conference on Computer Vision, pages 259-274. Springer, 2020.
+[48] Yicong Hong, Qi Wu, Yuankai Qi, Cristian Rodriguez-Opazo, and Stephen Gould. Vln bert: A
+recurrent vision-and-language bert for navigation. In Proceedings of the IEEE/CVF conference
+on Computer Vision and Pattern Recognition, pages 1643-1653, 2021.
+[49] Shizhe Chen, Pierre-Louis Guhur, Cordelia Schmid, and Ivan Laptev. History aware multimodal
+transformer for vision-and-language navigation. Advances in neural information processing
+systems, 34:5834-5847, 2021.
+[50] Yi Cheng and Gong Ye Wang. Mobile robot navigation based on lidar. In 2018 Chinese control
+and decision conference (CCDC), pages 1243-1246. IEEE, 2018.
+[51] Changan Chen, Ziad Al-Halah, and Kristen Grauman. Semantic audio-visual navigation. In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages
+15516-15525, 2021.
+[52] Sudipta Paul, Amit Roy-Chowdhury, and Anoop Cherian. Avlen: Audio-visual-language
+embodied navigation in 3d environments. Advances in Neural Information Processing Systems,
+35:6236-6249, 2022.
+[53] Changan Chen, Sagnik Majumder, Ziad Al-Halah, Ruohan Gao, Santhosh Kumar Ramakrishnan,
+and Kristen Grauman. Learning to set waypoints for audio-visual navigation. arXiv preprint
+arXiv:2008.09622, 2020.
+[54] Shanliang Yao, Runwei Guan, Xiaoyu Huang, Zhuoxiao Li, Xiangyu Sha, Yong Yue, Eng Gee
+Lim, Hyungjoon Seo, Ka Lok Man, Xiaohui Zhu, et al. Radar-camera fusion for object detection
+and semantic segmentation in autonomous driving: A comprehensive review. IEEE Transactions
+on Intelligent Vehicles, 9(1):2094-2128, 2023.
+[55] Goksenin Yuksel, Marcel van Gerven, and Kiki van der Heijden. Gram: Spatial general-purpose
+audio representations for real-world environments. arXiv preprint arXiv:2602.03307, 2026.
+[56] Yuankai Qi, Zizheng Pan, Yicong Hong, Ming-Hsuan Yang, Anton Van Den Hengel, and
+Qi Wu. The road to know-where: An object-and-room informed sequential bert for indoor
+vision-language navigation. In Proceedings of the IEEE/CVF International Conference on
+Computer Vision, pages 1655-1664, 2021.
+[57] Chenguang Huang, Oier Mees, Andy Zeng, and Wolfram Burgard. Visual language maps for
+robot navigation. In 2023 IEEE International Conference on Robotics and Automation (ICRA),
+pages 10608-10615. IEEE, 2023.
+[58] Bangguo Yu, Hamidreza Kasaei, and Ming Cao. L3mvn: Leveraging large language models for
+visual target navigation. In 2023 IEEE/RSJ International Conference on Intelligent Robots and
+Systems (IROS), pages 3554-3560. IEEE, 2023.
+[59] James R Bruce and Manuela M Veloso. Safe multirobot navigation within dynamics constraints.
+Proceedings of the IEEE, 94(7):1398-1411, 2006.
+[60] Jur van Den Berg, Jack Snoeyink, Ming C Lin, and Dinesh Manocha. Centralized path planning
+for multiple robots: Optimal decoupling into sequential plans. In Robotics: Science and systems,
+volume 2, pages 2-3, 2009.
+[61] Rob Janssen, René van de Molengraft, Herman Bruyninckx, and Maarten Steinbuch. Cloud
+based centralized task control for human domain multi-robot operations. Intelligent Service
+Robotics, 9(1):63-77, 2016.
+[62] Prasanna Velagapudi, Katia Sycara, and Paul Scerri. Decentralized prioritized planning in
+large multirobot teams. In 2010 IEEE/RSJ International Conference on Intelligent Robots and
+Systems, pages 4603-4609. IEEE, 2010.
+[63] Ryan Luna and Kostas E Bekris. Efficient and complete centralized multi-robot path planning. In
+2011 IEEE/RSJ International Conference on Intelligent Robots and Systems, pages 3268-3275.
+IEEE, 2011.
+[64] Shariq Iqbal and Fei Sha. Actor-attention-critic for multi-agent reinforcement learning. In
+International conference on machine learning, pages 2961-2970. PMLR, 2019.
+[65] Kaiqing Zhang, Zhuoran Yang, and Tamer Ba¸sar. Multi-agent reinforcement learning: A
+selective overview of theories and algorithms. Handbook of reinforcement learning and control,
+pages 321-384, 2021.
+[66] Stefano V. Albrecht, Filippos Christianos, and Lukas Schäfer. Multi-Agent Reinforcement
+Learning: Foundations and Modern Approaches. MIT Press, 2024.
+[67] Lei Yuan, Ziqian Zhang, Lihe Li, Cong Guan, and Yang Yu. A survey of progress on cooperative
+multi-agent reinforcement learning in open environment. arXiv preprint arXiv:2312.01058,
+2023.
+[68] Ming Tan et al. Multi-agent reinforcement learning: Independent vs. cooperative agents. In
+Proceedings of the tenth international conference on machine learning, pages 330-337, 1993.
+[69] Leonid Peshkin, Kee-Eung Kim, Nicolas Meuleau, and Leslie Pack Kaelbling. Learning to
+cooperate via policy search. arXiv preprint cs/0105032, 2001.
+[70] Caroline Claus and Craig Boutilier. The dynamics of reinforcement learning in cooperative
+multiagent systems. AAAI/IAAI, 1998(746-752):2, 1998.
+[71] Karl Tuyls, Katja Verbeeck, and Tom Lenaerts. A selection-mutation model for q-learning in
+multi-agent systems. In Proceedings of the second international joint conference on Autonomous
+agents and multiagent systems, pages 693-700, 2003.
+[72] Michael Wunder, Michael L Littman, and Monica Babes. Classes of multiagent q-learning
+dynamics with epsilon-greedy exploration. In Proceedings of the 27th International Conference
+on Machine Learning (ICML-10), pages 1167-1174, 2010.
+[73] Christopher Amato. An introduction to centralized training for decentralized execution in
+cooperative multi-agent reinforcement learning. arXiv preprint arXiv:2409.03052, 2024.
+[74] Ryan Lowe, Yi I Wu, Aviv Tamar, Jean Harb, OpenAI Pieter Abbeel, and Igor Mordatch.
+Multi-agent actor-critic for mixed cooperative-competitive environments. Advances in neural
+information processing systems, 30, 2017.
+[75] Chao Yu, Akash Velu, Eugene Vinitsky, Jiaxuan Gao, Yu Wang, Alexandre Bayen, and Yi Wu.
+The surprising effectiveness of ppo in cooperative multi-agent games. In Advances in Neural
+Information Processing Systems, volume 35, pages 24611-24624. Curran Associates, Inc.,
+2022.
+[76] Jakob Foerster, Gregory Farquhar, Triantafyllos Afouras, Nantas Nardelli, and Shimon Whiteson.
+Counterfactual multi-agent policy gradients. In Proceedings of the AAAI Conference on Artificial
+Intelligence, April 2018.
+[77] Xueguang Lyu, Yuchen Xiao, Brett Daley, and Christopher Amato. Contrasting centralized and
+decentralized critics in multi-agent reinforcement learning. arXiv preprint arXiv:2102.04402,
+2021.
+[78] Xueguang Lyu, Andrea Baisero, Yuchen Xiao, Brett Daley, and Christopher Amato. On
+centralized critics in multi-agent reinforcement learning. Journal of Artificial Intelligence
+Research, 77:295-354, 2023.
+[79] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image
+recognition. In Proceedings of the IEEE conference on computer vision and pattern recognition,
+pages 770-778, 2016.
+[80] Angel Chang, Angela Dai, Thomas Funkhouser, Maciej Halber, Matthias Niessner, Manolis
+Savva, Shuran Song, Andy Zeng, and Yinda Zhang. Matterport3d: Learning from rgb-d data in
+indoor environments. International Conference on 3D Vision (3DV), 2017.
+[81] Brian McFee, Colin Raffel, Dawen Liang, Daniel PW Ellis, Matt McVicar, Eric Battenberg,
+Oriol Nieto, et al. librosa: Audio and music signal analysis in python. SciPy, 2015(18-24):7,
+2015.
+A
+Proofs
+Proposition 1. Assume that the belief predictor is accurate, such that the predicted belief b is a
+correct history-induced latent representation of h. Then the state-history-belief value V π(h, b, s)
+provides an unbiased estimate of V π(h).
+Proof. By Lemma 2 of [78], the state-augmented action-value function is unbiased with respect to
+the history-conditioned value, i.e.,
+Qπ(h, a) = Es|h [Qπ(h, s, a)] .
+Since b is inferred from h and is assumed to be correct, conditioning on (h, b) does not introduce
+additional information beyond the history. Therefore,
+p(s | h, b) = p(s | h),
+and the augmented critic satisfies
+Qπ(h, b, s, a) = Qπ(h, s, a).
+Then,
+V π(h) = Ea∼π(·|h) [Qπ(h, a)]
+= Ea∼π(·|h)
+
+Es|h [Qπ(h, s, a)]
+
+= Es|h
+
+Ea∼π(·|h) [Qπ(h, b, s, a)]
+
+= Es|h [V π(h, b, s)] .
+Thus, when s is sampled from the posterior state distribution p(s | h), the estimator V π(h, b, s) has
+expectation V π(h). Therefore, V π(h, b, s) is an unbiased estimator of V π(h).
+B
+Collaborative Navigation Benchmark
+B.1
+Scenes
+The bird’s-eye-view of the scenes we used are shown in Figure 4. Table 3 shows the Matterport3D
+scene IDs, the number of navigable points, and the total navigable area of each scene.
+(a) Studio | Picture
+(b) Corridor | Sink
+(c) Apartment | Bed & Counter
+(d)
+Ranch | Picture & Table
+(e) Maze | Drawer & Table & Chair
+Figure 4: Bird-eye’s-views of MatterPort3D scenes.
+B.2
+Dataset Construction Details
+To construct datasets, we use base episodes in [15] according to the desired Matterport3D scenes.
+We chose 1, 2, or 3 targets from different categories from the initial datasets. Episodes are filtered
+out if the initial distances between agents, or between agents and target objects are below or exceed
+predefined thresholds. Table 4 summarizes the dataset construction parameters.
+Table 3: Statistics of the five scenes used in our collaborative navigation dataset.
+Scene
+ID in Matterport3D
+Navigable points
+Navigable area (m2)
+Studio
+GdvgFV5R1Z5
+20.49
+Corridor
+ac26ZMwG7aT
+369.33
+Apartment
+17DRP5sb8fy
+52.04
+Ranch
+JeFG25nYj2p
+166.22
+Maze
+B6ByNegPMKs
+1348.31
+Some Matterport3D scenes contain disconnected navigable regions. To create diverse but valid
+episodes, we filter the generated tasks using both minimum- and maximum-distance constraints. The
+minimum-distance constraint avoids overly easy episodes where agents start too close to the targets,
+while the maximum-distance constraint removes episodes in which some targets are unreachable. We
+apply these constraints in Corridor and Maze, where disconnected regions occur more frequently.
+As a result, although Corridor contains a high number of navigable areas, a horizon of 150 is
+enough for all Corridor episodes.
+Table 4: Dataset construction parameters for the five chosen MatterPort3D scenes. A single-object dataset keeps one target
+per episode, while the multi-object dataset combines multiple targets.
+Scene
+Targets
+Target dist.
+Start-goal dist.
+Train eps.
+Studio
+picture
+-
+≥2.0 m
+Corridor
+sink
+-
+2-5 m
+Apartment
+bed, counter
+≥2.0 m
+≥4.0 m
+Ranch
+picture, table
+≥2.0 m
+≥4.0 m
+Maze
+chair, table, chest_of_drawers
+3-10 m
+3-10 m
+Two agents are initialized at different starting positions. For multi-object datasets, an episode is
+considered successful if each target is reached within a distance threshold of 1 m. For two-object
+datasets, agents must start at least 1.5 m apart. For Corridor, the initial distance lie between 2.0 and
+5.0 m. For Maze, the initial distance lie between 3.0 and 10.0 m. We split each dataset into training
+and validation sets with 3:1.
+B.3
+Acoustic Simulation
+We use shared material configurations across all evaluated scenes to simulate the physical acoustics
+of each space. Each material contains frequency-dependent absorption, scattering, and transmission
+coefficients that simulate the sound propagation. The configuration here only affects acoustic
+rendering and does not change navigable points or the navigable area. Table 5 shows mappings
+between semantics and materials, with the corresponding coefficient ranges.
+Table 5: Representative acoustic material configurations for audio rendering.
+Acoustic material
+Example semantic labels
+Absorption
+Scattering
+Transmission
+Acoustic Tile
+ceiling
+0.50-0.70
+0.10-0.30
+0.002-0.050
+Gypsum Board
+wall
+0.04-0.29
+0.10-0.15
+0.001-0.035
+Carpet
+floor, mat
+0.01-0.65
+0.10-0.45
+0.001-0.008
+Glass
+window, mirror, tv_monitor
+0.05-0.35
+0.05-0.05
+0.022-0.125
+Foliage
+plant, indoor-plant
+0.03-0.31
+0.20-0.80
+0.30-0.90
+Steel
+sink, microwave, railing
+0.02-0.10
+0.10-0.10
+0.056-0.250
+wood, Thick
+chair, table, counter
+0.05-0.19
+0.10-0.15
+0.001-0.035
+Wood Floor
+cabinet, stair
+0.06-0.15
+0.10-0.15
+0.002-0.071
+Curtain
+bed, blanket, cushion, sofa
+0.07-0.75
+0.10-0.50
+0.045-0.420
+Default
+default
+0.10-0.10
+0.50-0.50
+0.000-0.000
+We choose the following sounds from [15] for constructing our dataset:
+• Dragging Chair
+• Table with Silverware Dropping
+• Picture with Camera Shutter
+• Sink with Dripping Water
+• Counter with Coin Drop
+• Pulling Chest of Drawers
+• Creaking Bed
+Figure 5 shows the corresponding source spectrograms.
+(a) Dragging Chair
+(b) Table with Silverware
+(c) Picture Shutter
+(d) Sink Dripping
+(e) Coin Drop on Counter
+(f) Chest of Drawers
+(g) Creaking Bed
+Figure 5: Spectrograms of selected sounds above.
+Agents learn more effectively from short, clean, well-isolated sounds. Such sounds usually exhibit a
+sharp attack, little or no sustain, and a rapid decay with minimal trailing energy. For example, Sink
+and Table clearly follow this structure, producing consistent acoustic patterns that provide reliable
+cues for target localization.
+B.4
+Episodes
+For each episode, objects will be selected based on the corresponding categories. Each episode
+strictly follows Table 4, the demonstrations of example episodes are in Figure 6.
+(a) Studio | Picture
+(b) Corridor | Sink
+(c) Apartment | Bed & Counter
+(d)
+Ranch | Picture & Table
+(e) Maze | Drawer & Table & Chair
+Figure 6: Illustration of example episodes.
+C
+Experimental Settings
+C.1
+Hyperparameters
+We use the same hyperparameters across all scenes. Table 6 summarizes the training configurations.
+Table 6: Shared training hyperparameters used across all evaluated scenes.
+Hyperparameter
+Value
+Hyperparameter
+Value
+Optimizer
+Adam
+Actor learning rate
+0.00025
+Critic learning rate
+0.0002
+Adam epsilon
+1e-5
+PPO epochs
+PPO mini-batches
+Rollout steps per update
+PPO policy ratio ρ clip
+0.2
+PPO value clip
+0.25
+Policy-value loss coefficient µ
+0.67
+Belief smooth coefficient α
+0.5
+Entropy coefficient β
+0.05
+Discount factor γ
+0.99
+GAE λ
+0.95
+Max gradient norm
+0.2
+History cache size (steps)
+Vision encoder hidden size
+Audio encoder hidden size
+Transformer hidden size
+Language embedding size
+Language encoder hidden size
+Normalized advantage
+False
+Number of updates
+Max depth for depth sensor
+3 m
+C.2
+Architecture
+Agent Configuration
+Since many objects in Matterport3D scenes are large and visually salient,
+a single agent can effortlessly localize them without requiring collaboration. To increase the
+difficulty of tasks, we restrict visual observations to depth maps with a sensing range of 0-
+5 m, a resolution of 16 × 16 pixels, and a horizontal field of view (HFoV) of 10◦.
+We use
+sentence-transformers/all-MiniLM-L6-v2 as the instruction encoder, a compact ResNet-18
+as the visual encoder [79], and a plain CNN with 3 convolutional layers as the audio encoder. At each
+time step, each agent combines its previous observations and actions with the current observation
+using an MLP, then encodes them using 8-head transformers to obtain a history representation.
+Audio Encoder
+• Input: Binaural spectrogram.
+• Layers:
+- Conv2d(2, 32, 5 × 5, stride = 2) + ReLU
+- Conv2d(32, 64, 3 × 3, stride = 2) + ReLU
+- Conv2d(64, 64, 3 × 3, stride = 1)
+- Flatten
+Vision Encoder
+• Input: Single-channel depth observation.
+• Layers:
+- ResizeCenterCrop(64 × 64)
+- Conv2d(1, 16, 7 × 7, stride = 1, padding = 3) + GroupNorm + ReLU
+- 2 × ResidualBlock(16 →16, stride = 1)
+- 2 × ResidualBlock(16 →32, stride = 2)
+- 2 × ResidualBlock(32 →64, stride = 2)
+- 2 × ResidualBlock(64 →128, stride = 2)
+- Flatten
+- Linear(128 × 8 × 8, 64)
+Auxiliary Belief Predictor
+• Input: Binaural spectrogram.
+• Layers:
+- Conv2d(2, 16, 7 × 7, stride = 1, padding = 3) + GroupNorm + ReLU
+- 2 × ResidualBlock(16 →16, stride = 1)
+- 2 × ResidualBlock(16 →32, stride = 2)
+- 2 × ResidualBlock(32 →64, stride = 2)
+- 2 × ResidualBlock(64 →128, stride = 2)
+- Flatten
+- Linear(4608, 2)
+History Encoder
+• Input: Each agent’s recent observation-action history.
+• Layers:
+- Previous action encoding: Linear(|A|, 16)
+- Relative pose encoding: Linear(5, 16)
+- Feature fusion: Linear(din, dh) + ReLU + Linear(dh, dh)
+- Transformer encoder: 1 layer with 8 attention heads
+- Transformer decoder: 1 layer with 8 attention heads
+- Feed-forward dimension: dh
+- Activation: ReLU
+Language Encoder
+• Input: Tokenized target category or language instruction.
+• Layers:
+- WordPiece tokenization with truncation
+- Token embeddings + position embeddings + segment embeddings
+- 6× Transformer encoder layers
+- Each layer uses 12-head self-attention
+- Feed-forward network: Linear(384, 1536) + GELU + Linear(1536, 384)
+- Mean pooling over token embeddings using the attention mask
+- L2 normalization
+D
+Additional Results
+D.1
+Success Rates
+We provide the success rates for each scene in Figure 7. In most scenes, the success curves align well
+with the return curves in Figure 3, leading to the same dominance patterns. This is expected because
+task success contributes the largest portion of the episode return. However, Maze exhibits a noticeable
+discrepancy: although AVLA-Collab achieves a much higher return than the other methods, its
+success rate does not improve to the same extent. This is because agents sometimes stop prematurely
+after reaching easier targets, which helps avoid large penalties from the distance-progress term but
+prevents them from completing all targets. Overall, the reward still provides useful optimization
+signals: it guides agents to navigate toward targets, reduce their distance to the goals, and stop within
+the target vicinity.
+0.1
+0.2
+0.3
+0.4
+0.5
+Million Steps
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Success Rate
+VLA-Collab
+ALA-Collab
+AVLA-Collab
+CRONA
+(a) Studio | Picture
+0.1
+0.2
+0.3
+0.4
+0.5
+Million Timesteps
+0.0
+0.1
+0.2
+0.3
+0.4
+Success Rate
+VLA-Collab
+ALA-Collab
+AVLA-Collab
+CRONA
+(b) Corridor | Sink
+0.1
+0.2
+0.3
+0.4
+0.5
+Million Timesteps
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Success Rate
+VLA-Collab
+ALA-Collab
+AVLA-Collab
+CRONA
+(c) Apartment | Bed & Counter
+0.1
+0.2
+0.3
+0.4
+0.5
+Million Timesteps
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Success Rate
+VLA-Collab
+ALA-Collab
+AVLA-Collab
+CRONA
+(d)
+Ranch | Picture & Table
+0.1
+0.2
+0.3
+0.4
+0.5
+Million Timesteps
+0.0
+0.1
+0.2
+0.3
+0.4
+Success Rate
+VLA-Collab
+ALA-Collab
+AVLA-Collab
+CRONA
+(e) Maze | Drawer & Table & Chair
+Figure 7: Additional evaluation of CRONA and collaborative navigation baselines across 5 Matterport3D scenes: (a)-(e)
+show the success rate of each scene. The x-axis indicates the environment steps. Curves are smoothed by an exponential
+moving average. Shadows denote 90% bootstrapped CI. Results are averaged over 5 runs.
+E
+Insturction Design
+We use three categories of prompt templates. For each data entry, the goal is specified in natural
+language. Audio-based agents sample prompts from the audio-specific templates, vision-based agents
+sample from the vision-specific templates, and agents with both modalities may also use the general
+templates. The target object name and its corresponding sound category are substituted into the
+selected template. The prompt templates used in our benchmark are listed below.
+General
+Please
+help me locate
+the ... and ...
+Please
+help me find
+where
+the ... and ... are.
+Your
+task is to find
+the ... and ... for me.
+Show me the
+locations
+of the ... and ...
+Please
+find
+the ... and ... in the
+environment .
+Search
+for the ... and
+report
+where
+they
+are.
+Navigate
+to the ... and the ...
+Find
+both
+target
+objects: the ... and the ...
+Audio-Based Agent
+The
+environment
+contains
+sounds
+from
+... and ...
+Please
+locate
+both sound -
+emitting
+objects.
+I cannot
+find
+the ... and ...
+anymore. They
+sound
+like
+... and ... Can you
+help me locate
+them?
+Can you
+hear
+where
+the ... is?
+Listen
+for the
+sound of ... and use it to find
+the ...
+Find
+the
+objects
+that
+are
+making
+... and ...
+sounds.
+Use the
+audio
+cues to locate
+the ... and ...
+Follow
+the
+sounds
+associated
+with
+... and ... to find
+the
+target
+objects.
+The ...
+produces a ...
+sound. Please
+locate it using
+the
+sound
+cue.
+Vision-Based Agent
+Based on the
+visual
+observation , find
+the ... and ...
+Look
+for the ... and ... in the
+scene.
+Use
+visual
+cues to
+locate
+the ... and ...
+Search
+the
+environment
+for the
+visible
+... and ...
+Find
+the ... by
+observing
+its
+shape
+and
+appearance.
+Watch
+for
+visual
+evidence
+of the ... and ...
+Inspect
+the
+scene
+and
+locate
+the ... and ...
+Navigate
+toward
+the
+visually
+observed
+... and ...
+F
+Reward Design
+All agents share a joint team reward. The reward design differs slightly between single-object and
+multi-object tasks.
+Single-object tasks
+For single-object two-agent runs, each agent receives a per-step reward ri =
+rslack + rdist
+i
++ rsucc
+i
+, where rslack = −0.02 is the per-agent time penalty, rdist
+i
+is the reduction in
+distance from agent i to the target between consecutive steps, and rsucc
+i
+= 20 if agent i calls stop
+within the success distance of the target. The team reward returned to PPO is the sum of the two agent
+rewards. Hence, the effective per-step slack penalty is −0.04 for two-agent episodes. No additional
+stop penalty is applied in the single-object multi-agent environment. An episode is successful if any
+agent calls stop near the target.
+Multi-object tasks
+For multi-object runs, the team reward is defined as rteam = rslack +P
+i rdist
+i
++
+rstop + rgoal, where rslack = −0.02 is a team-level time penalty, P
+i rdist
+i
+is the sum of distance-
+progress rewards over agents, and rstop = −0.2 · nstop penalizes agents that call stop. When a new
+target is found, the goal reward is scaled by task progress, rgoal = Nfound
+Ntotal · 20, where Nfound is the
+number of targets found after the current discovery and Ntotal is the total number of targets in the
+episode. So in a two-target task, the first discovered target gives a reward of 10, and the second
+discovered target gives a reward of 20. If both agents call stop before all goals are found, the episode
+terminates after one such step, with no additional both-stop termination penalty.
+Maze reward adjustment
+We adjusted the reward scale for Maze to encourage long-horizon
+exploration, as it’s the largest and most complex scene with the most targets in our benchmark.
+Comparably, agents require more time to explore before receiving valuable visual or acoustic evidence,
+since acoustic cues are relatively weak and ambiguous when agents are far or occluded from the
+source. To reduce the cost of exploration and provide denser directional guidance toward target
+regions, we use a slack penalty of −0.002, a success reward scale of 3.0, a distance reward scale of
+2.0, and a progressive distance reward scale of 1.5.
+G
+Compute Resources
+Experiments were run on a cluster and local workstations. The runtime of each training depends on
+the scene size, method, model size, and variable hardware. For a run trained to 500k environment
+steps, Studio took roughly 8-10 hours on 5090, Apartment and Ranch took roughly 20-25 hours
+on A100, Corridor and Maze took roughly 30-48 hours on A100.
+• Workstation:
+- GPU: 1× NVIDIA GeForce RTX 5090, 32 GB VRAM
+- CPU: AMD Ryzen 9 9950X, 16 cores / 32 threads
+- System memory: 123 GiB
+• Cloud Cluster:
+- GPU: 2× NVIDIA A100-SXM4, 160 GB total VRAM
+- CPU: AMD EPYC 7513, 32 cores
+- System memory: 354 GB
+• Software environment:
+- CUDA: 12.8
+- PyTorch: 2.8.0
+H
+Broader Impacts
+This work studies how agents with different sensory modalities contribute to collaborative navigation.
+We build a collaborative navigation benchmark with simulated vision and audio observations in
+realistic indoor environments. We identify several modality-dominance patterns and analyze when
+and why each pattern emerges. Our findings suggest that incorporating more modalities does not
+always lead to better performance; instead, the usefulness of each modality depends on the scene
+structure, target properties, and sensory reliability. We further propose a MARL framework for cross-
+modal collaborative navigation. This work opens the door to studying cross-modal collaboration in
+embodied multi-agent navigation with multi-agent reinforcement learning.

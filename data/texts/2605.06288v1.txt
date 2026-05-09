@@ -1,0 +1,1552 @@
+A Topological Sorting Criterion for Random Causal
+Directed Acyclic Graphs
+Alexander G. Reisach
+Laboratoire de Math´ematiques d’Orsay
+Universit´e Paris-Saclay
+91400 Orsay, France
+Antoine Chambaz
+CNRS, MAP5
+Universit´e Paris Cit´e
+F-75006 Paris, France
+Gilles Blanchard∗
+Laboratoire de Math´ematiques d’Orsay
+Universit´e Paris-Saclay
+91400 Orsay, France
+Sebastian Weichwald∗
+Department of Mathematical Sciences and
+Pioneer Centre for Artificial Intelligence,
+University of Copenhagen, Denmark
+Abstract
+Random directed acyclic graphs (DAGs) based on imposing an order on Erd˝os-
+R´enyi and scale free graphs are widely used for evaluating causal discovery algo-
+rithms. We show that in such DAGs, the set of nodes reachable via open paths,
+termed relatives, increases monotonically along the causal order. We assess the
+prevalence of this pattern numerically, and demonstrate that it can be exploited
+for causal order recovery via sorting by the estimated number of relatives. We
+note that many simulations in the literature feature settings where this yields an
+excellent proxy for the causal order, and show that a strict increase of relatives
+along the causal order leads to a singular Markov equivalence class. We propose
+sampling time-series DAGs as a possible alternative and discuss implications for
+causal discovery algorithms and their evaluation on synthetic data.
+Introduction
+Random DAGs in causal discovery.
+In the field of statistical causality, directed acyclic graphs
+(DAGs) are a mathematical tool used to encode the causal relationships between a set of random
+variables (Pearl 2009). Causal discovery aims to learn the underlying causal DAG or an equivalence
+class from observations of these random variables (Spirtes et al. 2001). To evaluate the performance
+of causal discovery algorithms, most works in the literature evaluate them on synthetically generated
+data. We list examples in Table 1 and refer to Heinze-Deml et al. (2018), Vowels et al. (2022), and
+Kitson et al. (2023) for extensive overviews. Synthetic data generation schemes rely overwhelmingly
+on the Erd˝os-R´enyi (Erd˝os et al. 1960), and scale free (Barab´asi et al. 1999) random graph models,
+which are then transformed into DAGs by masking the lower triangle of the adjacency matrix and
+imposing a vertex order drawn uniformly at random. For convenience, we will refer to DAGs derived
+from Erd˝os-R´enyi graphs in this way as ER DAGs, and to DAGs derived from scale free graphs in
+this way as SF DAGs. Despite their popularity, the topological properties of these random DAGs have
+as of yet received little study within the context of causal discovery.
+Related literature.
+Our contribution is motivated by a line of recent work questioning the realism of
+synthetic benchmarks in causal discovery (cf. Brouillard et al. 2025). Gentzel et al. (2019) highlight
+the arbitrary nature of synthetic data generation and advocate evaluation on downstream causal
+reasoning tasks. Reisach et al. (2021) show that variance tends to explode along the causal order in
+∗Equal senior author contribution.
+Preprint.
+arXiv:2605.06288v1 [stat.ME] 7 May 2026
+
+synthetic data and introduce var-sortability to capture the effect. Reisach et al. (2023) show that by the
+same mechanism, causal relationships effectively become deterministic in large graphs, as captured
+by R2-sortability. Following these findings, Andrews et al. (2024), Ormaniec et al. (2025), and
+Herman et al. (2025) suggest alternative data generation regimes with better-understood sortability
+properties. Nonetheless, the graph sampling regimes have so far gone largely unchallenged, and ER
+DAGs and SF DAGs remain the de-facto standard in the literature. Our contribution extends the
+scrutiny of synthetic data generation to the topology of the underlying graph models and provides
+theoretical results to guide the evaluation of causal discovery algorithms using synthetic data. Thus,
+our work is also closely related to Nagarajan et al. (2025), which investigates the effect of different
+preferential attachment rules on constraint-based causal discovery, and to Broutin et al. (2024) and
+Blanchard et al. (2025), which study the connectivity properties of Erd˝os-R´enyi graphs with a vertex
+ordering. The topology of a random DAG also determines the size of its Markov equivalence class
+(MEC) (Schmid et al. 2022). Our results link this structural property to sortability by relatives. Thus,
+our work aims to bridge the theoretical analysis of random graphs and empirical evaluation of causal
+discovery algorithms by introducing a new sortability concept that captures topological properties of
+random DAGs that are relevant to causal discovery.
+Contribution.
+In Section 2, we introduce the notion of relatives and provide theoretical results
+indicating its importance for causal discovery. We then analyze the agreement between an ordering
+by the number of relatives and a causal ordering numerically, and find that it is high for common
+settings in the causal discovery literature. In Section 3, we illustrate that the number of relatives can
+be exploited for causal discovery and is largely unaffected by simulation schemes designed to remove
+other data artifacts. We also observe that a state-of-the-art MEC discovery algorithm yields excellent
+performance on DAG discovery, indicating small MECs. Motivated by this finding, in Section 4 we
+present a theoretical result linking a strictly increasing number of relatives along the causal order to
+singular MECs. Since the pattern of increasing number of relatives along the causal order is likely
+unintentional and potentially implausible on real-world data, in Section 5 we turn to time-series
+DAGs as a potential alternative for generating random DAGs, and we provide a sufficient condition to
+avoid a strictly increasing number of relatives in such DAGs. We discuss limitations and implications
+for evaluating causal discovery algorithms in Section 6, and state our conclusion in Section 7.
+Sortability by relatives
+In Section 2.1 we give a formal definition of causal DAGs, introduce the concept of relatives of a
+node in a DAG, and state a monotonicity property for the number of relatives. In Section 2.2 we first
+define a measure of agreement between a causal ordering and the ordering by the number of relatives,
+and then prove a corresponding lower bound for ER DAGs. We assess the agreement between causal
+order and ordering by relatives numerically for different graph sizes and sparsities in Section 2.3.
+2.1
+Definitions
+Causal DAGs.
+Let G = (V, E) be a graph of node set V and edge set E ⊆V × V. Unless otherwise
+indicated, we denote vertices by lower-case letters. We consider the case of directed graphs, meaning
+that (x, y) ∈E denotes the directed edge x →y. An ordered collection of edges forms a directed
+path. We assume acyclicity of the graph, meaning that there are no directed paths from a node to
+itself. G is therefore a DAG. Let each node in V correspond to a random variable with joint law P.
+We say the law P is compatible with G if it is Markov with respect to G, and we assume that such a
+law is also faithful with respect to G (see e.g. Peters et al. 2017, Definitions 6.21 and 6.33). Thus,
+the d-separation criterion (Geiger et al. 1990, Section 4) in G matches the conditional independence
+relations in P, and we refer to the graph as a probabilistic graphical model of the random variables.
+Assume now that a directed edge (x, y) corresponds to x being a cause of y in some external system
+modelled by the graph (Dawid 2010, Section 5). Then, G is a graphical causal model of the random
+variables (Pearl 2009, Definition 2.2.2). For our causal discovery experiments, we additionally
+assume causal sufficiency, meaning there are no unobserved confounders.
+The notion of relatives.
+For every a, z ∈V, let
+Paz =
+set of directed paths from a to z,
+if a ̸= z
+{a} by convention,
+if a = z
+(1)
+be the set of paths from a to z. On this basis we define the following shorthands for any x, y, z ∈V.
+Let anc(y) := {x: Pxy ̸= ∅} denote the ancestors of a given node y, let desc(y) := {z : Pyz ̸= ∅}
+denote its descendants, and let roots(y) := {x: x ∈anc(y), anc(x) = {x}} denote its roots. We
+further define the parents pa(y) = {x: (x, y) ∈E} and children ch(x) = {y: (x, y) ∈E}. For
+simplicity, whenever the argument to anc, desc, rel, pa, or ch is itself a set, we take this to mean the
+union of the respective operator on each element of the set. For a node y in a causal DAG we then
+define the relatives of y as
+rel(y) :=
+[
+x∈anc(y)
+desc(x) = desc(anc(y)).
+(2)
+Since we assume faithfulness, x ∈rel(y) implies x ̸⊥⊥y | ∅, meaning that the relatives of a node
+other than itself are exactly the adjacencies found in the first iteration (n = 0) of the PC algorithm
+(Spirtes et al. 2001, Section 5.4.2).
+Relevance for causal discovery.
+The relatives of a node are interesting for the purpose of causal
+discovery primarily due to the monotonicity property in Theorem 1, which suggests that an ordering
+based on the estimated number of relatives in increasing fashion may result in a good approximation
+of a causal ordering.
+Theorem 1 (Monotonicity of relatives). For any x, y ∈V,
+x ∈anc(y) =⇒rel(x) ⊆rel(y).
+(3)
+Proof. Note that
+rel(y) = desc(anc(y)) = desc (anc(x)) ∪desc (anc(y) \ anc(x)) ,
+where the first argument of the union on the right-hand side is equal to rel(x), hence the implication.
+2.2
+Sorting by the number of relatives
+To capture the agreement between a causal order and an ordering by the number of relatives, we
+propose a sortability criterion in the sense of Reisach et al. (2023, Section 3.1). For a set of nodes
+V, let ρ: V →R be a function to be used as a sorting criterion. We take ρ to denote the number of
+relatives of a given node v ∈V, that is, ρ(v) := | rel(v)|. For a graph G = (V, E) with |E| ≥1 we
+define sortability by the number of relatives, or rel-sortability for short, as
+sρ(G) :=
+P
+(x,y)∈E sρ(x, y)
+|E|
+with
+sρ(x, y) :=
+
+
+
+0,
+if ρ(x) > ρ(y)
+2,
+if ρ(x) = ρ(y)
+1,
+if ρ(x) < ρ(y)
+for (x, y) ∈E.
+(4)
+As with the sortabilities in Reisach et al. (2021) and Reisach et al. (2023), for a sρ value of 1 sorting
+by ρ reveals a causal ordering, for a value of 0 it reveals an inverse causal ordering, and for a value
+of 1/2 it amounts to a random guess. Note that our definition differs from the sortabilities in these
+works in that we count edges instead of paths. We prefer this version since it retains the qualitative
+interpretation and can also be understood as an inverted and normalized version of the topological
+order divergence in Rolland et al. (2022, Section 4.1), provided there are no ties in ρ. In that case,
+(1−sρ(G))|E| is a lower bound on the Hamming distance between G and any graph with a topological
+ordering compatible with the ρ ordering.
+A lower bound on the number of relatives.
+By Theorem 1, we know that for any node pair
+(x, y) ∈E it holds that sρ(x, y) ≥1/2, and hence that sρ(G) ≥1/2. A tighter lower bound for edges
+in ER graphs is given in Theorem 2.
+Theorem 2. Consider an ER DAG obtained from an ER(n, p) graph with p = 2c/(n −1) by
+imposing a fixed topological order. For any node v ∈V, let rv be the rank of v and define qv = rv/n,
+the quantile position of v. Let (x, y) ∈E be a pair of directly connected nodes in the DAG. Then
+lim
+n→∞P(sρ(x, y) = 1) ≥max
+
+1 −exp
+ e−2cqy −e−2cqx
+, 1
+
+.
+(5)
+The proof of Theorem 2 rests on Lemma 1 in Appendix A and is shown in Section A.1.2. Note that
+the first argument of the maximum in Equation (5) increases with the quantile distance between x
+and y, that is, when qy is increased or qx is decreased. For fixed qx < qy, the dependence of the
+first argument on the density parameter c is non-monotone: it first increases and then decreases as c
+grows. Hence, we may expect rel-sortability in ER DAGs to exceed the generic lower bound of 1/2
+in intermediate-density regimes, while approaching 1/2 in both very sparse and very dense regimes.
+2.3
+Numerical analysis of the prevalence of rel-sortability
+We begin by probing the prevalence of high rel-sortability across random DAGs numerically by
+simulating graphs with different numbers of nodes n and parameter c. We set the edge density to
+p = 2c/(n −1), yielding approximately cn edges. Figure 1 shows the results for ER and SF DAGs
+with n ∈(2, . . . , 100) and c ∈(0.5, 1, 2, . . . , 50). Each sortability value shown is an average over
+10 independent draws for each combination of c and n.
+Results.
+The result for ER DAGs can be seen in Figure 1a. We observe a band of high sortability in
+the intermediate density regime from c = 1 until about c = 5, with the upper end growing slowly in n.
+In Figure 1b, we observe a similar pattern for SF graphs with a wider band of high rel-sortability. The
+high sortability values for the maximal values of c for each n in Figure 1b result from the star-graph
+initialization procedure for SF graphs. We stress that many simulation settings used in the causal
+discovery literature (see e.g. Table 1) fall into the high rel-sortability bands. The results shown match
+the rel-sortability lower bound for ER DAGs in Theorem 2, and suggest a similar bound may exist for
+SF DAGs. Overall, the experiment indicates that estimating the number of relatives has the potential
+to yield a close approximation of a causal ordering.
+12
+32
+52
+72
+92
+n
+0.5
+5.0
+10.0
+15.0
+20.0
+25.0
+30.0
+35.0
+40.0
+45.0
+50.0
+c
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+sortability
+(a) ER DAGs
+12
+32
+52
+72
+92
+n
+0.5
+5.0
+10.0
+15.0
+20.0
+25.0
+30.0
+35.0
+40.0
+45.0
+50.0
+c
+0.6
+0.7
+0.8
+0.9
+1.0
+sortability
+(b) SF DAGs
+Figure 1: Rel-sortability of random ER and SF DAGs with n nodes and density parameter c.
+Exploiting rel-sortability for causal discovery
+We begin by proposing a simple algorithm to estimate the number of relatives from data, and a second
+algorithm to use the induced ascending order to recover a DAG via sparse regression. In Section 3.1
+we compare rel-sortability to the other sortability criteria in the literature and show that it is largely
+unaffected by simulation schemes aimed at removing them. In Section 3.2 we show that sorting by
+relatives can be highly effective for causal discovery. We further note that one of the methods we
+compare to, an algorithm implementing a recent advance in MEC learning, also yields extremely
+good results for DAG discovery which indicates that the MECs of the simulated DAGs are small.
+Estimating an ordering by the number of relatives empirically.
+Let G be a causal DAG of n
+nodes, and let the random vector (X1, . . . , Xn) contain the random variables corresponding to the
+nodes in G. Let Xj ∈Rm be a real-valued vector of m independently and identically distributed
+(i.i.d.) observations of the j-th random variable in this vector. Given a threshold ε > 0, we estimate
+the number of relatives empirically and use it to obtain an order as follows.
+Algorithm 1: Estimating an ordering by the number of relatives.
+Input: data (X1, . . . , Xn), threshold ε.
+Output: order s.
+Compute the correlation matrix C ∈Rn×n with Cij =
+Cov(Xi,Xj)
+√
+Var(Xi)Var(Xj) for i, j ∈(1, . . . , n).
+Let D ∈Nn be the number of column entries in C with absolute value greater than ε.
+Define an ordering s to be the index set given by sorting (1, . . . , n) by D in ascending fashion.
+Return s.
+This procedure is motivated by the faithfulness assumption, which states that there are no probabilistic
+independencies other than the ones implied by d-separation (see e.g. Pearl 2009, Section 1.2.3) in
+the graph. Hence, in linear Gaussian models, zeros in the correlation matrix indicate the absence of
+an open path between two variables in the sample limit (Spirtes et al. 2001, Theorem 3.2), meaning
+that they are not relatives. In practice, we may over- or under-estimate the true number of relatives
+depending on the threshold ε. For finite samples, thresholding the empirical correlation matrix
+therefore yields noisy estimates of the number of relatives. In our forthcoming experiments we
+choose ε to be the minimum absolute sample correlation required for a given significance level
+assuming Gaussian distributions.
+Estimating a DAG given an order using sparse regression.
+To estimate a DAG based on an
+estimated ordering by the number of relatives, we follow Reisach et al. (2023, Section 3.2), and rely
+on ordering-based search (Teyssier et al. 2005). Given an order, we regress the observations of each
+variable on those of the variables preceding it using sparse regression. We take nonzero regression
+coefficients to be adjacencies in the estimated adjacency matrix. This yields Algorithm 2 (the penalty
+parameter λ is chosen via the Bayesian information criterion).
+Algorithm 2: Estimating adjacencies given an ordering.
+Input: data (X1, . . . , Xn), order s ∈Nn
+Output: Adjacency matrix A ∈(0, 1)n×n
+Let A ∈{0}n×n.
+Standardize (X1, . . . , Xn).
+for j ∈2, . . . , n do
+Let t = sj be the index of the target variable in the ordering.
+Let S = {s1, . . . , sj−1}, so XS = (Xi)i∈S are observations of the predecessors.
+Estimate the least-squares coefficients ˆβOLS = arg minβ∈Rj−1 ∥Xt −XSβ∥2
+2.
+Set ASℓt to 1 for ℓ∈(1, . . . , j −1) if ˆβℓ̸= 0, where
+ˆβ = arg minβ∈Rj−1 ∥Xt −XSβ∥2
+2 + λBIC
+Pj−1
+i=1
+|βi|
+| ˆβOLS
+i
+|.
+Return A
+3.1
+Evaluation of rel-sortability across data generation regimes
+By virtue of being a graphical property, rel-sortability is unaffected by the parameters of the structural
+equations compatible with a DAG, which have been the primary focus of the literature aimed at
+addressing other sortabilities. To illustrate this aspect, we evaluate an oracle rel-sortability based
+on the true relatives and an empirical version using Algorithm 1 across different data generation
+regimes. We compare these to sortability by variance (Reisach et al. 2021), and sortability by the
+coefficient of determination R2 (Reisach et al. 2023). For all three sortability criteria, we evaluate
+sortability as in Equation (4). We generate synthetic data from structural causal models (SCMs) (Pearl
+2009, Definition 7.1.1) with linear functions and additive noise (cf. Hoyer et al. 2008). We draw
+graph structures and parameters independently from one another at random. The graph structures are
+drawn as ER and SF random DAGs with n = 30 nodes and edge density parameter c ∈(1, . . . , 10)
+controlling the expected number of edges per node. For each combination, we independently draw 10
+graphs. We draw observations from
+• standardized SCMs, termed sSCMs (Reisach et al. 2021),
+• internally standardized SCMs, termed iSCMs (Ormaniec et al. 2025),
+• the DAG-adaptation of the Onion method, termed DaO (Andrews et al. 2024), and
+• unitless unrestricted Markov-consistent SCM generation, termed UUMC (Herman et al.
+2025).
+For each sampled graph, we first parameterize an SCM by drawing slope coefficients independently
+from Unif(0.5, 1) and drawing independent additive Gaussian noise with standard deviations also
+drawn independently from Unif(0.5, 1). Note that the DAG underlying the SCMs with Gaussian noise
+and non-equal variances is not identifiable in general. The sSCM, iSCM, and DaO sampling variants
+all adapt an existing set of parameters, meaning that the implied parameters for a regular SCM are
+effectively different for each procedure. By contrast, the UUMC procedure constitutes a sampling
+procedure of its own, which we use to generate parameters independently for each of our random
+graphs. For each pair of graph and parameters we draw m = 10000 observations independently and
+compute an empirical version of rel-sortability and R2-sortability (Reisach et al. 2023). Regarding
+the estimation of the number of relatives in Algorithm 1, note that for two independent Gaussians with
+sample correlation Cij, the transformed sample correlation Cij
+ (m −2)/(1 −C2
+ij)
+1/2 follows a
+Student t-distribution with m −2 degrees of freedom. Hence, we set the threshold ε to the minimum
+absolute sample correlation required for a significance level α under this test. In all forthcoming
+experiments, we choose α = 0.05.
+Results.
+The results are shown in Figure 2; SF DAGs are shown in Figure 5 of Section C.2, and
+non-standardized SCMs in Figure 7 of Section C.3. As expected from our simulations in Section 2.3,
+the oracle rel-sortability rises quickly as c grows, and then falls slowly toward the non-informative
+value of 1/2. We observe that the empirical approximation of the relatives is close for sSCMs, iSCMs,
+and UUMC. For DaO, there is a gap, and for the largest values of c, the empirical version is higher
+than the theoretical counterpart. This indicates that our estimation procedure for the relatives can
+pick up on other data properties, including possibly numerical artifacts. All four schemes control
+sortability by variance at around 1/2 by design, in stark contrast to the non-standardized SCM data
+(Figure 7). The increase in R2-sortability for denser graphs in sSCMs is known from Reisach et al.
+(2023), but the high R2-sortability values observed for iSCMs adds nuance to the claim in Ormaniec
+et al. (2025) that iSCMs are mostly not R2-sortable. For SF-DAGs (Figure 5) we observe very
+high R2-sortability, in particular for sSCMs and iSCMs and in sparser settings. Most importantly,
+rel-sortability tends to take values well above 1/2 across graph types, and tends to be highest when
+R2-sortability is low. This signals a new, likely unintended, and potentially implausible property of
+common sampling schemes for random causal DAGs that may be exploited for causal discovery.
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+sortability
+relatives (oracle)
+relatives (empirical)
+R² (empirical)
+variance (empirical)
+(a) sSCM
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+sortability
+relatives (oracle)
+relatives (empirical)
+R² (empirical)
+variance (empirical)
+(b) iSCM
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+sortability
+relatives (oracle)
+relatives (empirical)
+R² (empirical)
+variance (empirical)
+(c) DaO
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+sortability
+relatives (oracle)
+relatives (empirical)
+R² (empirical)
+variance (empirical)
+(d) UUMC
+Figure 2: Comparison of rel-sortability to other sortabilities in ER DAGs.
+3.2
+Causal discovery by estimating relatives
+We now demonstrate the potential impact of rel-sortability for causal discovery. Combining Algo-
+rithm 1 and Algorithm 2 yields a causal discovery algorithm that sorts by the estimated number of
+relatives and regresses in the resulting order. We term this algorithm rel-SortnRegress. For reference,
+we run the DAG learning algorithm DAGMA (Bello et al. 2022), which has been found to perform
+well on synthetic data from non-standardized SCMs. We choose the L2 loss and default parameters.
+We also include FLOP (Wien¨obst et al. 2025), the state-of-the-art CPDAG discovery algorithm
+(recall that the CPDAG of a DAG represents its MEC via undirected edges). We run FLOP with a
+penalty parameter of 2 (the default) and 10 restarts. We draw random graphs and observations as
+in Section 3.1. To evaluate the quality of the graph learned by these algorithms, we compare the
+learned DAG to the true DAG using the structural intervention distance (SID) (Peters et al. 2015).
+SID measures how often the learned graph would lead to incorrect interventional conclusions, making
+it a causally meaningful evaluation criterion. Since FLOP returns a CPDAG, we first remove all
+undirected edges before computing the SID. Though crude, we expect this to be a minor issue since
+most CPDAGs found by FLOP are in fact nearly completely directed in our experiments.
+Results.
+We show results for ER DAGs in Figure 3. Results for SF DAGs can be found in Figure 6
+of Section C.2. Results on non-standardized SCM data are shown in Section C.3. Strikingly, we
+observe that FLOP outperforms all other algorithms in every setting, including on SF DAGs and non-
+standardized data. This strongly suggests that the MECs are small across the different simulations,
+and hence that good CPDAG algorithms may be superior DAG discovery algorithms if that is the
+case. This observation is surprising since the MECs for sparse graphs can be large (Jahn et al. 2025),
+and prompts our forthcoming discussion on the link between high rel-sortability and MEC size in
+Section 4. We caution that it is possible that FLOP’s performance is, at least in part, due to other data
+artifacts and calls for further investigation. Our algorithm rel-SortnRegress also yields remarkably
+good results, coming close to FLOP on sSCM and iSCM for c = 1 and c = 2, the most common
+choice in the literature. Though it performs worse than R2-SortnRegress for denser sSCMs, it largely
+outperforms or matches it on iSCM, DaO, and UUMC, the three data generation regimes specifically
+designed to counteract other sortability patterns. This corroborates our theoretical analysis of the
+relevance of relatives to causal discovery, and suggests its utility as a baseline for assessing the
+simplicity of the causal discovery due to topological patterns of random DAG generation schemes.
+Also notably, DAGMA yields competitive SID results only on non-standardized settings, suggesting
+that it relies on information in the marginal variances, which is problematic since real-world data
+scales are typically arbitrary (cf. Reisach et al. 2021).
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+SID (normalized)
+rel-SortnRegress
+R²-SortnRegress
+FLOP
+DAGMA
+(a) sSCM
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+SID (normalized)
+rel-SortnRegress
+R²-SortnRegress
+FLOP
+DAGMA
+(b) iSCM
+4
+8
+c
+0.2
+0.4
+0.6
+0.8
+1.0
+SID (normalized)
+rel-SortnRegress
+R²-SortnRegress
+FLOP
+DAGMA
+(c) DaO
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+SID (normalized)
+rel-SortnRegress
+R²-SortnRegress
+FLOP
+DAGMA
+(d) UUMC
+Figure 3: Comparative SID (lower is better) performance of rel-SortnRegress on ER DAGs.
+High rel-sortability and MEC size
+Prompted by the excellent performance of the CPDAG discovery algorithm FLOP in Section 3.2, we
+investigate the connection between high rel-sortability and the size of the MEC. Though MECs are
+known to be small for dense DAGs, they can be large for sparse DAGs (Jahn et al. 2025). However, as
+we have seen in Section 2.3, sparse ER DAGs (provided c > 2) and sparse SF DAGs are characterized
+by high rel-sortability. The MEC of a DAG with high rel-sortability may be expected to be small,
+since the differences in relatives could result in unshielded colliders which can be oriented by the
+rules in Meek (1995). We formalize this idea in Theorem 3. Thus, rel-sortability being high may,
+at least partially, explain why FLOP performs well, even in the sparser settings. Theorem 3 links
+rel-sortability to CPDAG discovery, and raises the question to what extent the evaluation of CPDAG
+discovery algorithms more broadly may also be influenced by potentially implausible properties of
+synthetic data generation schemes.
+Theorem 3. For a DAG G = (V, E) with sρ(G) = 1, the MEC of G contains only G itself.
+The proof of Theorem 3 is based upon showing that all edges in the skeleton of a DAG G with
+sρ(G) = 1 can be oriented by the orientation rules in Meek (1995); it is shown in Section A.2.2. For
+completeness, we note that rel-sortability need not be high for the MEC to be small. For instance, the
+MEC of a fully connected DAG has a single member, yet such a DAG’s sortability would trivially be
+1/2 since all pairs are connected.
+5
+Time-unrolled DAGs as a possible alternative
+Our theoretical analysis and numerical analyses show that rel-sortability is high for ER and SF
+DAGs generated with common parameters, and that this can impact the difficulty of the causal
+discovery task. In light of this finding, and since it is unclear why ER DAGs and SF DAGs
+should be generically realistic choices for causal DAGs, it may be that evaluations on synthetic
+data systematically misestimate the promise of causal discovery algorithms on real-world data (cf.
+Brouillard et al. 2025). To address this problem, we propose turning to graph sampling schemes based
+on DAG models for time series as a possible alternative. Note that any observation of a causal system
+is a time series assuming that causes precede effects (Reisach et al. 2026), regardless of whether the
+observations are i.i.d. Our proposal is rooted in recent real-world benchmarks and applications of
+causal discovery, in particular Bang et al. (2023), G¨obler et al. (2024), and Gamella et al. (2025), all
+of which note and use the fact that real-world observations necessarily correspond to a quantity at
+a specific time point. Thus, existing time series sampling schemes such as Cheng et al. (2023) and
+Herman et al. (2025, Section 6) can easily be repurposed to generate i.i.d. observations by repeatedly
+and independently simulating short time series trajectories, instead of the usual practice of generating
+observations by splitting a single long time series into overlapping windows. Thus, when using a
+potentially cyclic random graph as the basis for random DAGs, unrolling them in time (cf. Mooij
+et al. 2011; Hyttinen et al. 2012, Section 1 in each) may be a natural alternative to deleting edges.
+Constructing time-unrolled DAGs and controlling rel-sortability.
+We show how a potentially
+cyclic graph can be unrolled in time, and state a condition to control rel-sortability in the resulting
+DAG. Our proposal is closely related to the ideas of a summary graph and full-time graph in the time
+series causality literature (cf. Peters et al. 2013; Assaad 2021, Section 1.3). Let GS = (VS, ES) be
+a non-empty directed (possibly cyclic) graph with p ≥2 nodes, which we refer to as the summary
+graph in analogy to the convention in time series causality. We assume GS contains a self-loop
+for every node, that is, (v, v) ∈ES for every v ∈VS. For an integer T > 1, define the (finite)
+time-unrolled DAG GT = (VT , ET ) with
+VT = {v(t) : v ∈VS, t ∈{1, . . . , T}},
+ET =
+
+(i(t), j(t+1)): (i, j) ∈ES, t ∈{1, . . . , T −1}
+	
+.
+Random DAGs can thus be sampled by first drawing GS, choosing T, and then constructing GT .
+Figure 4 provides an example of a summary graph and its time-unrolled DAG for T = 4.
+a
+b
+c
+(a) Summary graph.
+a(1)
+a(2)
+a(3)
+a(4)
+b(1)
+b(2)
+b(3)
+b(4)
+c(1)
+c(2)
+c(3)
+c(4)
+(b) Time-unrolled DAG.
+Figure 4: A directed and cyclic summary graph and corresponding time-unrolled DAG for T = 4.
+To see how rel-sortability can be controlled in time-unrolled DAGs, observe first that in Figure 4a,
+there is a directed path between all node pairs. Note further that, as a consequence of this and the
+self-loops, all nodes with a time index ≥3 in Figure 4b have all preceding nodes as ancestors,
+meaning they have the same number of relatives. Based on this idea, Theorem 4 states a sufficient
+condition on the summary graph such that the resulting time series DAG tends to a rel-sortability of
+1/2 as T goes to infinity. The level of rel-sortability in a time-unrolled DAG can thus be controlled
+by choosing a summary graph that meets the condition in Theorem 4 and a sufficiently long time
+horizon.
+Theorem 4. For i, j ∈VS, let i ⇝j denote the existence of a directed path from i to j. It holds that
+∀i, j ∈VS, (i ⇝j =⇒j ⇝i) =⇒
+lim
+T →∞sρ(GT ) = 1/2.
+(6)
+The proof is shown in Section A.3. The condition in Equation (6) states that every weakly connected
+component of the directed summary graph is strongly connected. Since we assume self-loops at every
+node, the adjacency matrix of each component, viewed as the support of a Markov transition matrix,
+is irreducible and aperiodic. Sampling a graph that meets this condition is not difficult - for example,
+it is straightforwardly fulfilled by symmetry when sampling an Erd˝os-R´enyi graph and replacing
+each undirected edge by two directed ones in opposing directions. That said, a graph need not be
+symmetric to meet the condition, as can be seen for example by the summary graph in Figure 4a.
+Discussion
+Limitations.
+We acknowledge several limitations to our theoretical and experimental results. Our
+lower bound in Theorem 2 only covers ER DAGs, and though our experiments suggest a similar
+trend for SF DAGs, we do not have a corresponding theoretical result. Regarding Theorem 3, we
+note that it does not imply that highly rel-sortable DAGs have small MECs in general, and a result to
+this end would present a valuable extension. In our experiments, we set the threshold for estimating
+the number of relatives based on the assumption of Gaussianity, matching the data generation. The
+practical performance may change for different significance values or when using nonparametric
+threshold selection. In our causal discovery experiments we do not tune or search for optimal
+hyperparameters of any of the algorithms. In addition, all our experiments use linear models and
+though we use a range of different data generation regimes, we do so on the basis of parameters
+drawn from a particular set of distributions. Additional experiments or assumptions would be needed
+to assess the approximation of the number of relatives for a wider range of SCMs, in particular with
+nonlinear functions. Finally, we propose time-unrolled DAGs as a potential alternative to existing
+graph sampling schemes and show how their rel-sortability can be controlled. We do not analyze
+their properties beyond this, and further research is needed to judge their suitability in the context of
+causal discovery more comprehensively.
+Opportunities for causal discovery.
+Our contribution introduces the number of relatives of a node
+as a new aspect in the importance of graph topology for causal discovery. The connection between
+sortability by the number of relatives and the size of the MEC outlined in our work may open the
+door for new theoretical identifiability results based on topological properties that restrict the size
+of the MEC. Our work also presents many opportunities to improve the use of relatives for causal
+discovery. For example, it may be interesting to choose the threshold ε in Algorithm 1 without relying
+on a parametric assumption, or choosing a different threshold adaptively for different variables. In
+addition, one could make use of the fact that the set of relatives of a given node must contain the set
+of relatives of all its ancestors, which we do not yet use in our algorithms.
+Evaluating causal discovery algorithms on synthetic data.
+Evaluations on synthetic data serve as
+a controlled testbed for causal discovery algorithms. We highlight that sampling random DAGs with
+high rel-sortability may be problematic when evaluating causal discovery algorithms, since it remains
+an open question to what extent such properties can be expected on real-world data. Hence, the
+currently dominating sampling regimes in the literature risk overfitting to a particular and potentially
+implausible graph class. Our findings call for a systematic evaluation of which graph sampling
+scheme may be considered realistic, and suggest that a reevaluation of existing causal discovery
+algorithms may be needed. Our result on chance-level rel-sortability in certain types of time-unrolled
+DAGs constitutes a first step in the direction of alternative graph sampling schemes. We consider
+further investigations into the topological properties of such DAGs an area of high interest and
+consequence for future research. Prospectively, sampling data from independent trajectories of short
+time-unrolled DAGs also raises the question to what extent full or partial knowledge of the time order
+can and should be used for causal discovery on i.i.d. data.
+Conclusion
+Our contribution provides new insight into the topological properties of common random DAG
+models in causal discovery. We show that the number of relatives, that is, other nodes reachable via
+open paths, tends to increase along the causal order. We prove a lower bound for ER DAGs that
+indicates high sortability by relatives for common density regimes in the literature, and perform a
+numerical analysis that suggests that a similar pattern holds for SF DAGs. We propose a way of
+estimating the number of relatives empirically to obtain a causal order, and our causal discovery
+experiments illustrate that the property is highly relevant for causal discovery. This is potentially
+problematic, since this pattern may vary or be uninformative in real-world data. In addition, we show
+that a strict increase in the number of relatives along the causal order leads to a singular MEC. We
+observe empirical evidence for small MECs throughout our simulations, which suggests that MEC
+discovery methods may have untapped potential for DAG discovery. Inspired by recent examples in
+applied causal discovery, we propose unrolling a potentially cyclic random graph in time as a potential
+alternative for sampling random DAGs. Overall, given the central role of synthetic data evaluations
+for causal discovery, our contribution renews questions about the practical applicability and real-world
+performance of existing algorithms. At the same time, the concept of relatives provides a new tool
+for evaluating the topological properties of random DAGs that can help guide the development of
+alternative data generation regimes. In addition, our work shows that, when used deliberately, the
+relatives provide an effective way of utilizing topological properties of the underlying graph class for
+causal discovery.
+Acknowledgments and Disclosure of Funding
+Alexander G. Reisach and Gilles Blanchard are supported by the ANR grant BISCOTTE (ANR-19-
+CHIA-0021).
+References
+[1]
+Bryan Andrews and Erich Kummerfeld. Better Simulations for Validating Causal Discovery
+with the DAG-Adaptation of the Onion Method. 2024 (cit. on pp. 2, 6).
+[2]
+Charles Assaad. Causal Discovery between time series. Theses. Universit´e Grenoble Alpes,
+July 2021 (cit. on p. 8).
+[3]
+Christine W Bang and Vanessa Didelez. Do we become wiser with time? On causal equivalence
+with tiered background knowledge. In: Uncertainty in Artificial Intelligence. PMLR. 2023,
+pp. 119-129 (cit. on p. 8).
+[4]
+Albert-L´aszl´o Barab´asi and R´eka Albert. Emergence of Scaling in Random Networks. In:
+Science 286.5439 (1999), pp. 509-512 (cit. on p. 1).
+[5]
+Kevin Bello, Bryon Aragam, and Pradeep Ravikumar. DAGMA: Learning DAGs via M-
+matrices and a Log-Determinant Acyclicity Characterization. In: Advances in Neural Informa-
+tion Processing Systems 35 (2022), pp. 8226-8239 (cit. on p. 6).
+[6]
+Gilles Blanchard, Nicolas Curien, Klara Krause, and Alexander G. Reisach. A phase transition
+in Erd˝os-Barak random graphs. arXiv preprint. 2025 (cit. on p. 2).
+[7]
+Philippe Brouillard, Chandler Squires, Jonas Wahl, Konrad P. Kording, Karen Sachs, Alexandre
+Drouin, and Dhanya Sridhar. The Landscape of Causal Discovery Data: Grounding Causal
+Discovery in Real-World Applications. In: Causal Learning and Reasoning (CLeaR). 2025
+(cit. on pp. 1, 8).
+[8]
+Nicolas Broutin, Nina Kamcev, and G´abor Lugosi. Increasing paths in random temporal graphs.
+In: The Annals of Applied Probability 34.6 (2024), pp. 5498-5521 (cit. on p. 2).
+[9]
+Yuxiao Cheng, Ziqian Wang, Tingxiong Xiao, Qin Zhong, Jinli Suo, and Kunlun He.
+CausalTime: Realistically Generated Time-series for Benchmarking of Causal Discovery.
+In: The Twelfth International Conference on Learning Representations. 2023 (cit. on p. 8).
+[10]
+Philip A. Dawid. Beware of the DAG! In: Causality: Abjectives and Assessment. PMLR. 2010,
+pp. 59-86 (cit. on p. 2).
+[11]
+Paul Erd˝os, Alfr´ed R´enyi, et al. On the Evolution of Random Graphs. In: Publ. Math. Inst.
+Hung. Acad. Sci 5.1 (1960), pp. 17-60 (cit. on p. 1).
+[12]
+Juan L Gamella, Jonas Peters, and Peter B¨uhlmann. Causal chambers as a real-world physical
+testbed for AI methodology. In: Nature Machine Intelligence 7.1 (2025), pp. 107-118 (cit. on
+p. 8).
+[13]
+Dan Geiger, Thomas Verma, and Judea Pearl. Identifying independence in Bayesian networks.
+In: Networks 20.5 (1990), pp. 507-534 (cit. on p. 2).
+[14]
+Amanda Gentzel, Dan Garant, and David Jensen. The Case for Evaluating Causal Models
+Using Interventional Measures and Empirical Data. In: Advances in Neural Information
+Processing Systems (NeurIPS). Vol. 32. 2019 (cit. on p. 1).
+[15]
+Konstantin G¨obler, Tobias Windisch, Mathias Drton, Tim Pychynski, Martin Roth, and Steffen
+Sonntag. causalAssembly: Generating Realistic Production Data for Benchmarking Causal
+Discovery. In: Causal Learning and Reasoning. PMLR. 2024, pp. 609-642 (cit. on p. 8).
+[16]
+Christina Heinze-Deml, Marloes H. Maathuis, and Nicolai Meinshausen. Causal Structure
+Learning. In: Annual Review of Statistics and Its Application 5 (2018), pp. 371-391 (cit. on
+p. 1).
+[17]
+Rebecca J Herman, Jonas Wahl, Urmi Ninad, and Jakob Runge. Unitless Unrestricted Markov-
+Consistent SCM Generation: Better Benchmark Datasets for Causal Discovery. In: Causal
+Learning and Reasoning. PMLR. 2025, pp. 1506-1531 (cit. on pp. 2, 6, 8).
+[18]
+Patrik O. Hoyer, Dominik Janzing, Joris M. Mooij, Jonas Peters, Bernhard Sch¨olkopf, et al.
+Nonlinear causal discovery with additive noise models. In: Advances in Neural Information
+Processing Systems. Vol. 21. Citeseer. 2008, pp. 689-696 (cit. on p. 5).
+[19]
+Antti Hyttinen, Frederick Eberhardt, and Patrik O. Hoyer. Learning Linear Cyclic Causal
+Models with Latent Variables. In: Journal of Machine Learning Research 13.109 (2012),
+pp. 3387-3439 (cit. on p. 8).
+[20]
+Erik Jahn, Frederick Eberhardt, and Leonard J Schulman. Lower bounds on the size of Markov
+equivalence classes. In: arXiv preprint (2025) (cit. on p. 7).
+[21]
+Neville K. Kitson, Anthony C. Constantinou, Zhigao Guo, Yang Liu, and Kiattikun Chobtham.
+A survey of Bayesian Network structure learning. In: Artificial Intelligence Review (2023),
+pp. 1-94 (cit. on p. 1).
+[22]
+Christopher Meek. Causal inference and causal explanation with background knowledge. In:
+Proceedings of the Eleventh Conference on Uncertainty in Artificial Intelligence. UAI’95.
+Morgan Kaufmann Publishers Inc., 1995, pp. 403-410 (cit. on p. 7).
+[23]
+Joris M. Mooij, Dominik Janzing, Tom Heskes, and Bernhard Sch¨olkopf. On Causal Discovery
+with Cyclic Additive Noise Models. In: Advances in Neural Information Processing Systems
+(NeurIPS). Vol. 24. 2011 (cit. on p. 8).
+[24]
+Radha Nagarajan and Marco Scutari. Benchmarking Constraint-Based Bayesian Structure
+Learning Algorithms: Role of Network Topology. 2025 (cit. on p. 2).
+[25]
+Weronika Ormaniec, Scott Sussex, Lars Lorch, Bernhard Sch¨olkopf, and Andreas Krause. Stan-
+dardizing Structural Causal Models. In: International Conference on Learning Representations.
+2025 (cit. on pp. 2, 6).
+[26]
+Judea Pearl. Causality: Models, Reasoning, and Inference. Cambridge University Press, 2009
+(cit. on pp. 1, 2, 5).
+[27]
+Jonas Peters and Peter B¨uhlmann. Structural Intervention Distance for Evaluating Causal
+Graphs. In: Neural computation 27.3 (2015), pp. 771-799 (cit. on p. 7).
+[28]
+Jonas Peters, Dominik Janzing, and Bernhard Sch¨olkopf. Causal Inference on Time Series
+using Restricted Structural Equation Models. In: Advances in Neural Information Processing
+Systems (NeurIPS). Vol. 26. 2013 (cit. on p. 8).
+[29]
+Jonas Peters, Dominik Janzing, and Bernhard Sch¨olkopf. Elements of Causal Inference:
+Foundations and Learning Algorithms. MIT Press, 2017 (cit. on p. 2).
+[30]
+Alexander G. Reisach, Christof Seiler, and Sebastian Weichwald. Beware of the Simulated
+DAG! Causal Discovery Benchmarks May Be Easy to Game. In: Advances in Neural Informa-
+tion Processing Systems (NeurIPS). Vol. 34. 2021 (cit. on pp. 1, 3, 5, 7).
+[31]
+Alexander G. Reisach, Alberto Su´arez, Sebastian Weichwald, and Antoine Chambaz. The
+Case for Time in Causal DAGs. In: Philosophy of Science (2026) (cit. on p. 8).
+[32]
+Alexander G. Reisach, Myriam Tami, Christof Seiler, Antoine Chambaz, and Sebastian
+Weichwald. A Scale-Invariant Sorting Criterion to Find a Causal Order in Additive Noise
+Models. In: Advances in Neural Information Processing Systems (NeurIPS). Vol. 36. 2023
+(cit. on pp. 2, 3, 5, 6).
+[33]
+Paul Rolland, Volkan Cevher, Matth¨aus Kleindessner, Chris Russell, Dominik Janzing, Bern-
+hard Sch¨olkopf, and Francesco Locatello. Score Matching Enables Causal Discovery of
+Nonlinear Additive Noise Models. In: International Conference on Machine Learning. PMLR,
+2022, pp. 18741-18753 (cit. on p. 3).
+[34]
+Dominik Schmid and Allan Sly. On the number and size of Markov equivalence classes of
+random directed acyclic graphs. 2022 (cit. on p. 2).
+[35]
+Peter Spirtes, Clark Glymour, and Richard Scheines. Causation, Prediction, and Search. MIT
+Press, 2001 (cit. on pp. 1, 3, 5).
+[36]
+Marc Teyssier and Daphne Koller. Ordering-Based Search: A Simple and Effective Algo-
+rithm for Learning Bayesian Networks. In: Proceedings of the Twenty-First Conference on
+Uncertainty in Artificial Intelligence. AUAI Press, 2005, pp. 584-590 (cit. on p. 5).
+[37]
+Matthew J. Vowels, Necati Cihan Camgoz, and Richard Bowden. D’Ya Like DAGs? A Survey
+on Structure Learning and Causal Discovery. In: ACM Computing Surveys 55.4 (2022) (cit. on
+p. 1).
+[38]
+Marcel Wien¨obst, Leonard Henckel, and Sebastian Weichwald. Embracing Discrete Search: A
+Reasonable Approach to Causal Structure Learning. In: International Conference on Learning
+Representations. 2025 (cit. on p. 6).
+A
+Proof Details
+This section provides additional details on the proofs of Theorem 2, Theorem 3, and Theorem 4.
+A.1
+Proof of Theorem 2 (Additional Details)
+This section first states and proves Lemma 1, which is subsequently used in the proof for Theorem 2.
+A.1.1
+Lemma 1
+Lemma 1. For any x, y ∈V,
+rel(y) \ rel(x) ̸= ∅⇐⇒anc(y) \ rel(x) ̸= ∅.
+(7)
+Thus, by Theorem 1, if x ∈anc(y), then
+rel(x) ⊊rel(y) ⇐⇒anc(y) \ rel(x) ̸= ∅,
+(8)
+and in particular
+rel(x) ⊊rel(y) ⇐⇒roots(y) \ rel(x) ̸= ∅,
+(9)
+and consequently
+rel(x) ⊊rel(y) ⇐⇒roots(y) \ roots(x) ̸= ∅.
+(10)
+Proof of Lemma 1. We begin by noting that z ∈rel(x) implies desc(z) ⊆rel(x), as follows directly
+from the definition. Hence,
+rel(y) \ rel(x) = desc (anc(y)) \ rel(x) =
+[
+z∈anc(y)
+(desc(z) \ rel(x))
+=
+[
+z∈anc(y)\rel(x)
+(desc(z) \ rel(x)) .
+In view of this equality, rel(y) \ rel(x) ̸= ∅implies anc(y) \ rel(x) ̸= ∅because the contrapositive
+holds trivially. Thus, the implication from left to right in Equation (7) holds.
+Assume now that anc(y) \ rel(x) ̸= ∅, and let t ∈anc(y) \ rel(x). Then {t} ⊆desc(t) \ rel(x), and
+therefore
+{t} ⊆
+[
+z∈anc(y)\rel(x)
+(desc(z) \ rel(x)) ̸= ∅.
+Thus, the implication from right to left in Equation (7) holds. By Theorem 1, we further know that if
+x ∈anc(y) then rel(x) ⊆rel(y). Therefore
+rel(x) ⊊rel(y) ⇐⇒rel(y) \ rel(x) ̸= ∅⇐⇒anc(y) \ rel(x) ̸= ∅,
+proving Equation (8). We now consider Equation (9). By Equation (8), it suffices to show that
+anc(y) \ rel(x) ̸= ∅
+⇐⇒
+roots(y) \ rel(x) ̸= ∅.
+The implication from right to left is immediate since roots(y) ⊆anc(y). For the converse, let
+v ∈anc(y) \ rel(x). Since every ancestor of y has a root ancestor in roots(y), there exists r ∈
+roots(y) with v ∈desc(r). If r ∈rel(x), then desc(r) ⊆rel(x), and hence v ∈rel(x), yielding a
+contradiction. Therefore r /∈rel(x), so r ∈roots(y) \ rel(x). This proves Equation (9).
+Finally, Equation (10) follows straightforwardly from the fact that among the relatives of x, only
+roots of x can also be roots of y. This concludes the proof.
+A.1.2
+Proof of Theorem 2
+Proof. Lemma 1 allows us express the condition for a sortability of 1 for x, y ∈E as
+sρ(x, y) = 1 ⇐⇒roots(y) \ rel(x) ̸= ∅.
+Thus, the following is a sufficient condition for sρ(x, y) = 1:
+E := {a ∈roots(y) ∩pa(y): qa ∈(qx, qy)} ̸= ∅=⇒sρ(x, y) = 1.
+By the independence of edges in ER graphs and the definition of sρ it holds that
+P(sρ(x, y) = 1 | (x, y) ∈E) ≥P(E).
+Consider an ER DAG obtained from an ER(n, p) graph with p = ς/n by imposing a fixed topological
+order. Note that ς relates to c via ς = 2cn/(n −1) for fixed n. We have for any v ∈V \ {x, y} with
+rv = nqv that
+P(v is a root node) =
+
+1 −ς
+n
+rv−1
+.
+The probability of v ∈pa(y) is ς/n, independently of whether it is a root node. Thus,
+P(E) ≥1 −
+nqy−1
+Y
+rv=nqx+1
+
+1 −ς
+n
+
+1 −ς
+n
+rv−1
+In the node limit n →∞, we can partition the range [rx + 1, ry −1] into T segments of equal length
+∆q, and lower bound the probability for any node within an interval to be a root node by that of the
+last node in the interval. This yields
+lim
+n→∞P(E) ≥lim
+n→∞
+"
+1 −
+T
+Y
+t=1
+
+1 −ς
+n
+
+1 −ς
+n
+n(qx+t∆q)n∆q#
+= 1 −
+T
+Y
+t=1
+e−ς∆qe−ς(qx+t∆q)
+= 1 −e−ς∆q PT
+t=1 e−ς(qx+t∆q).
+Since ∆q = (qy −qx)/T in the node limit, taking the limit T →∞turns the expression
+∆q PT
+t=1 e−ς(qx+t∆q) into a Riemann sum of the function u 7→e−ς(qx+u) on the interval [0, qy −qx].
+The statement results from taking the limit in T and noting that ς ∼2c in the node limit.
+A.2
+Proof of Theorem 3
+A.2.1
+Auxiliary Results
+Lemma 2. An edge (x, y) ∈E in a DAG G = (V, E) does not form part of an unshielded collider
+(x, y, ·) if and only if x is adjacent to all other parents of y.
+Proof. We show the contrapositive. Assume there exists z ∈pa(y) with z ̸= x, (x, z) /∈E, and
+(z, x) /∈E. Then, by definition, (x, y) forms part of the unshielded collider (x, y, z).
+Corollary 1. Let y ∈V in a DAG G = (V, E). Define U ⊆E as the set of edges that do not form part
+of an unshielded collider. It holds that Cy := {x: (x, y) ∈U} forms a clique in the skeleton of G.
+Proof. By Lemma 2, every x ∈Cy is adjacent to all parents of y. The result follows since Cy ⊆
+pa(y).
+Lemma 3. In every clique C ⊆V of a DAG G = (V, E), there exists c ∈C such that anc(c) = anc(C).
+Proof. Note that the subgraph GC ⊆G with nodes C and all edges between members of C is a fully
+connected DAG. By definition, in the fully connected DAG GC there exists a sink, that is, c ∈C such
+that pa(c) = C \ {c}. Hence, c inherits the ancestors of all nodes in C and the statement follows.
+Proposition 1. Let G = (V, E) be a DAG with sρ(G) = 1. Every node y ∈V that is not a root node
+is the center of at least one unshielded collider.
+Proof. We show the statement via the contrapositive. Recall that sρ(G) = 1 if and only if | rel(a)| <
+| rel(b)| for any (a, b) ∈E. Assume there exists a non-root y ∈V that is not the center of any
+unshielded collider. Since y is a non-root it has at least one parent, and since it is not the center of
+any unshielded collider, its parents form a clique in the skeleton of G by Corollary 1. By Lemma 3,
+there exists x ∈pa(y) with anc(x) = anc(pa(y)). By the definition of relatives, it follows that
+rel(x) = rel(y), hence sρ(G) ̸= 1 and the statement follows.
+Proposition 2. Let G = (V, E) be a DAG with sρ(G) = 1. Let y ∈V be any non-root node.
+Define U ⊆E as the set of edges that do not form part of an unshielded collider. Define further
+Cy := {x: (x, y) ∈U}, the set of all parents of y that do not form endpoints of unshielded colliders
+centered in y. Denote as Dy := pa(y) \ Cy the set of all parents that do form endpoints of unshielded
+colliders centered in y. For every c ∈Cy, there exists d ∈Dy such that (c, d) ∈E, meaning
+d ∈ch(c).
+Proof. We show the statement via the contrapositive. Recall that sρ(G) = 1 if and only if | rel(a)| <
+| rel(b)| for any (a, b) ∈E. Assume there exists c ∈Cy that has no d ∈Dy as a child. Since any
+c ∈Cy is adjacent to all other parents of y by Lemma 2, this means that Dy ⊆pa(c). By Corollary 1,
+the nodes in Cy form a clique in the skeleton of G. Thus, by Lemma 3 there exists x ∈Cy with
+anc(x) = anc(Cy). Since Dy ⊆pa(c), it follows that Dy ∪Cy = pa(y) ⊆anc(x). By the definition
+of relatives it follows that rel(x) = rel(y), hence sρ(G) ̸= 1 and the statement follows.
+A.2.2
+Proof of the theorem
+Proof. To prove the statement, we show that all edges in the skeleton of a DAG G with sρ(G) = 1
+can be oriented by the orientation rules in Meek (1995). Recall that three nodes a, b, c form an
+unshielded collider (a, b, c) with center b if a is adjacent to b, b is adjacent to c, and a is not adjacent
+to c (Meek 1995, Section 2.1.1 S1 and S2). All edges of G that form part of an unshielded collider
+can be oriented. We define U ⊆E to be the set of edges that cannot be oriented through unshielded
+colliders. Let y ∈V be an arbitrary non-root node. We define the set Cy := {x: (x, y) ∈U} of
+parents of y that do not form endpoints of a collider centered in y, and show that all edges from nodes
+in Cy to y can be oriented. We further define the set Dy := pa(y) \ Cy. By Proposition 1, y is the
+center of at least one unshielded collider, meaning |Dy| ≥2. By Proposition 2, for any c ∈Cy there
+exists d ∈Dy such that (c, d) ∈E, meaning c is a parent of d. Since Dy has at least two members
+and c is a parent of one, it is either a parent or a child of another since it is adjacent to all parents of y
+by Lemma 2. Thus, for any c ∈Cy, (c, y) can be oriented by Rule 3 in Meek (1995, Section 2.1.2).
+Since every edge ends in some non-root node for which the same argument applies, all edges in U
+can be oriented and the statement follows.
+A.3
+Proof of Theorem 4
+Proof. We assume for simplicity that the skeleton of GS has a single connected component; otherwise
+the proof follows straightforwardly by applying the same logic to every connected component.
+Note that the maximal simple path length in GS is at most p −1. Since GS contains all self-loops,
+any directed path in GS can be padded to arbitrary larger length. Hence, if the left-hand side of
+Equation (6) holds, then for all t > p, all nodes i(t) ∈VT have the same relatives by Equation (10) in
+Lemma 1. Thus, every edge (i(t), j(t+1)) ∈ET with t > p contributes sρ(i(t), j(t+1)) = 1/2. The
+number of edges in GT with t ≤p for the tail node is at most p|ES|, whereas |ET | = (T −1)|ES|.
+Hence the fraction of edges with t ≤p tends to zero as T →∞, and the statement follows.
+B
+Some Random DAG Models used in the Causal Discovery Literature
+Table 1 below gives an overview of some of the random DAG models used in the causal discovery
+literature. Note that this table is meant to illustrate what kind of settings are used, but does not
+constitute an exhaustive summary of the literature or indeed every setting used in the works listed
+here. A complete overview would go beyond the scope of this work, and many works use a range
+of similar parameters for additional/ablation experiments, e.g. in the supplementary material. Some
+works normalize the edge probability by n −1, which we also neglect here for simplicity. Though
+we do not claim the list shown here to be representative of the whole literature, we do consider it
+useful in conveying the scale of synthetic data evaluations likely to be affected by high rel-sortability.
+Work
+n
+c for ER
+
+n,
+2c
+n−1
+
+c for SF(n, c)
+Spirtes et al. (1995, Simulation Tests) {10}
+{1, 1.5, 2}
+-
+Kalisch et al. (2007, Section 4.1)
+{7, 15, 40, 70, 100}
+{1, 2.5}
+-
+Shimizu et al. (2011, Section 4)
+{10, 20, 50, 100}
+{1, 2.5}
+-
+Peters et al. (2014, Section 5.1)
+{4, 15}
+{1}
+-
+B¨uhlmann et al. (2014, Section 6)
+{10, 100}
+{1, 4}
+-
+Hyttinen et al. (2014, Section 7)
+{6}
+{1}
+-
+Peters et al. (2015, Section 3.1)
+{5, 20}
+{0.75}
+-
+Magliacane et al. (2016, Section 5)
+{6, 7, 8}
+{1}
+-
+Huang et al. (2018, Section 6.1)
+{10}
+{1, 1.5, 2, 2.5, 3}
+-
+Zheng et al. (2018, Section D.1)
+{20, 1000}
+{1, 2, 4}
+{4}
+Yu et al. (2019, Section 4.1)
+{10, 20, 50, 100}
+{1.5}
+-
+Lachapelle et al. (2020, Section A.6)
+{10, 20, 50, 100}
+{1, 4}
+{1, 4}
+Ng et al. (2020, Section 5)
+{10, 20, 50, 100}
+{1, 2, 4}
+{1, 2, 4}
+Brouillard et al. (2020, Section 4)
+{10, 20, 100}
+{1, 4}
+-
+Viinikka et al. (2020, Sections 4, 5)
+{20, 50}
+{2}
+-
+Lorch et al. (2021, Section 6.1)
+{20, 50}
+{2}
+{2}
+Deleu et al. (2022, Section 6.2)
+{20, 50}
+{2}
+-
+Bello et al. (2022, Section 5)
+{20, 100, 200, 1000}
+{4}
+{4}
+Rolland et al. (2022, Section 4.1, A)
+{10, 20, 50}
+{1, 4}
+{1, 4}
+Annadani et al. (2023, Sections 6.1)
+{5, 30, 50}
+{1}
+{1}
+Montagna et al. (2023, Sections 4, C) {10, 20, 50, 100,
+200, 500, 1000}
+{1, 4}
+{1, 4}
+Ng et al. (2024, Sections 3, 4, 5)
+{15, 50}
+{1, 2, 4}
+-
+Ormaniec et al. (2025, Sections 5, E)
+{20, 60, 100, 140,
+180, 220}
+{2, 4}
+{2, 4}
+Dhir et al. (2025, Section 4.2, B)
+{20}
+{1, 2, 3}
+{1, 2, 3}
+Kim et al. (2025, Section 5)
+{1000}
+{1, 2, 3}
+{1, 2, 3}
+Wien¨obst et al. (2025, Section 5)
+{50}
+{4}
+{4}
+Table 1: A selection of random graph settings used for synthetic data experiments in the literature.
+C
+Additional Experiments and Details
+C.1
+Software and licenses
+In all implementation and experiments, we use version 3.9.19 of the Python programming language.
+For the experiments, we also rely on the packages listed in Table 2.
+Table 2: Software packages used in our experiments.
+Name
+Version
+Paper
+License
+numpy
+1.26.4
+Harris et al. (2020)
+modified BSD
+pandas
+2.3.3
+pandas Development Team (2020)
+BSD 2-clause
+matplotlib
+3.9.4
+Hunter (2007)
+modified PSF
+seaborn
+0.13.2
+Waskom (2021)
+BSD
+networkx
+3.2.1
+Hagberg et al. (2008)
+BSD 3-clause
+igraph
+1.0.0
+Cs´ardi et al. (2006)
+GNU General Public License
+daosim
+0.0.5
+Andrews et al. (2024)
+MIT
+UUMC
+0.0
+Herman et al. (2025)
+GNU General Public License
+flopsearch
+0.3.0
+Wien¨obst et al. (2025)
+Mozilla Public License 2.0
+DAGMA
+1.1.1
+Bello et al. (2022)
+Apache
+CausalDisco
+0.2.9
+Reisach et al. (2023)
+BSD 3-Clause
+gadjid
+0.1.0
+Henckel et al. (2024)
+Mozilla Public License 2.0
+C.2
+SF DAG results
+This section contains experiment results on SF DAGs corresponding to the ER DAG versions shown
+in Section 3 of the main text. Note that there are some additional choices in SF sampling depending
+on the implementation used. We choose a sampling scheme where in-degree and out-degree increase
+attachment probability. Some other works, for example Zheng et al. (2018), choose an SF sampling
+scheme where only in-degree increases attachment probability, likely further increasing the prevalence
+of unshielded colliders, small MECs, and high rel-sortability.
+Sortabilities across data-generating regimes.
+Figure 5 shows the SF DAG experiment correspond-
+ing to Figure 2 in Section 3.1 in the main text. Compared to ER DAGs, we observe a similar trend in
+rel-sortability with an even closer alignment between oracle and empirical values than for ER DAGs,
+in particular for DaO. Though var-sortability is around 1/2 as for ER DAGs, in SF DAGs we observe
+very high values of R2-sortability in sparser settings with a decline in denser ones. This is a reversal
+of the trend found in ER DAGs, and includes notably DaO and to a lesser extent UUMC, both of
+which have lower R2-sortabilities for ER DAGs. Overall, these results show that all data generation
+regimes are characterized by high rel-sortability and R2-sortability for the density range between
+c = 1 and c = 10 that is most common in the literature. Since rel-sortability and R2-sortability
+appear to decrease in c, inverse sorting may be interesting for high c.
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+sortability
+relatives (oracle)
+relatives (empirical)
+R² (empirical)
+variance (empirical)
+(a) sSCM
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+sortability
+relatives (oracle)
+relatives (empirical)
+R² (empirical)
+variance (empirical)
+(b) iSCM
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+sortability
+relatives (oracle)
+relatives (empirical)
+R² (empirical)
+variance (empirical)
+(c) DaO
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+sortability
+relatives (oracle)
+relatives (empirical)
+R² (empirical)
+variance (empirical)
+(d) UUMC
+Figure 5: Comparison of rel-sortability to other sortabilities in SF DAGs.
+Causal discovery.
+Figure 6 below shows the SF DAG experiments complementing the ER DAG
+experiments shown in Figure 3 of the main text. Compared to ER DAGs, we observe that rel-
+SortnRegress performs slightly worse compared to FLOP and R2-SortnRegress on sSCM, but
+remains second only to FLOP in all remaining settings.
+2
+6
+10
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+SID (normalized)
+rel-SortnRegress
+R²-SortnRegress
+FLOP
+DAGMA
+(a) sSCM
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+SID (normalized)
+rel-SortnRegress
+R²-SortnRegress
+FLOP
+DAGMA
+(b) iSCM
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+SID (normalized)
+rel-SortnRegress
+R²-SortnRegress
+FLOP
+DAGMA
+(c) DaO
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+SID (normalized)
+rel-SortnRegress
+R²-SortnRegress
+FLOP
+DAGMA
+(d) UUMC
+Figure 6: Comparative SID (lower is better) performance of rel-SortnRegress on SF DAGs.
+C.3
+Non-standardized SCMs
+Figure 7 compares the different sortabilities on data from non-standardized SCMs as discussed
+in Section 2.2. We observe that sortability by variance is extremely high for ER and SF DAGs,
+corroborating the findings in Reisach et al. (2021), and suggesting information in the variance as
+an explanation for the performance difference of the DAGMA algorithm between the standardized
+settings (sSCM) in Figures 3a and 6a and Figures 8a and 8b below. The other algorithms show
+behavior very similar to that in the standardized settings.
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+sortability
+relatives (oracle)
+relatives (empirical)
+R² (empirical)
+variance (empirical)
+(a) ER DAG
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+sortability
+relatives (oracle)
+relatives (empirical)
+R² (empirical)
+variance (empirical)
+(b) SF DAG
+Figure 7:
+Sortabilities for non-standardized
+SCMs.
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+0.8
+SID (normalized)
+rel-SortnRegress
+R²-SortnRegress
+FLOP
+DAGMA
+(a) ER DAG
+4
+8
+c
+0.0
+0.2
+0.4
+0.6
+SID (normalized)
+rel-SortnRegress
+R²-SortnRegress
+FLOP
+DAGMA
+(b) SF DAG
+Figure 8:
+Causal discovery results for non-
+standardized SCMs.
+Appendix References
+[1]
+Bryan Andrews and Erich Kummerfeld. Better Simulations for Validating Causal Discovery
+with the DAG-Adaptation of the Onion Method. 2024 (cit. on p. 16).
+[2]
+Yashas Annadani, Nick Pawlowski, Joel Jennings, Stefan Bauer, Cheng Zhang, and Wenbo
+Gong. BayesDAG: Gradient-Based Posterior Inference for Causal Discovery. In: 36 (2023).
+Ed. by A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine, pp. 1738-1763
+(cit. on p. 15).
+[3]
+Kevin Bello, Bryon Aragam, and Pradeep Ravikumar. DAGMA: Learning DAGs via M-
+matrices and a Log-Determinant Acyclicity Characterization. In: Advances in Neural Informa-
+tion Processing Systems 35 (2022), pp. 8226-8239 (cit. on pp. 15, 16).
+[4]
+Philippe Brouillard, S´ebastien Lachapelle, Alexandre Lacoste, Simon Lacoste-Julien, and
+Alexandre Drouin. Differentiable Causal Discovery from Interventional Data. In: Advances
+in Neural Information Processing Systems. Ed. by H. Larochelle, M. Ranzato, R. Hadsell,
+M.F. Balcan, and H. Lin. Vol. 33. Curran Associates, Inc., 2020, pp. 21865-21877 (cit. on
+p. 15).
+[5]
+Peter B¨uhlmann, Jonas Peters, and Jan Ernest. CAM: Causal Additive Models, High-
+Dimensional Order Search and Penalized Regression. In: The Annals of Statistics 42.6 (2014),
+pp. 2526-2556 (cit. on p. 15).
+[6]
+G´abor Cs´ardi and Tam´as Nepusz. The igraph software package for complex network research.
+In: InterJournal, Complex Systems (2006), p. 1695 (cit. on p. 16).
+[7]
+Tristan Deleu, Ant´onio G´ois, Chris Emezue, Mansi Rankawat, Simon Lacoste-Julien, Stefan
+Bauer, and Yoshua Bengio. Bayesian structure learning with generative flow networks. In:
+Uncertainty in Artificial Intelligence. PMLR. 2022, pp. 518-528 (cit. on p. 15).
+[8]
+Anish Dhir, Matthew Ashman, James Requeima, and Mark van der Wilk. A Meta-Learning
+Approach to Bayesian Causal Discovery. In: The Thirteenth International Conference on
+Learning Representations. 2025 (cit. on p. 15).
+[9]
+Aric A. Hagberg, Daniel A. Schult, and Pieter J. Swart. Exploring Network Structure, Dynam-
+ics, and Function using NetworkX. In: Proceedings of the 7th Python in Science Conference.
+Ed. by Ga¨el Varoquaux, Travis Vaught, and Jarrod Millman. Pasadena, CA USA, Aug. 2008,
+pp. 11-15 (cit. on p. 16).
+[10]
+Charles R. Harris, K. Jarrod Millman, St´efan J. van der Walt, Ralf Gommers, Pauli Virtanen,
+David Cournapeau, Eric Wieser, Julian Taylor, Sebastian Berg, Nathaniel J. Smith, Robert Kern,
+Matti Picus, Stephan Hoyer, Marten H. van Kerkwijk, Matthew Brett, Allan Haldane, Jaime
+Fern´andez del R´ıo, Mark Wiebe, Pearu Peterson, Pierre G´erard-Marchant, Kevin Sheppard,
+Tyler Reddy, Warren Weckesser, Hameer Abbasi, Christoph Gohlke, and Travis E. Oliphant.
+Array programming with NumPy. In: Nature 585.7825 (Sept. 2020), pp. 357-362 (cit. on
+p. 16).
+[11]
+Leonard Henckel, Theo W¨urtzen, and Sebastian Weichwald. Adjustment Identification Dis-
+tance: A gadjid for Causal Structure Learning. In: The 40th Conference on Uncertainty in
+Artificial Intelligence. 2024 (cit. on p. 16).
+[12]
+Rebecca J Herman, Jonas Wahl, Urmi Ninad, and Jakob Runge. Unitless Unrestricted Markov-
+Consistent SCM Generation: Better Benchmark Datasets for Causal Discovery. In: Causal
+Learning and Reasoning. PMLR. 2025, pp. 1506-1531 (cit. on p. 16).
+[13]
+Biwei Huang, Kun Zhang, Yizhu Lin, Bernhard Sch¨olkopf, and Clark Glymour. Generalized
+score functions for causal discovery. In: Proceedings of the 24th ACM SIGKDD international
+conference on knowledge discovery & data mining. 2018, pp. 1551-1560 (cit. on p. 15).
+[14]
+J. D. Hunter. Matplotlib: A 2D graphics environment. In: Computing in Science & Engineering
+9.3 (2007), pp. 90-95 (cit. on p. 16).
+[15]
+Antti Hyttinen, Frederick Eberhardt, and Matti J¨arvisalo. Constraint-based Causal Discovery:
+Conflict Resolution with Answer Set Programming. In: UAI. 2014, pp. 340-349 (cit. on p. 15).
+[16]
+Markus Kalisch and Peter B¨uhlman. Estimating High-Dimensional Directed Acyclic Graphs
+with the PC-Algorithm. In: Journal of Machine Learning Research 8.3 (2007) (cit. on p. 15).
+[17]
+Jang-Hyun Kim, Claudia Skok Gibbs, Sangdoo Yun, Hyun Oh Song, and Kyunghyun Cho.
+Large-Scale Targeted Cause Discovery via Learning from Simulated Data. In: Transactions on
+Machine Learning Research (2025) (cit. on p. 15).
+[18]
+S´ebastien Lachapelle, Philippe Brouillard, Tristan Deleu, and Simon Lacoste-Julien. Gradient-
+based neural dag learning. In: International Conference on Learning Representations. 2020
+(cit. on p. 15).
+[19]
+Lars Lorch, Jonas Rothfuss, Bernhard Sch¨olkopf, and Andreas Krause. DiBS: Differentiable
+Bayesian Structure Learning. In: Advances in Neural Information Processing Systems 34
+(2021), pp. 24111-24123 (cit. on p. 15).
+[20]
+Sara Magliacane, Tom Claassen, and Joris M. Mooij. Ancestral causal inference. In: Advances
+in Neural Information Processing Systems 29 (2016) (cit. on p. 15).
+[21]
+Christopher Meek. Causal inference and causal explanation with background knowledge. In:
+Proceedings of the Eleventh Conference on Uncertainty in Artificial Intelligence. UAI’95.
+Morgan Kaufmann Publishers Inc., 1995, pp. 403-410 (cit. on p. 14).
+[22]
+Francesco Montagna, Nicoletta Noceti, Lorenzo Rosasco, Kun Zhang, and Francesco Locatello.
+Scalable Causal Discovery with Score Matching. In: Conference on Causal Learning and
+Reasoning. PMLR. 2023, pp. 752-771 (cit. on p. 15).
+[23]
+Ignavier Ng, Amir Emad Ghassami, and Kun Zhang. On the role of sparsity and dag constraints
+for learning linear dags. In: Advances in Neural Information Processing Systems. Vol. 33. 2020
+(cit. on p. 15).
+[24]
+Ignavier Ng, Biwei Huang, and Kun Zhang. Structure learning with continuous optimization:
+A sober look and beyond. In: Causal Learning and Reasoning. PMLR. 2024, pp. 71-105
+(cit. on p. 15).
+[25]
+Weronika Ormaniec, Scott Sussex, Lars Lorch, Bernhard Sch¨olkopf, and Andreas Krause. Stan-
+dardizing Structural Causal Models. In: International Conference on Learning Representations.
+2025 (cit. on p. 15).
+[26]
+pandas Development Team. pandas-dev/pandas: Pandas. Version latest. Feb. 2020 (cit. on
+p. 16).
+[27]
+Jonas Peters and Peter B¨uhlmann. Structural Intervention Distance for Evaluating Causal
+Graphs. In: Neural computation 27.3 (2015), pp. 771-799 (cit. on p. 15).
+[28]
+Jonas Peters, Joris M. Mooij, Dominik Janzing, and Bernhard Sch¨olkopf. Causal discovery
+with continuous additive noise models. In: (2014) (cit. on p. 15).
+[29]
+Alexander G. Reisach, Christof Seiler, and Sebastian Weichwald. Beware of the Simulated
+DAG! Causal Discovery Benchmarks May Be Easy to Game. In: Advances in Neural Informa-
+tion Processing Systems (NeurIPS). Vol. 34. 2021 (cit. on p. 17).
+[30]
+Alexander G. Reisach, Myriam Tami, Christof Seiler, Antoine Chambaz, and Sebastian
+Weichwald. A Scale-Invariant Sorting Criterion to Find a Causal Order in Additive Noise
+Models. In: Advances in Neural Information Processing Systems (NeurIPS). Vol. 36. 2023
+(cit. on p. 16).
+[31]
+Paul Rolland, Volkan Cevher, Matth¨aus Kleindessner, Chris Russell, Dominik Janzing, Bern-
+hard Sch¨olkopf, and Francesco Locatello. Score Matching Enables Causal Discovery of
+Nonlinear Additive Noise Models. In: International Conference on Machine Learning. PMLR,
+2022, pp. 18741-18753 (cit. on p. 15).
+[32]
+Shohei Shimizu, Takanori Inazumi, Yasuhiro Sogawa, Aapo Hyv¨arinen, Yoshinobu Kawahara,
+Takashi Washio, Patrik O. Hoyer, and Kenneth Bollen. DirectLiNGAM: A direct method for
+learning a linear non-Gaussian structural equation model. In: Journal of Machine Learning
+Research 12 (2011), pp. 1225-1248 (cit. on p. 15).
+[33]
+Peter Spirtes and Christopher Meek. Learning Bayesian networks with discrete variables from
+data. In: KDD. Vol. 1. 1995, pp. 294-299 (cit. on p. 15).
+[34]
+Jussi Viinikka, Antti Hyttinen, Johan Pensar, and Mikko Koivisto. Towards Scalable Bayesian
+Learning of Causal DAGs. In: Advances in Neural Information Processing Systems 33 (2020),
+pp. 6584-6594 (cit. on p. 15).
+[35]
+Michael L. Waskom. seaborn: statistical data visualization. In: Journal of Open Source Software
+6.60 (2021), p. 3021 (cit. on p. 16).
+[36]
+Marcel Wien¨obst, Leonard Henckel, and Sebastian Weichwald. Embracing Discrete Search: A
+Reasonable Approach to Causal Structure Learning. In: International Conference on Learning
+Representations. 2025 (cit. on pp. 15, 16).
+[37]
+Yue Yu, Jie Chen, Tian Gao, and Mo Yu. DAG-GNN: DAG Structure Learning with Graph
+Neural Networks. In: International Conference on Machine Learning. PMLR, 2019, pp. 7154-
+7163 (cit. on p. 15).
+[38]
+Xun Zheng, Bryon Aragam, Pradeep K Ravikumar, and Eric P Xing. DAGs with NO TEARS:
+Continuous Optimization for Structure Learning. In: Advances in Neural Information Process-
+ing Systems. Vol. 32. 2018, pp. 9472-9483 (cit. on pp. 15, 16).

@@ -1,0 +1,945 @@
+Market-Alignment Risk in Pricing Agents:
+Trace Diagnostics and Trace-Prior RL under Hidden Competitor State
+Peiying Zhu
+Blossom AI
+San Francisco, USA
+Sidi Chang
+Blossom AI Labs
+Tokyo, Japan
+Abstract
+Outcome metrics can certify the wrong behavior.
+We
+study this failure in a two-hotel revenue-management sim-
+ulator where Hotel A trains an agent against a fixed rule-
+based revenue-management competitor, Hotel B. A stan-
+dard learning agent can obtain near-reference revenue per
+available room (RevPAR) while failing to learn market-
+like yield management: it sells too aggressively, under-
+cuts, or collapses to modal price buckets. We diagnose
+this as a Goodhart-style failure under partial observabil-
+ity. Hotel A cannot observe the competitor’s remaining
+inventory, booking curve, or pricing rule, so the same
+Hotel A-visible state maps to multiple plausible Hotel B
+prices. Deterministic value-based RL and deterministic
+copying collapse this unresolved uncertainty into short-
+cut behavior. We introduce a trace-level diagnostic pro-
+tocol using RevPAR, occupancy, ADR, full price-bucket
+distributions, L1/JS distances, and seed-level confidence
+intervals.
+The verified repair is Trace-Prior RL: learn
+a distributional market prior from lagged market traces,
+then train a stochastic pricing policy with a RevPAR re-
+ward and a KL penalty to the learned prior. The final
+policy matches Hotel B’s RevPAR, occupancy, ADR, and
+price distribution within seed-level uncertainty, while still
+optimizing Hotel A’s own reward. We argue that the con-
+tribution is not a new optimizer and not a hotel-pricing
+leaderboard, but a reproducible failure-and-repair recipe
+for agentic systems where scalar rewards are easy to game
+and the intended behavior is only visible in traces. A key
+finding is that higher exact action accuracy can worsen ag-
+gregate trace alignment when the target is distributional.
+Introduction
+Outcome success can hide behavioral failure. In a two-
+hotel pricing simulator, Hotel A can achieve competitive
+revenue per available room (RevPAR) against a fixed
+revenue-management (RM) competitor while failing to
+learn market-like yield management. It may sell too ag-
+gressively, undercut, or collapse into common price buck-
+ets. The headline score says the agent is doing well; the
+pricing trace says otherwise. This is a compact instance of
+Goodhart’s Law: when a proxy metric becomes the target,
+it can stop measuring the intended behavior [3, 13]. In
+machine learning, the same pattern appears as specifica-
+tion gaming, reward hacking, and reward misspecification
+[6, 11, 12].
+The failure is not just poor optimization. Hotel A oper-
+ates under partial observability [5]. It sees its own inven-
+tory, market condition, booking pace, and lagged market
+prices, but it does not see Hotel B’s remaining inventory,
+booking curve, or pricing rule. As a result, the same Ho-
+tel A-visible context can correspond to several valid Hotel
+B prices. The market target is therefore not one correct
+action. It is a distribution.
+This makes deterministic learning brittle. A DQN [9]
+trained only on revenue can find shortcuts. A determinis-
+tic copy policy can achieve higher one-step prediction ac-
+curacy by always choosing the most likely market bucket,
+but this collapses hidden-state uncertainty and distorts
+the aggregate price trace. In this setting, higher action
+accuracy can move in the opposite direction from market
+alignment.
+We propose Trace-Prior RL. First, Hotel A learns a
+distributional market prior from observed traces. Then
+it optimizes its own RevPAR while staying close to that
+learned prior through a KL penalty. The method does
+not give Hotel A Hotel B’s booking curve, inventory, or
+pricing formula. It only gives the agent a disciplined way
+to preserve the uncertainty that remains after condition-
+ing on deployable context.
+The same failure pattern is natural in agentic AI. Con-
+sider an LLM routing agent that chooses which model
+or tool should handle a request. If reward combines ap-
+parent success and cost, the router may overuse cheap
+routes even when expert traces would send diﬀicult tasks
+to stronger tools.
+The final score can look good while
+the decision process has drifted away from expert disci-
+pline. Our hotel simulator gives a controlled version of
+this problem: the target behavior is not merely "earn rev-
+enue", but learn market-level pricing discipline without
+being given the competitor’s hidden state or rule.
+Our contribution is a diagnosed failure and repair work-
+flow, not a new optimizer or hotel-pricing leaderboard.
+First, we show that scalar reward evaluation is insuﬀi-
+arXiv:2605.06529v1 [cs.AI] 7 May 2026
+
+cient: near-reference RevPAR can hide non-market be-
+havior. Second, we induce trace-level diagnostics from the
+intended business logic: occupancy, ADR, price-bucket
+distributions, L1/JS divergence, and seed-level 95% con-
+fidence interval checks.
+Third, we document negative
+results from plausible interventions:
+more exploration,
+longer Bellman horizons, reward shaping, market fore-
+casts as input, and deterministic copying.
+Fourth, we
+identify the POMDP trigger empirically using an am-
+biguity diagnostic and an oracle-qB prediction ablation.
+Finally, we verify Trace-Prior RL: learn a distributional
+market prior πM(a | o) from traces, then train a stochastic
+RL pricing policy with RevPAR reward and KL discipline
+to that learned prior.
+We do not claim that KL regularization to a reference
+policy is algorithmically new.
+It is closely related to
+behavior-regularized RL and KL-control methods. The
+contribution is the failure characterization and the role
+of the reference: πM is an empirical estimate of the mar-
+ket posterior predictive distribution p(aB | o), not Hotel
+A’s previous behavior and not merely an offline dataset
+support constraint.
+Environment And Goal
+Goal.
+Hotel
+A
+should
+learn
+market-level
+yield-
+management
+behavior
+[14]
+from
+observable
+market
+traces. The goal is not to beat Hotel B by undercutting.
+It is to match market discipline: similar RevPAR, occu-
+pancy, ADR, and price distribution, without observing
+Hotel B’s booking curve, inventory, or pricing rule.
+Hotel A is context-aware in the deployable sense:
+it
+conditions prices on own inventory, market condition,
+booking pace, and lagged market prices. But it is not
+fully competitor-state-aware, because the competitor’s
+inventory and pricing rule remain hidden. This partial
+context is exactly what makes the target distributional.
+Simulator.
+There are two hotels, i ∈{A, B}, capacity
+Q = 100, horizon H = 30, and price grid
+P = [100, 120, 140, 160, 180, 200, 220].
+At each day t, both hotels post price buckets ai,t and
+prices
+pi,t = P[ai,t].
+The number of potential guests is
+Mt ∼Poisson(Λt),
+Λt = Λ0 exp(ηΛmt),
+with Λ0 = 7. Each guest has three choices: book Hotel
+A, book Hotel B, or walk away. Hotel utility is
+vi,t = α −ρpi,t + ηmmt.
+We use a nested-logit choice model [8] with nest parameter
+µ = 0.5. The hotel nest inclusive value is
+It = µ log
+∑
+j∈{A,B}
+exp(vj,t/µ).
+The probability of entering the hotel nest is
+P(hotel) =
+exp(It)
+1 + exp(It),
+and the conditional hotel choice probability is
+P(i | hotel) =
+exp(vi,t/µ)
+∑
+j∈{A,B} exp(vj,t/µ).
+Thus the realized booking probabilities are
+πi,t = P(hotel)P(i | hotel),
+π0,t = 1 −πA,t −πB,t.
+Demand is drawn as
+(DA,t, DB,t, D0,t) ∼Multinomial(Mt, [πA,t, πB,t, π0,t]).
+Sales are capacity-capped:
+yi,t = min(qi,t, Di,t),
+qi,t+1 = qi,t −yi,t.
+Information asymmetry.
+Hotel B follows a deterministic
+Fixed RM rule
+aB,t = RM(t, qB,t, mt).
+In implementation, this is a hand-tuned bid-price and
+booking-pace style rule: it raises prices as inventory tight-
+ens, as the stay date approaches, and as market conditions
+strengthen. Hotel A observes its own state and, in the
+final deployable setup, the last three observed Hotel B
+prices. It does not observe qB,t, Hotel B’s booking curve,
+or Hotel B’s formula. This matters because undercutting
+changes the market dynamics:
+pA,t < pB,t ⇒πA,t ↑, πB,t ↓⇒yB,t ↓⇒qB,t+1 changes.
+The shortcut is therefore not only undesirable business be-
+havior. It also distorts the future market trace from which
+Hotel A is trying to learn. Equivalently, Hotel A and Ho-
+tel B are two competing service pipelines. Each posted
+price controls how much demand enters each pipeline, so
+Hotel A’s learning actions alter both its own inventory
+process and the competitor’s future state.
+Posterior-predictive market target.
+Let ot be Hotel A’s
+deployable observation. Since qB is hidden, the market-
+alignment target is not a point label but
+p(aB | ot) =
+∑
+qB
+1{RM(t, qB, mt) = aB}p(qB | ot).
+The learned market prior πM(a | ot) is an empirical esti-
+mate of this posterior predictive distribution from traces.
+This is the theoretical reason for distributional imitation:
+if qB remains uncertain after conditioning on ot, then mul-
+tiple Hotel B prices are valid for the same Hotel A-visible
+state.
+Why the target is a distribution
+Two policy responses
+1. Hotel A visible context
+ot = (qA, m, paceA,
+lagged market)
+2. Hidden competitor state
+same ot, different valid market
+actions:
+qB high ⇒aB = 120
+qB mid ⇒aB = 140
+qB low ⇒aB = 160
+3. Target from traces
+p(aB | ot), a distribution rather
+than one label
+Bad: deterministic copy
+argmax picks the modal
+bucket
+⇒uncertainty collapses
+Repair: Trace-Prior RL
+keeps the distribution close
+to πM
+⇒market-like trace
+Figure 1: Failure mechanism. Hidden competitor inventory means the same Hotel A-visible observation can imply
+multiple valid Hotel B prices. Deterministic argmax copying collapses this posterior uncertainty; Trace-Prior RL
+preserves it through a learned market distribution.
+Trace-Level Diagnostics
+The business metrics are
+RevPARi = 1
+Q
+H−1
+∑
+t=0
+pi,tyi,t,
+Occi = 1
+Q
+H−1
+∑
+t=0
+yi,t,
+ADRi =
+∑H−1
+t=0 pi,tyi,t
+∑H−1
+t=0 yi,t
+.
+RevPAR alone catches whether revenue is competitive,
+but not how it was earned. High occupancy can mean
+the policy sold too aggressively. Low ADR can mean the
+policy lacked rate discipline. We therefore evaluate the
+full trace.
+Let dA and dB be empirical distributions over the seven
+price buckets. We use
+L1(dA, dB) =
+∑
+k=1
+|dA(k) −dB(k)|
+and Jensen-Shannon divergence
+DJS(dA, dB) = 1
+2DKL(dA || m) + 1
+2DKL(dB || m),
+m = dA + dB
+.
+We also check whether Hotel B’s aggregate RevPAR, oc-
+cupancy, and ADR fall inside Hotel A’s seed-level 95%
+confidence intervals. These diagnostics are induced from
+the failure itself: a policy can pass on RevPAR while
+failing through excess occupancy, low ADR, or distorted
+price-bucket use.
+Negative Results: Reward Optimiza-
+tion Is Not Enough
+Functions first.
+The original DQN reward was gross rev-
+enue
+rgross
+t
+= pA,tyA,t.
+We also used RevPAR units:
+rrevpar
+t
+= pA,tyA,t
+Q
+.
+The n-step DQN target is
+G(n)
+t
+=
+n−1
+∑
+k=0
+γkrt+k + γn max
+a
+Qθ−(ot+n, a),
+with γ = 1.0.
+For the CMDP-style undercut penalty,
+define relative bucket gap
+zt = aA,t −aref,t,
+and sold-unit undercut cost
+ct = max(0, −zt)2yA,t.
+The shaped reward is
+rCMDP
+t
+= pA,tyA,t
+Q
+−λtct,
+with dual update
+λk+1 = max(0, λk + ηλ(¯ck −ctarget)).
+When a market forecast was used as input, the forecast
+head was trained by
+ˆπB,t = fϕ(ot),
+Lforecast = −log ˆπB,t(aB,t),
+but the DQN still chose actions by reward optimization.
+Table 1: Curated negative-result path. Each row rules out a plausible explanation for the failure.
+Hypothesis
+Intervention
+Representative result
+What failed
+Lesson
+Needs exploration
+Higher epsilon, 5k episodes, 3 seeds
+RevPAR ≈104, occ. ≈95%, ADR ≈109
+Still myopic low-rate behavior
+Not just exploration
+Needs longer credit assignment
+n = 5 DQN
+Near-RM RevPAR in pilot, but pricing close to fixed mixture
+No state-dependent yield behavior
+Not just horizon
+Reward needs constraint
+RevPAR-unit CMDP undercut cost
+RevPAR 107.730 vs 107.117, ADR gap −0.60, L1 0.0459
+Good business score, distorted tail
+Penalty helps but is brittle
+Needs to see the market
+Forecast-as-input DQN
+RevPAR gap +0.547, occ. gap +0.0105, ADR gap −1.18
+Forecast seen, action still shortcuts
+Input is not enough
+Copying is enough
+Argmax market copy
+Accuracy 78.14%, RevPAR gap +1.841, occ. gap +0.0162
+Over-concentrates modal buckets
+Deterministic copy collapses uncertainty
+Table 1 summarizes the path.
+The first smoke test
+collapsed to the lowest price bucket: RevPAR 98.3, oc-
+cupancy 98%, and 100% of actions at price 100. More
+exploration prevented total collapse, but the agent still
+sold too cheaply. Increasing the Bellman horizon did not
+by itself create yield-management behavior. Reward shap-
+ing and CMDP penalties improved some business metrics,
+but created fragile tradeoffs between ADR, occupancy,
+and RevPAR. Giving the DQN a market forecast also did
+not fix the action rule: the model could see market in-
+formation and still convert it into an occupancy-heavy
+shortcut.
+This is not a claim that value-based RL is generally bad.
+The narrower claim is that greedy reward optimization is
+poorly matched to this market-learning objective under
+hidden competitor state. If several competitor prices are
+plausible under the same observation, a deterministic ac-
+tion can turn uncertainty into a systematic shortcut.
+POMDP Trigger And Epistemic Col-
+lapse
+Function first.
+The deterministic copy baseline has no
+RL reward. It is supervised market prediction followed
+by an argmax decision:
+ˆπB,t = fϕ(ot),
+Lcopy = −log ˆπB,t(aB,t),
+aA,t = arg max
+a
+ˆπB,t(a).
+In plain language: predict Hotel B’s current price distri-
+bution, then collapse that distribution to the single most
+likely bucket.
+Empirical ambiguity.
+We replayed the final Trace-Prior
+RL policy for five seeds and 2,000 evaluation episodes per
+seed, then grouped states into coarse Hotel A-visible cells:
+3-day time band, own-inventory bucket, market-condition
+quantile, own previous sales bin, and exact last three Ho-
+tel B price buckets.
+If Hotel A’s observation fully de-
+termined Hotel B’s action, these cells would be nearly
+single-action.
+Table 2 shows that ambiguity is not rare. Under the
+same or nearby Hotel A-visible state, Hotel B often takes
+multiple prices.
+This supports the posterior-predictive
+framing in Section 2.
+Oracle-qB ablation.
+We then trained two supervised Ho-
+tel B price predictors on the same rollout data. The ob-
+servable predictor sees only deployable ca_lag3 features.
+Table 2: Observable-state ambiguity under final-policy
+rollouts.
+Metric
+Value
+Visited steps
+300,000
+Eligible cells
+1,951
+Eligible step share
+60.78%
+Cells with ≥2 B actions
+95.08%
+Cells with ≥2 B actions each ≥5%
+85.29%
+Eligible steps in substantive ambiguous cells
+76.57%
+Weighted normalized within-cell entropy
+0.2800
+Weighted modal B-action share
+76.75%
+Table 3: Revealing hidden qB sharply reduces market-
+prediction uncertainty. This is an explanatory diagnostic
+only: oracle qB is not available to Hotel A and is not used
+by Trace-Prior RL.
+Predictor
+NLL
+Acc.
+Brier
+True prob.
+Norm. ent.
+Observable ca_lag3
+0.5359
+76.91
+0.3160
+0.6865
+0.2748
+Oracle ca_lag3 + qB
+0.1557
+95.47
+0.0827
+0.8867
+0.1210
+The oracle predictor sees the same features plus Hotel B
+remaining inventory qB/Q. No RL training is performed
+in this diagnostic.
+Table 3 gives causal evidence for the hidden-state ex-
+planation: when qB is revealed, prediction becomes much
+sharper. This does not prove that pure revenue RL would
+behave correctly with oracle state, but it shows that hid-
+den qB is a major source of market-label uncertainty.
+Epistemic collapse.
+If H(aB | ot) > 0 because qB is not
+identified by ot, then any deterministic rule a = g(ot)
+cannot in general match p(aB | ot). It replaces posterior
+uncertainty with a point action. We call this epistemic col-
+lapse. In our deterministic copy baseline, argmax copying
+had higher exact one-step accuracy but worse aggregate
+alignment than probability matching (Table 4).
+The central tradeoff is that exact action accuracy can
+improve while trace alignment gets worse.
+Under hid-
+den state, the market target is distributional. Sampling
+from the predicted distribution preserves uncertainty that
+argmax destroys.
+Verified Repair: Trace-Prior RL
+Function first.
+Trace-Prior RL has two layers.
+First,
+learn the market prior:
+ˆπB,t = fϕ(ot),
+Lprior = −log ˆπB,t(aB,t).
+Table 4:
+Argmax improves exact action accuracy but
+worsens aggregate market alignment. Five seeds, 10,000
+evaluation episodes per seed.
+Decision rule
+Acc.
+RevPAR gap
+Occ. gap
+ADR gap
+L1
+JS
+Argmax copy
+78.14
++1.841
++0.0162
+-0.56
+0.0323
+0.0002
+Prob. match, T = 0.95
+69.50
++0.221
++0.0036
+-0.36
+0.0183
+0.0001
+Table 5: Final Trace-Prior RL result. Five seeds, 2,000
+train episodes per seed, 10,000 evaluation episodes per
+seed, β = 30, entropy coeﬀicient 0.
+Metric
+Hotel A
+Hotel B
+Gap
+B in A 95% CI?
+RevPAR
+108.178
+108.066
++0.112
+yes
+Occupancy
+0.7709
+0.7680
++0.0029
+yes
+ADR
+140.33
+140.71
+-0.38
+yes
+L1
+0.0196
+-
+JS
+0.0001
+-
+This prior is frozen and used as
+πM(a | ot) = ˆπB,t(a).
+Second, train a stochastic RL policy
+πθ(a | ot)
+with per-step reward
+rTPRL
+t
+= pA,tyA,t
+Q
+−βDKL(πθ(· | ot) || πM(· | ot)) .
+Equivalently, maximize
+E
+[ H−1
+∑
+t=0
+(pA,tyA,t
+Q
+−βDKL(πθ(· | ot)
+|| πM(· | ot))
+)]
+.
+In human terms, Hotel A still learns from its own sales
+and revenue, but it pays a cost if its whole pricing distri-
+bution drifts away from the learned market rule. This is
+not a hand-coded undercut penalty. The discipline comes
+from the market trace.
+This links directly to the POMDP argument.
+The
+learned prior πM(a | ot) is an empirical estimate of the
+posterior predictive target p(aB | ot).
+As β increases,
+πθ shrinks toward that market-alignment target; as β de-
+creases, the policy moves toward unconstrained revenue
+optimization.
+Tables 5 and 6 show the selected result.
+Hotel B’s
+RevPAR, occupancy, and ADR all fall inside Hotel A’s
+seed-level 95% confidence intervals, and the full price dis-
+tribution is close.
+Why the KL term matters.
+The KL term regularizes the
+whole action distribution, not only the sampled action. If
+the policy begins to overuse low prices to grab occupancy,
+Table 6: Final price-bucket distribution.
+Policy
+120
+160
+200
+Hotel A
+4.64
+43.44
+22.45
+15.12
+10.72
+3.62
+0.00
+Hotel B
+4.88
+42.58
+22.51
+15.17
+11.35
+3.50
+0.01
+120
+160
+200
+0
+20
+40
+Hotel A
+Hotel B
+Share (%)
+Figure 2:
+Final price-bucket distribution under Trace-
+Prior RL.
+the KL cost rises even when a particular sampled action
+earns revenue.
+This is why the method differs from a
+simple action-level bonus.
+Table 7 should be read as a mechanism check, not as
+a universal claim that β = 30 transfers across domains.
+The KL coeﬀicient is tied to the RevPAR reward scale. In
+our environment, one room sold at price 140 contributes
+1.4 to per-step RevPAR reward, while the post-training
+KL term is typically small. Values near 10-30 make the
+prior strong enough to prevent policy drift without over-
+whelming revenue learning. The β = 0 row is the business
+warning: reward-only RL does not become a reliable mar-
+ket learner, even when its scalar metrics look plausible in
+some seeds. It can move occupancy, ADR, and competi-
+tor inventory paths in ways that are not stable market
+discipline.
+We also tested the simpler reviewer baseline: replace
+full-distribution KL with an action-level prior bonus,
+rt = pA,tyA,t
+Q
++ β log πM(at | ot).
+This rewards sampled actions that the market prior likes,
+but it does not directly constrain the rest of πθ(· | ot).
+Even the best action-bonus setting in a small grid re-
+mained much less aligned than full KL (Table 8).
+Calibration and entropy.
+The frozen market prior is
+reasonably calibrated on final-policy evaluation rollouts:
+NLL 0.5382, Brier 0.3173, ECE 0.0177, mean probability
+on the true Hotel B price 0.6926, and prior argmax accu-
+racy 76.86%. The selected run uses entropy coeﬀicient 0.
+A small-entropy robustness run (0.01) was nearly identi-
+cal: RevPAR gap +0.111, occupancy gap +0.0029, ADR
+gap −0.38, L1 0.0196, JS 0.0001. This makes the mech-
+anism cleaner: stochasticity is not being injected by a
+generic entropy bonus, but carried by the market prior
+and KL-regularized policy.
+We also tested an entropy-
+RevPAR
+B
+Occupancy
+B
+ADR
+B
+A CI low
+A mean
+A CI high
+• Hotel B
+Figure 3: Seed-level CI check for RevPAR, occupancy,
+and ADR.
+Table 7: KL strength sensitivity. No or weak KL is less
+stable and less aligned; strong KL restores market disci-
+pline.
+β
+RevPAR gap
+Occ. gap
+ADR gap
+L1
+JS
+Read
+-3.706
+-0.0296
++1.19
+0.1158
+0.0021
+no discipline
+-0.907
+-0.0063
++0.09
+0.0263
+0.0002
+partial repair
++0.029
++0.0024
+-0.39
+0.0206
+0.0001
+aligned
+aware adaptive β rule. It showed no clear practical gain
+over fixed β, which is useful negative evidence: the repair
+is not driven by elaborate coeﬀicient tuning.
+Relation
+To
+Prior
+Methods
+And
+Scope
+Trace-Prior RL is close to behavior-regularized and KL-
+regularized RL. AWAC, BRAC, MPO, Distral,
+KL-
+control, and Way Off-Policy all optimize a task objective
+while penalizing drift from a reference behavior or policy
+[1, 4, 10, 15, 16]. CQL and BCQ are related conservative
+offline RL methods [2, 7], but farther from our closed-
+loop online setting. The reference in CP13 is not Hotel
+A’s previous behavior and not primarily an offline sup-
+port constraint. It is an empirical estimate of the market
+posterior predictive distribution under hidden competitor
+state. Moreover, conservative offline RL primarily guards
+against out-of-distribution actions; it does not by itself
+solve the Goodhart problem when the scalar reward is
+the misspecified proxy.
+The broader recipe is:
+learn trace prior + optimize reward inside a KL trust region.
+This may apply when four ingredients coexist: the agent
+observes only a projection of the true state, competent
+traces exist, the scalar reward is easy to game, and the
+final system should improve rather than merely copy. In
+LLM routing, for example, πM(r | x) could be an expert
+route distribution over models or tools, and the final pol-
+icy could optimize success-cost reward with KL discipline:
+max
+θ
+E [success(x, r) −α cost(r) −βRroute(x)] ,
+where
+Rroute(x) = DKL(πθ(· | x) || πM(· | x)).
+Table 8: Full-distribution KL versus sampled-action prior
+bonus. Five seeds, 2,000 train episodes and 5,000 evalua-
+tion episodes per seed.
+Method
+RevPAR gap
+ADR gap
+L1
+Policy-prior KL
+Full KL, β = 30
++0.029
+-0.39
+0.0206
+0.0105
+Action bonus, best grid
+-2.336
++0.53
+0.0729
+0.2181
+This is only proposed relevance, not empirical generaliza-
+tion beyond hotels. The current evidence is intentionally
+narrow: one controlled pricing simulator with a fixed RM
+competitor.
+A queueing-and-game-theory lens is a useful future di-
+rection rather than a core proof burden for this paper.
+The two hotels can be viewed as competing capacity-
+limited pipelines: guests route to Hotel A, Hotel B, or the
+outside option, and price acts like a dynamic admission-
+control threshold. A low price increases Hotel A’s incom-
+ing flow but drains its finite inventory and changes Hotel
+B’s future load. This resembles a finite-horizon compet-
+ing loss system or dynamic pricing game more than a lit-
+eral M/G/2 queue, because guests do not wait and hotel
+rooms are perishable capacity. Developing that connec-
+tion could turn the empirical failure mechanism into a
+higher-level theory of learning in competitive service sys-
+tems.
+Limitations.
+First, Hotel B is fixed and determinis-
+tic. Real competitors may be noisy, strategic, or learn-
+ing. Second, β is reward-scale dependent. An adaptive
+uncertainty-aware β is a natural extension, but our cur-
+rent sensitivity runs showed no clear practical gain over
+fixed β. Third, Trace-Prior RL learns market behavior
+from traces; it does not recover Hotel B’s internal RM
+formula. Fourth, we do not yet include a second empir-
+ical domain.
+The strongest claim is therefore a failure
+mechanism and repair recipe, not broad empirical univer-
+sality.
+Conclusion
+This case study shows why agent evaluation cannot stop
+at scalar reward.
+Hotel A could look successful by
+RevPAR while failing to learn market-like yield man-
+agement.
+The trigger was partial observability:
+hid-
+den competitor inventory made the market label distribu-
+tional, and deterministic decision rules collapsed that un-
+certainty into shortcut behavior. Trace-level diagnostics
+made the failure visible. Trace-Prior RL repaired it by
+learning the market distribution from lagged traces and
+then optimizing Hotel A’s own RevPAR inside a KL trust
+region around that distribution. The result is a compact,
+reproducible agent failure and fix: the score said success,
+the trace revealed the wrong behavior, and the repair fol-
+lowed from the hidden-state mechanism.
+The sharpest
+lesson is that, under hidden state, exact step-by-step pre-
+diction accuracy and aggregate behavioral alignment can
+move in opposite directions. The unit of contribution is
+therefore a disciplined agent-evaluation claim: when an
+outcome score is too easy to satisfy, the trace decides
+whether the agent has learned the intended behavior.
+References
+[1] Abbas Abdolmaleki, Jost Tobias Springenberg, Yu-
+val Tassa, Remi Munos, Nicolas Heess, and Mar-
+tin Riedmiller.
+Maximum a posteriori policy op-
+timisation.
+In International Conference on Learn-
+ing Representations, 2018. URL 
+net/forum?id=S1ANxQW0b.
+[2] Scott Fujimoto, David Meger, and Doina Precup.
+Off-policy deep reinforcement learning without ex-
+ploration. In Proceedings of the 36th International
+Conference on Machine Learning, volume 97 of Pro-
+ceedings of Machine Learning Research, pages 2052-
+2062, 2019. URL 
+fujimoto19a.html.
+[3] Charles A. E. Goodhart. Problems of monetary man-
+agement: The U.K. experience. Papers in Monetary
+Economics, 1(1):1-20, 1975.
+[4] Natasha Jaques, Asma Ghandeharioun, Judy Han-
+wen Shen, Craig Ferguson, Agata Lapedriza, Noah
+Jones, Shixiang Gu, and Rosalind W. Picard. Way
+off-policy batch deep reinforcement learning of im-
+plicit human preferences in dialog. NeurIPS Conver-
+sational AI Workshop, 2019. URL 
+abs/1907.00456.
+[5] Leslie Pack Kaelbling, Michael L. Littman, and An-
+thony R. Cassandra. Planning and acting in partially
+observable stochastic domains. Artificial Intelligence,
+101(1-2):99-134, 1998. doi: 10.1016/S0004-3702(98)
+00023-X.
+URL
+
+science/article/pii/S000437029800023X.
+[6] Victoria
+Krakovna,
+Jonathan
+Uesato,
+Vladimir
+Mikulik,
+Matthew
+Rahtz,
+Tom
+Everitt,
+Ra-
+mana
+Kumar,
+Zac
+Kenton,
+Jan
+Leike,
+and
+Shane
+Legg.
+Specification
+gaming:
+The
+flip
+side of AI ingenuity.
+Google DeepMind Blog,
+2020.
+URL
+
+specification-gaming-the-flip-side-of-ai-ingenuity/.
+[7] Aviral Kumar, Aurick Zhou, George Tucker, and
+Sergey Levine.
+Conservative q-learning for offline
+reinforcement learning. In Advances in Neural Infor-
+mation Processing Systems, volume 33, 2020. URL
+
+0d2b2061826a5df3221116a5085a6052-Abstract.
+html.
+[8] Daniel McFadden. Conditional logit analysis of qual-
+itative choice behavior. In Paul Zarembka, editor,
+Frontiers in Econometrics, pages 105-142. Academic
+Press, New York, 1974.
+[9] Volodymyr Mnih, Koray Kavukcuoglu, David Silver,
+Andrei A. Rusu, Joel Veness, Marc G. Bellemare,
+Alex Graves, Martin Riedmiller, Andreas K. Fidje-
+land, Georg Ostrovski, Stig Petersen, Charles Beat-
+tie, Amir Sadik, Ioannis Antonoglou, Helen King,
+Dharshan Kumaran, Daan Wierstra, Shane Legg,
+and Demis Hassabis. Human-level control through
+deep reinforcement learning. Nature, 518(7540):529-
+533, 2015. doi: 10.1038/nature14236. URL https:
+//www.nature.com/articles/nature14236.
+[10] Ashvin Nair, Abhishek Gupta, Murtaza Dalal, and
+Sergey Levine. AWAC: Accelerating online reinforce-
+ment learning with offline datasets.
+In Deep Re-
+inforcement Learning Workshop at NeurIPS, 2020.
+URL 
+[11] Alexander Pan, Kush Bhatia, and Jacob Steinhardt.
+The effects of reward misspecification: Mapping and
+mitigating misaligned models. In International Con-
+ference on Learning Representations, 2022.
+URL
+
+[12] Joar
+Skalse,
+Nikolaus
+H.
+R.
+Howe,
+Dmitrii
+Krasheninnikov, and David Krueger. Defining and
+characterizing reward gaming. In Advances in Neural
+Information Processing Systems, volume 35, pages
+9460-9471, 2022.
+[13] Marilyn Strathern. Improving ratings: Audit in the
+British university system. European Review, 5(3):
+305-321, 1997.
+[14] Kalyan
+T.
+Talluri
+and
+Garrett
+J.
+Van
+Ryzin.
+The Theory and Practice of Revenue Manage-
+ment.
+Springer, New York, 2004.
+doi:
+10.1007/
+b139000.
+URL 
+1007/b139000.
+[15] Yee Whye Teh, Victor Bapst, Wojciech Marian Czar-
+necki, John Quan, James Kirkpatrick, Raia Hadsell,
+Nicolas Heess, and Razvan Pascanu. Distral: Robust
+multitask reinforcement learning.
+In Advances in
+Neural Information Processing Systems, volume 30,
+pages 4496-4506, 2017.
+[16] Yifan Wu, George Tucker, and Ofir Nachum.
+Be-
+havior regularized offline reinforcement learning. In
+International Conference on Learning Representa-
+tions, 2020.
+URL 
+id=BJg9hTNKPH.

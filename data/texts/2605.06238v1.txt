@@ -1,0 +1,2400 @@
+Band Together: Untargeted Adversarial Training with
+Multimodal Coordination against Evasion-based Promotion Attacks
+Guanmeng Xian1 , Ning Yang1∗, Philip S. Yu2
+1Sichuan University, Chengdu, China
+2University of Illinois at Chicago, USA
+xianguanmeng@stu.scu.edu.cn, yangning@scu.edu.cn, psyu@uic.edu
+Abstract
+Multimodal recommender systems exploit visual
+and textual signals to alleviate data sparsity, but
+this also makes them more vulnerable to evasion-
+based promotion attacks.
+Existing defenses are
+largely limited to single-modal settings and mainly
+focus on poisoning-based threats, leaving evasion-
+based threats underexplored.
+In this work, we
+first identify a cross-modal gradient mismatch un-
+der the multi-user promotion setting, where vi-
+sual and textual perturbations are optimized in in-
+consistent directions due to the dominance of dis-
+tinct user groups. This phenomenon dilutes the at-
+tack effectiveness and leads robust training to un-
+derestimate worst-case risks.
+To address this is-
+sue, we propose Untargeted Adversarial Training
+with Multimodal Coordination (UAT-MC). UAT-
+MC tackles the challenge of unknown targeted
+items in evasion-based attacks (as opposed to
+poisoning-based attacks) by treating all items as
+potential targets, and introduces a gradient align-
+ment mechanism to explicitly correct this mis-
+match.
+This design ensures synchronized per-
+turbations across modalities, thereby maximizing
+adversarial strength for robust training.
+Exten-
+sive experiments demonstrate that UAT-MC sig-
+nificantly improves robustness against promotion
+attacks while maintaining acceptable recommen-
+dation performance under the defense-accuracy
+trade-off. Code is available at 
+gmXian/UAT-MC.
+Introduction
+Multimodal Recommender Systems (MRSs) typically lever-
+age visual and textual information from user-interacted items
+to capture users’ fine-grained preferences, effectively alle-
+viating the challenge posed by sparse interaction data [He
+and McAuley, 2016b; Wei et al., 2019; Zhang et al., 2021;
+Zhou et al., 2023c; Liu et al., 2024]. While auxiliary modal
+information enhances the personalization of recommenda-
+tions, we find that MRSs exhibit heightened vulnerability to
+∗Corresponding author.
+Baby
+Sports
+Clothing
+0.00
+1.00
+2.00
+3.00
+4.00
+5.00
+6.00
+7.00
+Hit@50(%)
+0.667
+0.025
+0.036
+3.865
+6.547
+1.335
+4.057
+6.690
+1.486
+4.162
+6.932
+1.483
+Before Attack
+After Attack(using Up)
+After Attack(using Uv)
+After Attack(using Ut)
+Figure 1: VBPR’s vulnerability to vanilla FGSM-based promotion
+attacks. For each dataset, we report the Hit@50 before and after
+attack under different user subsets, including Up, Uv, and Ut.
+evasion-based promotion attacks, in which attackers imper-
+ceptibly perturb the modalities of targeted items to boost their
+rankings, as demonstrated by our motivation experiment in
+Figure 1.
+Specifically, we conduct evasion-based promotion attacks
+(FGSM [Goodfellow et al., 2014] and PGD [Madry et al.,
+2017]) on both visual and textual modalities of unpopu-
+lar items (defined as those with only 5 interactions) over
+various datasets (Amazon Baby, Sports and Clothing [He
+and McAuley, 2016a]) and architectures (VBPR [He and
+McAuley, 2016b] and MMGCN [Wei et al., 2019])). Figure 1
+presents the results on VBPR under FGSM attack as a repre-
+sentative instance. The black numbers represent the average
+hit rate (Hit@50) of targeted items appearing in user recom-
+mendation lists. As one can find from Figure 1, the post-
+attack Hit@50 always shows a significant increase, demon-
+strating the vulnerability of MRS to evasion-based promo-
+tional attacks.
+Existing works [Wu et al., 2021; Zhang et al., 2024;
+Mu et al., 2025] have attempted to mitigate the vulnerability
+to promotion attacks; however, they suffer from two critical
+limitations when applied to MRSs. First, these approaches
+primarily focus on single-modal recommender systems, fail-
+ing to address the complex vulnerability patterns that arise
+from interactions between visual and textual features. This
+oversight is especially problematic as attackers can exploit
+cross-modal correlations to amplify their attack impact. For
+example, the Re-writing Defense [Zhang et al., 2024] uses
+GPT-3.5-turbo to rewrite adversarial text as a defense for
+arXiv:2605.06238v1 [cs.LG] 7 May 2026
+
+LLM-based recommendation models. Second, and more fun-
+damentally, current defenses are almost exclusively designed
+for poisoning-based attacks, where adversaries compromise
+collaborative signals by injecting fake user profiles or inter-
+actions during the training phase. For example, APT [Wu et
+al., 2021] simulates the poisoning process by injecting fake
+user data to foster a more robust system. However, in MRSs,
+attackers can deliberately manipulate the description or image
+of a targeted item during the inference phase to influence the
+recommendation results-an aspect not addressed by existing
+defense methods. To bridge these critical gaps, we propose
+Untargeted Adversarial Training with Multimodal Coor-
+dination (UAT-MC), a novel adversarial training framework
+specifically designed to defend against evasion-based promo-
+tion attacks in MRSs. However, directly applying conven-
+tional adversarial training to this setting is non-trivial due to
+the following two challenges:
+C1: Dynamic Attack Target. Unlike poisoning attacks
+where malicious targets are explicitly injected during train-
+ing, evasion attacks dynamically select targeted items at the
+inference phase. This fundamental difference renders tradi-
+tional targeted adversarial training approaches ineffective, as
+they rely on pre-defined attack targets to generate adversarial
+examples, which are unknown during the training phase.
+C2: Cross-modal Gradient Mismatch. Under the multi-
+user promotion setting, MRSs present a unique challenge:
+combining perturbations across visual and textual modalities
+often yields suboptimal adversarial examples which degrade
+the robustness achieved through adversarial training. Cross-
+modal gradient mismatch arises when visual and textual per-
+turbations in multi-user promotion attacks are dominated by
+different user groups, causing the two modalities to be op-
+timized toward inconsistent objectives and resulting in mis-
+aligned gradient directions.
+To tackle the challenge C1, we propose untargeted adver-
+sarial training for MRS, which treats all items as potential
+targets of evasion-based attacks. Our approach frames rec-
+ommendation as a multi-label classification task over users,
+where items serve as labels.
+Untargeted adversarial train-
+ing indirectly defends against targeted attacks by globally en-
+hancing the robustness of decision boundaries and disrupting
+the local gradient information on which attacks rely. The core
+principle is that the model learns to resist perturbations from
+any direction, thereby covering attacks originating from spe-
+cific directions. To tackle challenge C2, we propose a novel
+gradient-aligned multimodal perturbation method to ad-
+dress cross-modal gradient mismatch in adversarial training.
+Unlike perturbing visual and textual features independently,
+which can diminish attack strength due to misaligned gradi-
+ents-our method enforces gradient synchronization across
+modalities by minimizing the cosine distance between vi-
+sual and textual gradients through a joint loss term.
+This
+ensures perturbations coherently push items toward adversar-
+ial regions. As shown in later experiments, this coordinated
+approach maximizes attack potency during training and en-
+hances adversarial robustness against evasion-based promo-
+tion attacks.
+Our contributions can be summarized as follows:
+• We identify evasion-based promotion attacks as a criti-
+cal threat to multimodal recommender systems, in which
+adversaries perturb both the visual and textual features
+of targeted items.
+• We propose a novel Untargeted Adversarial Training
+with Multimodal Coordination (UAT-MC) framework to
+enhance the robustness of MRSs against evasion-based
+promotion attacks. Specifically, the proposed untargeted
+adversarial training inherently defends against targeted
+attacks by universally hardening the decision bound-
+aries, thereby covering all potential attack directions.
+• We propose gradient-aligned multimodal perturbations
+to resolve cross-modal gradient mismatch in adversarial
+training. By minimizing cosine distance between modal-
+ities via a joint loss term, our method synchronizes per-
+turbations to maximize attack potency.
+• Extensive experiments conducted on real datasets verify
+the effectiveness of our method.
+Preliminary
+In this section, we conceptually define MRS and describe the
+evasion-based promotion attacks.
+2.1
+MRS
+Let U and I denote user set and item set, respectively. R ∈
+{0, 1}|U|×|I| is user-item interaction matrix, where an ele-
+ment ru,i is 1 if there exists interaction between user u ∈U
+and item i ∈I, otherwise 0. Each item i is associated with
+a visual modality embedding vi and a textual modality em-
+bedding ti which are generated by CNN and Transformer,
+respectively.
+Generally, an MRS f infers the probability ˆru,i that user u
+will interact with item i based on given R and the modality
+embeddings vi and ti, i.e.,
+ˆru,i = f(R, u, i, vi, ti).
+(1)
+Let D = {(u, i+, i−)} be a training set, where i+ is u’s
+positive sample (ru,i+ = 1 ) and i−is u’s negative sample
+(ru,i−= 0 ). Like traditional recommender systems, an MRS
+is usually trained with Bayesian Personalized Ranking (BPR)
+[Rendle et al., 2009] loss function,
+LBPR(Θ) =
+X
+(u,i+,i−)∈D
+−ln σ(ˆru,i+ −ˆru,i−),
+(2)
+where Θ represents the model parameters and σ(·) is the sig-
+moid function.
+2.2
+Threat Model
+Attacker’s Objective
+Given a well-trained MRS, an evasion-based promotion at-
+tack is to imperceptibly perturb the multimodal embeddings
+of a targeted item i, so that i will appear in the top-K rec-
+ommendation lists of as many users as possible. Inspired by
+[Wang et al., 2024b], we define the promotion utility function
+as:
+Lpromotion = 1
+Np
+X
+u∈Up
+Sigmoid(yu,i −yu,K),
+(3)
+
+where yu,K denotes the score of the K-th ranked item for user
+u. By maximizing Equation (3), the attacker encourages the
+targeted item score yu,i to surpass the top-K threshold yu,K.
+Attacker’s Knowledge
+In this paper, we assume a white-box scenario for the gener-
+ation of the adversarial examples in our UAT-MC, where the
+attacker has full access to the MRS f, including its param-
+eters and gradients. This is because UAT-MC aims to train
+a more robust MRS, rather than to conduct attacks from the
+perspective of malicious merchants. This setting represents a
+worst-case attacker and allows us to evaluate the upper bound
+of the potential impact of evasion-based promotion attacks.
+Attacker’s Capability
+Following the ideas of the related works [Tang et al., 2020;
+Zhang et al., 2021; Guo et al., 2024; Liu et al., 2024; Ong
+and Khong, 2025] , we perturb the multimodal embeddings
+instead of the raw inputs, which allows more fine-grained and
+efficient manipulations. Formally, the perturbed embeddings
+v′
+i = vi + ∆i
+v and t′
+i = ti + ∆i
+t. For imperceptibility, the
+perturbations ∆i
+m (m ∈{v, t}) are constrained by ∥∆i
+m∥≤
+ϵm, where ϵm is perturbation budget.
+Cross-modal Gradient Mismatch Analysis
+In this section, we demonstrate that under multi-user promo-
+tion settings, the gradients of visual and textual perturbations
+are inherently driven by distinct user groups due to varying
+modal sensitivities. Consequently, simply aggregating these
+gradients leads to conflicting optimization directions across
+modalities, which we term cross-modal gradient mismatch.
+This misalignment fundamentally limits the synergy of mul-
+timodal attacks and motivates our UAT-MC framework. We
+next provide a formal analysis to characterize and verify the
+existence of this mismatch.
+3.1
+Objective Inconsistency Across Modalities
+Given the promotion objective Lpromotion defined over the user
+set Up (Equation (3)), the optimization problem can be formu-
+lated as:
+max
+∆iv,∆i
+t
+X
+u∈Up
+Lu(∆i
+v, ∆i
+t),
+(4)
+where Lu denotes the promotion loss contributed by user u.
+Accordingly, the perturbations are updated by aggregating
+gradients from all selected users:
+Gv =
+X
+u∈Up
+gv
+u,
+Gt =
+X
+u∈Up
+gt
+u,
+(5)
+where gv
+u = ∂Lu
+∂∆iv and gt
+u = ∂Lu
+∂∆i
+t denote the visual and textual
+gradients induced by user u, respectively.
+To quantify how much each user contributes to the final
+update direction, we define the directional contribution of
+user u on modality m ∈{v, t} as:
+cm
+u = cos(gm
+u , Gm) ·
+∥gm
+u ∥
+P
+u′∈Up ∥gm
+u′∥,
+(6)
+Ǚ
+ǘս
+ǚս
+ǘս’
+ǚս’
+Ǎ’
+optimum location
+ي-ball
+(a)
+(b)
+੤֩
+੤ֱ
+੤֩
+੤ֱ
+Figure 2: Illustration of objective inconsistency across modalities.
+(a) Visual and textual perturbations are dominated by user groups Uv
+and Ut, leading to conflicting promotion directions after multimodal
+fusion. (b) With alignment loss, the perturbations from different
+modalities are constrained to align in a consistent direction, enabling
+the fused embedding to effectively reach the optimum location.
+0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0
+Jaccard Similarity Value
+10
+30
+Count
+19
+24
+Average=0.557
+(a) VBPR-Baby
+0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0
+Jaccard Similarity Value
+10
+30
+50
+Count
+20
+23
+Average=0.575
+(b) VBPR-Sports
+Figure 3: Distribution of Jaccard Similarity between Uv and Ut.
+where cos(gm
+u , Gm) measures whether user u’s gradient di-
+rection is aligned with the aggregated update direction, and
+∥gm
+u ∥reflects the contribution of user u to modality m.
+Based on this metric, we define the user set Uv and the user
+set Ut as the top-K users ranked by cv
+u and ct
+u, respectively.
+To measure the overlap between these two sets, we compute
+their Jaccard similarity:
+J(Uv, Ut) = |Uv ∩Ut|
+|Uv ∪Ut|.
+(7)
+A low Jaccard similarity indicates that the users dominat-
+ing the visual and textual perturbation updates are largely
+different, suggesting that the two modalities are implicitly
+driven by different user groups and, consequently, toward
+different effective optimization objectives. As illustrated in
+Fig. 2(a), the visual perturbation ∆i
+v is primarily driven by
+users in Uv, while the textual perturbation ∆i
+t is dominated
+by users in Ut. When such modality-specific perturbations
+are subsequently fused by the MRS, the resulting item repre-
+sentation fails to simultaneously benefit all users, leading to
+suboptimal promotion outcomes.
+3.2
+Empirical Evidence of Cross-modal Gradient
+Mismatch
+As mentioned in Section 1, we conduct vanilla FGSM-based
+promotion attacks on the VBPR model across three datasets.
+For each dataset, we randomly sample 100 unpopular items
+
+whose interaction counts are no greater than 5. For each tar-
+geted item, we identify the user sets Uv and Ut using the di-
+rectional contribution metric in Equation (6), and conduct the
+promotion attack variants by constructing the promotion loss
+over Up, Uv and Ut, respectively.
+The results indicate that aligning the attack objective with
+modality-specific user groups is crucial, as visual and textual
+perturbations are driven by distinct user subsets. Specifically,
+Figure 3 reveals a consistently low Jaccard similarity between
+Uv and Ut, confirming their limited overlap. This distinctness
+is further corroborated by Figure 1, which demonstrates that
+optimizing over Uv or Ut yields significantly higher attack
+gains than using Up, as aggregating heterogeneous groups
+tends to dilute modality-specific optimization signals. (See
+Appendix B.4 for a detailed case study visualizing this phe-
+nomenon on a specific item.)
+In summary, cross-modal gradient mismatch limits the ef-
+fectiveness of multimodal perturbations. Since effective de-
+fense requires training against worst-case attacks, it is criti-
+cal to harmonize optimization directions to maximize attack
+potency. This motivates our UAT-MC framework, which uses
+gradient alignment to generate stronger adversarial examples,
+thereby driving the model to learn more robust representa-
+tions.
+Methodology
+Figure 4 shows the overview of UAT-MC. In Figure 4, the tar-
+geted MRS is divided into two parts, i.e., f = g ◦h, where h
+is the encoder for collaborative filtering and g is the decoder.
+Usually, h is implemented as a GNN [Wei et al., 2019] or
+an MLP [He and McAuley, 2016b] for fusion of multimodal
+embeddings, while g is implemented as an inner product. A
+training instance consists of user ID embedding eu, a positive
+item’s ID embedding e+, a negative item’s ID embedding e−,
+the positive item’s modality embeddings v+, t+, and the neg-
+ative item’s modality embeddings v−and t−.
+During the k-th iteration, UAT-MC first generates the ad-
+versarial modality embeddings v′
++, t′
++, v′
+−, and t′
+−, by
+adding the perturbations generated in the last step.
+Then
+through the collaborative filtering encoder h, UAT-MC pro-
+duces the user embedding hu by fusing with the multimodal
+content of the items interacted with u, the positive and neg-
+ative item embeddings h+ and h−by fusing their respec-
+tive multimodal embeddings, and their respective adversarial
+sample embeddings h′
+u, h′
++ and h′
+−. Based on these em-
+beddings, the decoder g computes the ranking losses LBPR
+and L′
+BPR on the clean embeddings and the adversarial em-
+beddings, respectively. On these losses, UAT-MC conducts a
+min-max game to improve the robustness of the MRS f.
+It is worth noting that to achieve worst-case adversarial ro-
+bustness for f, UAT-MC promotes consistent perturbation di-
+rections across different modalities by maximizing the gra-
+dient alignment loss LAlign when generating adversarial per-
+turbations. This approach realizes the multimodal coordina-
+tion, thereby enhancing the aggressiveness of adversarial ex-
+amples.
+4.1
+Untargeted Adversarial Training
+As mentioned in Section 1, in evasion attacks, the specific
+targeted item at inference time is unknown during the train-
+ing phase. To address this challenge, we propose untargeted
+an adversarial training for MRSs, which treats all items as
+potential targets of evasion-based promotion attacks. This
+approach is motivated by the fact that recommendation can
+be formulated as a multi-label classification task, where each
+item serves as a distinct label. Untargeted adversarial train-
+ing improves the robustness of the model by strengthening
+the decision boundary against perturbations from arbitrary di-
+rections, thereby effectively defending against perturbations
+from any direction.
+Specifically, given a user u, the attacker adds perturba-
+tions [∆v+, ∆t+] to the positive item’s multimodal embed-
+dings [v+, t+] and the perturbations [∆v−, ∆t−] to the neg-
+ative item’s multimodal embeddings[v−, t−], which result in
+the adversarial modality embeddings v′
++, t′
++, v′
+−, and t′
+−.
+Then the final adversarial embeddings are computed as:
+h′
+u, h′
++, h′
+−= h(R, eu, e+, e−, v′
++, v′
+−, t′
++, t′
+−).
+(8)
+Then the untargeted adversarial training is defined as:
+min
+Θ
+max
+∆v,∆t L′
+BPR(Θ, ∆v, ∆t),
+(9)
+where L′
+BPR(Θ, ∆v, ∆t) is defined as:
+L′
+BPR(Θ, ∆v, ∆t) =
+X
+(u,i+,i−)∈D
+−ln σ(h′
+u · h′
++ −h′
+u · h′
+−).
+(10)
+4.2
+Multimodal Coordination
+As analyzed in Section 3, independently perturbing each
+modality in multi-user promotion settings often results in
+cross-modal gradient mismatch, reducing the effectiveness of
+adversarial attacks. While identifying and optimizing over
+specific user subsets (i.e., Uv and Ut) can improve attack per-
+formance, it requires computing user-wise gradients for the
+entire user base, incurring a prohibitively high computational
+cost. To circumvent this bottleneck, we propose a lightweight
+multimodal coordination mechanism. Instead of explicitly
+partitioning users, we focus on directly rectifying the diver-
+gent optimization directions in the gradient space. By en-
+forcing gradient-level alignment between modalities, we ef-
+fectively mitigate the mismatch without the need for costly
+user identification. This approach achieves coordination with
+negligible computational overhead, requiring only minimal
+additional operations during backpropagation.
+We first compute the gradients of the adversarial loss with
+respect to the perturbations in each modality:
+Γv = ∇∆vL′
+BPR, Γt = ∇∆tL′
+BPR.
+(11)
+Then, we define the alignment loss as the sum of the co-
+sine similarities between the gradients of visual and textual
+modalities for both positive and negative items:
+LAlign = cos(Γv+, Γt+) + cos(Γv−, Γt−).
+(12)
+Maximizing LAlign encourages the perturbations in differ-
+ent modalities to be directionally aligned, thereby pushing the
+targeted item toward the adversarial region.
+
+Collaborative
+Filtering
+ℒ!"#
+ℒ’!"$
+𝐯!
+𝐯"
+𝐭!
+𝐭"
+∆#!
+∆#"
+∆$!
+∆$"
+𝐯’!
+𝐯’"
+𝐭’!
+𝐭’"
++
+𝒆%
+𝒆!
+𝒆"
+𝐡!
+𝐡%
+𝐡"
+𝐡’!
+𝐡’%
+𝐡’"
+min
+min
+max
+ℒ%&'()
+max
+∆#!
+∆#"
+∆$!
+∆$"
+Training & Inference
+Training only
+Backpropagation
+𝑘-th step
+Perturbations
+Clean Modal 
+Embeddings
+Adversarial
+Modal Embeddings
+ID Embeddings
+Clean
+Embeddings
+Adversarial
+Embeddings
+(𝑘+1)-th step
+Perturbations
+Defender
+Attacker
+×
+>
+×
+𝐡’&!
+𝐡’%
+𝐡’&"
+×
+𝐡’%
+×
+min ℒ’'()
+>
+𝐡&!
+𝐡%
+𝐡&"
+𝐡%
+min ℒ'()
+(c)
+(d)
+Defender
+𝐡’&!
+𝐡’%
+𝐡’&"
+×
+𝐡’%
+×
+max ℒ’'()
+<
+ℒ’'(*
+Gradient Alignment
+∆#
+∆$
+max ℒ+,-./
+(a)
+(b)
+Attacker
+ℎ
+𝑔
+𝑔
+Figure 4: The framework of UAT-MC.
+Algorithm 1 UAT-MC
+Input: Training data D; Learning rate η; Perturbation bud-
+gets ϵt, ϵv; Hyperparameters λ, α, β
+Output: Robust MRS model parameters Θ
+1: Initialize Θ from normal-trained MRS
+2: while not converged do
+3:
+Randomly draw an example (u, i+, i−) from D
+4:
+// Max phase
+5:
+L′
+BPR = −ln σ(h′
+u · h′
++ −h′
+u · h′
+−)
+6:
+Γv = ∇∆vL′
+BPR, Γt = ∇∆tL′
+BPR
+7:
+LAlign = cos(Γv+, Γt+) + cos(Γv−, Γt−)
+8:
+Lmax = L′
+BPR + αLAlign
+9:
+∆v ←ϵv ·
+∇∆v L′
+max
+∥∇∆v L′max∥2 , ∆t ←ϵt ·
+∇∆tL′
+max
+∥∇∆tL′max∥2
+10:
+// Min phase
+11:
+Lmin = LBPR + λL′
+BPR(∆v, ∆t) + β∥Θ∥2
+12:
+Θ ←Θ −η∇ΘLmin
+13: end while
+14: return Θ
+Dataset
+#Users
+#Items
+#Interactions
+Sparsity
+Baby
+19,445
+7,037
+160,792
+99.883%
+Sports
+35,598
+18,357
+296,337
+99.955%
+Clothing
+39,387
+23,033
+278,677
+99.969%
+Table 1: Statistics of the three experimental datasets.
+4.3
+Optimization
+The training is divided into two phases:
+• Attacking (Max phase): Generate the most disruptive
+perturbations ∆v and ∆t within ℓ2-norm budgets ϵv and
+ϵt by maximizing λL′
+BPR + αLAlign.
+• Defending (Min phase): Update model parameters Θ by
+minimizing Lmin = LBPR + λL′
+BPR(∆v, ∆t) + β∥Θ∥2.
+The overall training process is described in Algorithm 1,
+where the MRS is pre-trained using the standard BPR loss.
+Experiments
+The objectives of experiments are to answer the following
+research questions:
+• RQ1: Can UAT-MC defend against evasion-based pro-
+motion attacks?
+• RQ2: Does multimodal coordination enhance the effec-
+tiveness of adversarial defense?
+• RQ3: How does the perturbation budget in adversarial
+training affect the defense performance?
+• RQ4: How do the hyper-parameters affect the trade-off
+between recommendation performance and adversarial
+robustness?
+All experiments are implemented using PyTorch 2.2.0 and
+run on an NVIDIA RTX 4090 GPU with 48GB of memory.
+5.1
+Experimental Settings
+Datasets
+We conduct experiments on three Amazon datasets Baby,
+Sports and Clothing [He and McAuley, 2016a], which have
+recently been adopted in MRSs research [Yu et al., 2023;
+Guo et al., 2024; Li et al., 2025]. The dataset statistics are
+summarized in Table 1. In our work, we use the pre-extracted
+visual features and textual features that have been published
+in [Zhou et al., 2023c; Zhou et al., 2023a].
+Evaluation Metrics
+To measure recommendation performance before and af-
+ter adversarial training, we use Recall@10 and NDCG@10
+under the leave-one-out evaluation protocol following stan-
+dard evaluation settings in prior works [Zhou et al., 2023c;
+Guo et al., 2024]. To evaluate the effectiveness of the promo-
+tion attack, we adopt the hit rate Hiti@K = N i
+rec/|U| · 100%
+and the relative improvement ratio GainHiti@K = (Hitafter@K
+−Hitbefore@K)/Hitbefore@K · 100% as evaluation metrics,
+where N i
+rec is the number of users for whom the targeted
+item i appears in the top-K recommendation list (with K de-
+faulted to 50), Hitafter@K and Hitbefore@K denote the hit rate
+of the targeted item after and before the attack, respectively.
+
+Dataset
+Victim
+Model
+Defense
+Method
+Hitbefore
+FGSM-based Attack
+PGD-based Attack
+Recommendation
+Lprom
+Lprom + LAlign
+Lprom
+Lprom + LAlign
+Recall
+NDCG
+Hitafter
+GainHit
+Hitafter
+GainHit
+Hitafter
+GainHit
+Hitafter
+GainHit
+Baby
+VBPR
+w/o AT
+0.667%
+3.865%
+479.38%
+3.908%
+485.80%
+4.111%
+516.15%
+4.143%
+520.99%
+0.0503
+0.027
+UAT
+0.622%
+2.381%
+282.96%
+2.383%
+283.41%
+2.450%
+294.15%
+2.451%
+294.25%
+0.0484
+0.0264
+UAT-MC
+0.621%
+1.515%
+143.98%
+1.515%
+144.00%
+1.544%
+148.65%
+1.544%
+148.65%
+0.0476
+0.0253
+MMGCN
+w/o AT
+0.622%
+1.747%
+181.03%
+1.748%
+181.14%
+3.399%
+446.76%
+3.421%
+450.30%
+0.0413
+0.022
+UAT
+0.472%
+0.507%
+7.29%
+0.508%
+7.49%
+0.515%
+9.12%
+0.516%
+9.34%
+0.0344
+0.0185
+UAT-MC
+0.479%
+0.513%
+7.21%
+0.514%
+7.47%
+0.519%
+8.46%
+0.520%
+8.62%
+0.0341
+0.0185
+Sports
+VBPR
+w/o AT
+0.025%
+6.547% 25722.99% 6.586% 25876.73% 7.253% 28506.93% 7.279% 28610.25% 0.0586
+0.0319
+UAT
+0.025%
+0.028%
+13.45%
+0.028%
+13.45%
+0.029%
+13.73%
+0.029%
+13.73%
+0.0510
+0.0280
+UAT-MC
+0.024%
+0.026%
+10.32%
+0.026%
+10.32%
+0.026%
+10.32%
+0.026%
+10.32%
+0.0508
+0.0280
+MMGCN
+w/o AT
+0.024%
+0.266%
+1024.04%
+0.268%
+1033.23%
+0.572%
+2315.13%
+0.581%
+2352.82%
+0.0385
+0.0206
+UAT
+0.035%
+0.038%
+7.01%
+0.039%
+11.02%
+0.044%
+24.45%
+0.044%
+25.45%
+0.0313
+0.0172
+UAT-MC
+0.034%
+0.034%
+0.00%
+0.037%
+8.44%
+0.041%
+19.14%
+0.041%
+19.14%
+0.0317
+0.0173
+Clothing
+VBPR
+w/o AT
+0.036%
+1.335%
+3558.26%
+1.380%
+3682.09%
+1.419%
+3788.87%
+1.438%
+3838.61%
+0.0384
+0.0211
+UAT
+0.031%
+0.287%
+818.66%
+0.303%
+869.17%
+0.306%
+878.50%
+0.312%
+898.38%
+0.0343
+0.0189
+UAT-MC
+0.030%
+0.038%
+26.64%
+0.038%
+26.85%
+0.038%
+27.70%
+0.038%
+27.70%
+0.0333
+0.0184
+MMGCN
+w/o AT
+0.014%
+1.886% 13282.43% 1.941% 13670.72% 9.035% 64019.37% 9.134% 64715.32% 0.0239
+0.0123
+UAT
+0.014%
+0.025%
+76.00%
+0.026%
+81.78%
+0.035%
+148.44%
+0.036%
+149.33%
+0.0221
+0.0114
+UAT-MC
+0.015%
+0.019%
+29.44%
+0.020%
+33.77%
+0.032%
+119.05%
+0.032%
+121.65%
+0.0221
+0.0115
+Table 2: Performance of promotion attacks on two classical models. All reported numbers are averaged results. The best defense results are
+highlighted in bold. (Note: GainHit@50 values are computed using unrounded Hit@50 scores).
+2.5 5 7.5 10
+εa (%)
+w/o AT
+2.5
+7.5
+εd (%)
+Baby-VBPR
+2.5 5 7.5 10
+εa (%)
+Baby-MMGCN
+2.5 5 7.5 10
+εa (%)
+Sports-VBPR
+2.5 5 7.5 10
+εa (%)
+Sports-MMGCN
+2.5 5 7.5 10
+εa (%)
+Clothing-VBPR
+2.5 5 7.5 10
+εa (%)
+Clothing-MMGCN
+Gain
+102
+104
+Figure 5: Visualization of attack effectiveness under varying budgets. The heatmaps display the GainHit@50 (log scale) across three datasets
+and two models. The x-axis represents the attack budget ϵa, and the y-axis represents the defense budget ϵd. Darker colors indicate higher
+attack gains (weaker defense), while lighter colors indicate effective defense.
+A larger GainHit@50 indicates a more effective promotion at-
+tack, suggesting weaker model robustness.
+Targeted Items
+At the MRS’s inference phase, we randomly select 100 tar-
+geted items from unpopular items, whose interaction count is
+5. We conduct promotion attacks on each targeted item indi-
+vidually and record the average Hiti@K and GainHiti@K.
+Victim Models
+We choose two mainstream and classical multimodal recom-
+mendation models as our victim models:
+• VBPR [He and McAuley, 2016b]: As a representative of
+MLP-based models, VBPR incorporates visual features
+for user preference learning with BPR loss. Following
+[Zhou et al., 2023c; Guo et al., 2024], we concatenate
+the multimodal embeddings and the item ID embedding
+as the item embeddings.
+• MMGCN [Wei et al., 2019]: As a representative of
+GCN-based models, MMGCN constructs three modal-
+specific graph to learn different modality features.
+It
+concatenates all modality embeddings to obtain the rep-
+resentations of users or items.
+We follow MMRec [Zhou et al., 2023a] to save the model
+parameters at the point of best performance.
+The hyper-
+parameters search spaces are provided in the Appendix B.1.
+Promotion Attacks
+We conduct promotion attacks by maximizing Lpromotion (Eq.
+3) using two standard strategies: FGSM [Goodfellow et al.,
+2014] and PGD [Madry et al., 2017]. FGSM serves as a
+single-step baseline, whereas PGD functions as a stronger it-
+erative attacker. In our experiments, the PGD attack is con-
+figured with 10 iterations and a step size of α = 1.25·ϵm/10.
+Defenders
+To verify the effectiveness of the Untargeted Adversarial
+Training and the Multimodal Coordination, we compare
+UAT-MC with two baseline models: one is the victim model
+without any defense mechanisms, denoted as w/o AT, and
+the other is the variant of UAT-MC, denoted as UAT, which
+applies perturbations to both visual and textual modalities in-
+dependently without coordination.
+Implementation Details
+During adversarial training phase, we set the maximum per-
+turbation magnitude ϵm as 10% of the 2-norm of the in-
+
+0.0174
+0.0175
+0.0176
+0.0177
+NDCG@10 ↑
+15
+25
+Attack Promotion Gain (%) ↓
+λ=1
+λ=2
+λ=3
+λ=4
+λ=5
+λ=6
+λ=7
+λ=8
+λ=9
+λ=10
+Other λ
+Best λ
+(a) MMGCN-Baby (λ)
+0.0170
+0.0172
+0.0174
+0.0176
+NDCG@10 ↑
+8.5
+9.0
+9.5
+10.0
+10.5
+11.0
+Attack Promotion Gain (%) ↓
+α=0.1
+α=1
+α=2
+α=3
+α=4
+α=5 α=6
+α=7
+α=8
+α=9
+α=10
+Other α
+Best α
+(b) MMGCN-Baby (α)
+Figure
+6:
+Trade-off
+between
+recommendation
+performance
+(NDCG@10) and adversarial robustness (GainHit@50) under PGD(w/
+LAlign)-based attack with varying λ and α on the Baby dataset.
+put embedding for modality m, the coefficient α is searched
+in {0.1,1,2,3,4,5,6,7,8,9,10}, the coefficient λ is searched in
+{1,2,3,4,5,6,7,8,9,10}.
+5.2
+Defense Effect (RQ1 and RQ2)
+We conduct a systematic evaluation of the performance of dif-
+ferent defense methods on two attack scenarios (FGSM-based
+and PGD-based) on two mainstream MRSs (VBPR [He and
+McAuley, 2016b] and MMGCN [Wei et al., 2019]). The vic-
+tim models take the original and perturbed multimodal em-
+beddings as input, respectively. Meanwhile, we also report
+the recommendation performance on the clean test set to re-
+flect the impact of adversarial training on overall recommen-
+dation quality. The results are shown in Table 2, from which
+we have the following observations:
+• Across all dataset-model combinations, unpopular
+items consistently exhibit vulnerability to promotion
+attacks (w/o LAlign), which risk misleading the tar-
+get model into treating them as popular items. It can
+be observed that perturbations generated by PGD are
+more effective in promoting the targeted items com-
+pared to those generated by FGSM. Statistically, on the
+Baby dataset, the average Hit@50 of unpopular items in-
+creases from 0.667% to 3.865% under FGSM-based per-
+turbations, and further to 4.111% under PGD-based per-
+turbations. This implies that more than 3.444% of users
+will be misled into recommending an item (e.g., targeted
+item) that should not appear in the recommendation lists.
+• Attacks equipped with LAlign consistently achieve
+higher promotion gains than their counterparts with-
+out alignment, indicating that explicitly coordinating
+visual and textual perturbations leads to more effective
+promotion. This improvement is particularly evident for
+stronger attacks.
+For example, under PGD-based at-
+tacks on the Baby dataset, introducing LAlign increases
+the GainHit@50 of VBPR from 516.15% to 520.99%, and
+that of MMGCN from 446.76% to 450.30%. Similar
+trends are observed on the Sports and Clothing datasets,
+where alignment consistently yields additional promo-
+tion gains across both VBPR and MMGCN.
+• After untargeted adversarial training (UAT), the
+MRSs exhibit significantly enhanced resistance to
+evasion-based promotion attacks. The results show
+that the effectiveness of both FGSM-based and PGD-
+based attacks drops significantly after UAT. In the fol-
+lowing, we analyze based on the average GainHit@50 re-
+sults of the two attacks (w/ LAlign). On the Baby dataset,
+UAT reduces the GainHit@50 of VBPR from 503.39%
+to 288.83%, achieving a 42.62% relative reduction. For
+MMGCN, the value drops significantly from 315.72%
+to 8.42%, corresponding to a 97.33% reduction. Sim-
+ilar trends are observed on the Sports dataset, where
+VBPR and MMGCN experience reductions of 99.95%
+and 98.92%, respectively. On the Clothing dataset, UAT
+reduces GainHit@50 by 76.50% for VBPR and 99.71%
+for MMGCN.
+• UAT with Multimodal Coordination can further en-
+hance its defense capability.
+According to our ob-
+servations, the GainHit@50 of MMGCN on the Sports
+dataset drops from 25.45% to 19.14%, while that of
+VBPR on the Clothing dataset decreases significantly
+from 898.38% to 27.70% after applying multimodal co-
+ordination. Notably, the improvement in robustness is
+achieved with minimal impact on recommendation per-
+formance.
+5.3
+Hyper-parameter Study (RQ3 and RQ4)
+This section explores how the perturbation budget ϵm and the
+hyper-parameters λ and α in adversarial training influence
+the trade-off between adversarial robustness and recommen-
+dation performance.
+• Impact of ϵd and ϵa To examine the robustness and gen-
+eralization ability of UAT-MC, we conduct adversarial
+training with different defense perturbation budgets ϵd ∈
+{2.5%, 5%, 7.5%, 10%}, and evaluate the trained mod-
+els under FGSM-based promotion attacks with varying
+attack budgets ϵa ∈{2.5%, 5%, 7.5%, 10%}. The re-
+sults are visualized in Figure 5, where specific numeri-
+cal values are detailed in the Appendix B.3. We observe
+a clear transition from dark blue to light blue/white as ϵd
+increases, indicating that our defense method effectively
+mitigates the promotion attack.
+• Impact of λ and α We investigate the trade-off be-
+tween adversarial robustness and recommendation per-
+formance by varying λ ∈[1, 10] and α ∈[0.1, 10]. Fig-
+ure 6 (Baby dataset) and the Appendix B.1 (others) visu-
+alize this relationship, plotting recommendation perfor-
+mance (NDCG@10) against attack gain (GainHit@50). A
+clear trade-off is observed: higher recommendation per-
+formance typically comes at the cost of increased vul-
+nerability.
+Conclusion
+In this work, we address the vulnerability of MRSs to promo-
+tion attacks. Crucially, we verify the existence of cross-modal
+gradient mismatch in multi-user promotion settings and pro-
+posed UAT-MC to mitigate it via a novel gradient alignment
+regularization. Extensive experiments demonstrate the effec-
+tiveness of UAT-MC in defending against evasion-based pro-
+motion attacks.
+
+Acknowledgments
+This work is supported by Natural Science Foundation of
+Sichuan Province under grant 2024NSFSC0516 and National
+Natural Science Foundation of China under grant 61972270.
+References
+[Chen et al., 2024] Lijian Chen, Wei Yuan, Tong Chen,
+Guanhua Ye, Nguyen Quoc Viet Hung, and Hongzhi
+Yin. Adversarial item promotion on visually-aware rec-
+ommender systems by guided diffusion. ACM Trans. Inf.
+Syst., 42(6), August 2024.
+[Di Noia et al., 2020] Tommaso Di Noia, Daniele Malitesta,
+and Felice Antonio Merra.
+Taamr: Targeted adversar-
+ial attack against multimedia recommender systems. In
+2020 50th Annual IEEE/IFIP International Conference on
+Dependable Systems and Networks Workshops (DSN-W),
+pages 1-8, 2020.
+[Goodfellow et al., 2014] Ian
+J
+Goodfellow,
+Jonathon
+Shlens, and Christian Szegedy. Explaining and harnessing
+adversarial examples.
+arXiv preprint arXiv:1412.6572,
+2014.
+[Guo et al., 2024] Zhiqiang Guo, Jianjun Li, Guohui Li,
+Chaoyang Wang, Si Shi, and Bin Ruan. Lgmrec: local and
+global graph learning for multimodal recommendation. In
+Proceedings of the AAAI Conference on Artificial Intelli-
+gence, volume 38, pages 8454-8462, 2024.
+[He and McAuley, 2016a] Ruining He and Julian McAuley.
+Ups and downs: Modeling the visual evolution of fashion
+trends with one-class collaborative filtering. In proceed-
+ings of the 25th international conference on world wide
+web, pages 507-517, 2016.
+[He and McAuley, 2016b] Ruining He and Julian McAuley.
+Vbpr: visual bayesian personalized ranking from implicit
+feedback. In Proceedings of the AAAI conference on arti-
+ficial intelligence, volume 30, 2016.
+[Hsiao et al., 2022] Shao-Ping Hsiao, Yu-Che Tsai, and
+Cheng-Te Li.
+Unsupervised post-time fake social mes-
+sage detection with recommendation-aware representation
+learning. In Companion Proceedings of the Web Confer-
+ence 2022, pages 232-235, 2022.
+[Li et al., 2025] Hongji Li, Hanwen Du, Youhua Li, Junchen
+Fu, Chunxiao Li, Ziyi Zhuang, Jiakang Li, and Yongxin
+Ni. Teach me how to denoise: A universal framework for
+denoising multi-modal recommender systems via guided
+calibration.
+In Proceedings of the Eighteenth ACM In-
+ternational Conference on Web Search and Data Mining,
+WSDM ’25, page 782-791, New York, NY, USA, 2025.
+Association for Computing Machinery.
+[Lin et al., 2023] Weilin Lin, Xiangyu Zhao, Yejing Wang,
+Yuanshao Zhu, and Wanyu Wang.
+Autodenoise: Auto-
+matic data instance denoising for recommendations.
+In
+Proceedings of the ACM Web Conference 2023, pages
+1003-1011, 2023.
+[Liu and Larson, 2021] Zhuoran Liu and Martha Larson.
+Adversarial item promotion: Vulnerabilities at the core of
+top-n recommenders that use images to address cold start.
+In Proceedings of the Web Conference 2021, WWW ’21,
+page 3590-3602, New York, NY, USA, 2021. Association
+for Computing Machinery.
+[Liu et al., 2024] Yifan Liu, Kangning Zhang, Xiangyuan
+Ren, Yanhua Huang, Jiarui Jin, Yingjie Qin, Ruilong Su,
+Ruiwen Xu, Yong Yu, and Weinan Zhang.
+Alignrec:
+Aligning and training in multimodal recommendations. In
+Proceedings of the 33rd ACM International Conference
+on Information and Knowledge Management, CIKM ’24,
+page 1503-1512, New York, NY, USA, 2024. Association
+for Computing Machinery.
+[Madry et al., 2017] Aleksander
+Madry,
+Aleksandar
+Makelov,
+Ludwig
+Schmidt,
+Dimitris
+Tsipras,
+and
+Adrian Vladu.
+Towards deep learning models resistant
+to adversarial attacks. arXiv preprint arXiv:1706.06083,
+2017.
+[Mu et al., 2025] Lingyu Mu, Zhengxiao Liu, Zhitong Zhu,
+and Zheng Lin. Trust-grs: A trustworthy training frame-
+work for graph neural network based recommender sys-
+tems against shilling attacks. In Proceedings of the AAAI
+Conference on Artificial Intelligence, volume 39, pages
+12408-12416, 2025.
+[Nguyen Thanh et al., 2023] Toan Nguyen Thanh, Nguyen
+Duc Khang Quach, Thanh Tam Nguyen, Thanh Trung
+Huynh, Viet Hung Vu, Phi Le Nguyen, Jun Jo, and Quoc
+Viet Hung Nguyen. Poisoning gnn-based recommender
+systems with generative surrogate-based attacks.
+ACM
+Trans. Inf. Syst., 41(3), February 2023.
+[Ong and Khong, 2025] Rongqing Kenneth Ong and Andy
+W. H. Khong.
+Spectrum-based modality representation
+fusion graph convolutional network for multimodal rec-
+ommendation. In Proceedings of the Eighteenth ACM In-
+ternational Conference on Web Search and Data Mining,
+WSDM ’25, page 773-781, New York, NY, USA, 2025.
+Association for Computing Machinery.
+[Rendle et al., 2009] Steffen Rendle, Christoph Freuden-
+thaler, Zeno Gantner, and Lars Schmidt-Thieme.
+Bpr:
+Bayesian personalized ranking from implicit feedback. In
+Proceedings of the Twenty-Fifth Conference on Uncer-
+tainty in Artificial Intelligence, UAI ’09, page 452-461,
+Arlington, Virginia, USA, 2009. AUAI Press.
+[Sun et al., 2020] Rui Sun, Xuezhi Cao, Yan Zhao, Junchen
+Wan, Kun Zhou, Fuzheng Zhang, Zhongyuan Wang, and
+Kai Zheng.
+Multi-modal knowledge graphs for recom-
+mender systems. In Proceedings of the 29th ACM inter-
+national conference on information & knowledge manage-
+ment, pages 1405-1414, 2020.
+[Tang et al., 2020] Jinhui Tang, Xiaoyu Du, Xiangnan He,
+Fajie Yuan, Qi Tian, and Tat-Seng Chua.
+Adversarial
+training towards robust multimedia recommender system.
+IEEE Transactions on Knowledge and Data Engineering,
+32(5):855-867, 2020.
+[Wang et al., 2022] Shilei Wang, Peng Zhang, Hui Wang,
+Hongtao Yu, and Fuzhi Zhang. Detecting shilling groups
+
+in online recommender systems based on graph convolu-
+tional network. Information Processing & Management,
+59(5):103031, 2022.
+[Wang et al., 2023] Qifan Wang, Yinwei Wei, Jianhua Yin,
+Jianlong Wu, Xuemeng Song, and Liqiang Nie. Dualgnn:
+Dual graph neural network for multimedia recommenda-
+tion.
+Multimedia, IEEE Trans. on (T-MM), 25(000):11,
+2023.
+[Wang et al., 2024a] Zongwei Wang, Min Gao, Junliang Yu,
+Xinyi Gao, Quoc Viet Hung Nguyen, Shazia Sadiq, and
+Hongzhi Yin. Llm-powered text simulation attack against
+id-free recommender systems, 2024.
+[Wang et al., 2024b] Zongwei Wang, Junliang Yu, Min Gao,
+Hongzhi Yin, Bin Cui, and Shazia Sadiq. Unveiling vul-
+nerabilities of contrastive recommender systems to poison-
+ing attacks. In Proceedings of the 30th ACM SIGKDD con-
+ference on knowledge discovery and data mining, pages
+3311-3322, 2024.
+[Wei et al., 2019] Yinwei Wei, Xiang Wang, Liqiang Nie,
+Xiangnan He,
+Richang Hong,
+and Tat-Seng Chua.
+Mmgcn: Multi-modal graph convolution network for per-
+sonalized recommendation of micro-video. In Proceed-
+ings of the 27th ACM international conference on multi-
+media, pages 1437-1445, 2019.
+[Wei et al., 2020] Yinwei Wei, Xiang Wang, Liqiang Nie,
+Xiangnan He, and Tat-Seng Chua.
+Graph-refined con-
+volutional network for multimedia recommendation with
+implicit feedback. In Proceedings of the 28th ACM In-
+ternational Conference on Multimedia, MM ’20, page
+3541-3549, New York, NY, USA, 2020. Association for
+Computing Machinery.
+[Wu et al., 2021] Chenwang Wu, Defu Lian, Yong Ge, Zhi-
+hao Zhu, Enhong Chen, and Senchao Yuan.
+Fight fire
+with fire: Towards robust recommender systems via ad-
+versarial poisoning training. In Proceedings of the 44th
+International ACM SIGIR Conference on Research and
+Development in Information Retrieval, SIGIR ’21, page
+1074-1083, New York, NY, USA, 2021. Association for
+Computing Machinery.
+[Wu et al., 2023] Chenwang Wu, Defu Lian, Yong Ge, Zhi-
+hao Zhu, and Enhong Chen. Influence-driven data poison-
+ing for robust recommender systems. IEEE Trans. Pattern
+Anal. Mach. Intell., 45(10):11915-11931, October 2023.
+[Yang et al., 2024] Shiyi Yang, Chen Wang, Xiwei Xu, Lim-
+ing Zhu, and Lina Yao. Attacking visually-aware recom-
+mender systems with transferable and imperceptible ad-
+versarial styles. In Proceedings of the 33rd ACM Interna-
+tional Conference on Information and Knowledge Man-
+agement, CIKM ’24, page 2900-2909, New York, NY,
+USA, 2024. Association for Computing Machinery.
+[Yu et al., 2023] Penghang Yu, Zhiyi Tan, Guanming Lu,
+and Bing-Kun Bao. Multi-view graph convolutional net-
+work for multimedia recommendation.
+In Proceedings
+of the 31st ACM international conference on multimedia,
+pages 6576-6585, 2023.
+[Zhang et al., 2021] Jinghao Zhang, Yanqiao Zhu, Qiang
+Liu, Shu Wu, Shuhui Wang, and Liang Wang.
+Mining
+latent structures for multimedia recommendation. In Pro-
+ceedings of the 29th ACM international conference on
+multimedia, pages 3872-3880, 2021.
+[Zhang et al., 2024] Jinghao Zhang, Yuting Liu, Qiang Liu,
+Shu Wu, Guibing Guo, and Liang Wang. Stealthy attack
+on large language model based recommendation. In Lun-
+Wei Ku, Andre Martins, and Vivek Srikumar, editors, Pro-
+ceedings of the 62nd Annual Meeting of the Association
+for Computational Linguistics (Volume 1: Long Papers),
+pages 5839-5857, Bangkok, Thailand, August 2024. As-
+sociation for Computational Linguistics.
+[Zhou et al., 2023a] Hongyu Zhou, Xin Zhou, Zhiwei Zeng,
+Lingzi Zhang, and Zhiqi Shen. A comprehensive survey on
+multimodal recommender systems: Taxonomy, evaluation,
+and future directions, 2023.
+[Zhou et al., 2023b] Hongyu Zhou, Xin Zhou, Lingzi Zhang,
+and Zhiqi Shen. Enhancing dyadic relations with homoge-
+neous graphs for multimodal recommendation. In ECAI
+2023, pages 3123-3130. IOS Press, 2023.
+[Zhou et al., 2023c] Xin Zhou, Hongyu Zhou, Yong Liu,
+Zhiwei Zeng, Chunyan Miao, Pengwei Wang, Yuan You,
+and Feijun Jiang.
+Bootstrap latent representations for
+multi-modal recommendation. In Proceedings of the ACM
+web conference 2023, pages 845-854, 2023.
+
+A
+Related Work
+A.1
+Multimodal Recommender Systems
+Multimodal recommender systems (MRSs) aim to enhance
+recommendation performance by integrating multiple modal-
+ities of items. For example, VBPR [He and McAuley, 2016b]
+extends traditional Matrix Factorization by integrating mul-
+timodal representations with item ID embeddings.
+GNN-
+based methods such as MMGCN [Wei et al., 2019], GRCN
+[Wei et al., 2020] and DualGNN [Wang et al., 2023] encode
+representations for each modality to capture user’s modal-
+specific preferences. Recent studies have sought to improve
+recommendation performance using various auxiliary infor-
+mation, such as the knowledge graph [Sun et al., 2020], user
+co-occurrence graph [Zhou et al., 2023b], item-item relation
+graph [Zhang et al., 2021], self-supervised learning [Zhou
+et al., 2023c], hypergraph [Guo et al., 2024], multimodal
+alignment [Liu et al., 2024], spectral theory [Ong and Khong,
+2025]. However, while above research enhances the person-
+alization by utilizing the auxiliary modal information, MRSs
+exhibit heightened vulnerability to the promotion attacks.
+A.2
+Promotion Attacks and Defenses
+As targeted adversarial strategy, promotion attacks can be
+typically classified into two paradigms based on implemen-
+tation mechanisms:
+Poisoning-based promotion attacks
+achieve their objectives by injecting fabricated user profiles
+into the training set. For example, GSPAttack [Nguyen Thanh
+et al., 2023] proposes a generative surrogate-based poison-
+ing framework for graph-based recommender systems (RSs).
+Infmix [Wu et al., 2023] designs an influence-based threat
+estimator and a distribution-agnostic user generator to craft
+imperceptible yet impactful fake users. CLeaR [Wang et al.,
+2024b] proposes a dual-objective attack framework that ex-
+ploits representation dispersion and rank promotion, reveal-
+ing the risks introduced by contrastive learning. Our work
+focuses on evasion-based promotion attacks that achieve
+the objectives at the inference phase by injecting impercep-
+tible adversarial perturbations into the item’s content. For
+visually-aware recommendation models, TAaMR [Di Noia et
+al., 2020], applies FGSM and PGD attacks on pre-trained vi-
+sual encoders to misclassify the targeted item into a popular
+item’ category. AIP [Liu and Larson, 2021], IPDGI [Chen
+et al., 2024], IPDGI [Chen et al., 2024] and SPAF [Yang
+et al., 2024] generate imperceptible and diverse adversarial
+images to increase the similarity between the targeted item
+and popular items. RecTextAttack [Zhang et al., 2024] and
+TextSimu [Wang et al., 2024a] use LLMs to manipulate item
+text content to boost their ranking in text-aware recommenda-
+tion models, revealing new vulnerabilities introduced by large
+language models (LLMs).
+To date, many studies have focused on defending against
+such attacks through data filtering or robust training. Data
+filtering methods aim to detect and remove adversarially ma-
+nipulated items or inputs before they impact the recommen-
+dation model. For example, Re-writing Defense [Zhang et al.,
+2024] utilizes GPT-3.5-turbo to rewrite the adversarial text to
+defense LLM-based RSs. RecMR [Hsiao et al., 2022] uses
+an AutoEncoder as a detection encoding model to distinguish
+Hyperparameter
+Value / Search Space
+Common Settings (Shared)
+Embedding Size
+Epochs
+[1, 1000]
+Stopping Step
+Batch Size
+2048 (Train), 4096 (Eval)
+Optimizer
+Adam
+LR Scheduler
+[1.0, 50]
+Align Weight
+{2.0, 1.0, 0.1, 0.01, 0.001, 0}
+VBPR Specific
+Learning Rate
+0.001
+β
+{2.0, 1.0, 0.1, 0.01, 0.001, 10−4, 10−5}
+MMGCN Specific
+Layers
+Learning Rate
+{0.0001, 0.0005, 0.001, 0.005, 0.01}
+β
+{10−5, 10−4, 0.001, 0.01, 0.1, 0.5}
+Table 3: Hyper-parameter search spaces of multimodal recommen-
+dation systems.
+anomalies. NFGCN-TIA [Wang et al., 2022] employs a GCN
+model to detect malicious users. Robust training enhances
+the model’s resilience by incorporating adversarial examples
+during training or modifying the learning objectives to reduce
+sensitivity to perturbations. APT [Wu et al., 2021] simulates
+the poisoning process by injecting fake user data to foster a
+more robust system. AutoDenoise [Lin et al., 2023] addresses
+the challenge of highly dynamic data distributions by employ-
+ing a deep RL-based framework.
+However, to the best of our knowledge, existing studies
+on adversarial robustness have primarily focused on single
+modal recommender systems, without considering the joint
+presence of visual and textual modalities. From an adversar-
+ial perspective, launching attacks on both modalities simulta-
+neously to achieve effective promotion is natural. This high-
+lights the urgent need to investigate promotion attacks and
+defense specifically tailored to MRSs.
+B
+Experiments
+B.1
+Hyper-parameter Study
+MRSs Training
+We follow MMRec 1 to save the model parameters at the point
+of best performance. The hyper-parameters search spaces are
+provided in the Table 3.
+Impact of λ and α
+Figures 9 and 10 illustrate the impact of hyperparameters
+on the trade-off between recommendation performance and
+adversarial robustness under PGD-based promotion attacks
+for VBPR and MMGCN, respectively. Specifically, the left
+columns of both figures demonstrate the effect of λ, while
+the right columns present the influence of α, which controls
+1
+
+the alignment loss between visual and textual gradients. The
+results are reported across three datasets: Amazon Baby (top
+row), Sports (middle row), and Clothing (bottom row).
+B.2
+Extended Analysis of User Group Overlap
+To provide a comprehensive empirical basis for the cross-
+modal gradient mismatch identified in Section 3, we present
+the complete distribution of Jaccard Similarity coefficients
+between the visually-sensitive user subset Uv and the
+textually-sensitive user subset Ut across all three datasets
+(Amazon Baby, Sports, and Clothing) and two victim mod-
+els (VBPR and MMGCN).
+Figure 7 illustrates these distributions. Across all six exper-
+imental settings, the average Jaccard similarity remains con-
+sistently low to moderate, ranging from 0.262 to 0.575. This
+indicates that Uv and Ut are largely distinct groups. In other
+words, for a given targeted item, the users who are most sus-
+ceptible to visual perturbations are rarely the same as those
+susceptible to textual perturbations. This distinctness funda-
+mentally leads to the conflicting gradient directions during
+joint optimization. These extensive results further corrob-
+orate our motivation: without explicit coordination, multi-
+modal perturbations naturally diverge due to the inherent dis-
+crepancy in user group dominance.
+B.3
+Impact of ϵd and ϵa
+This section provides the detailed numerical results corre-
+sponding to the robustness analysis in the main paper. We
+evaluate the performance of UAT-MC under varying adver-
+sarial training budgets ϵd ∈{2.5%, 5%, 7.5%, 10%} and at-
+tack budgets ϵa ∈{2.5%, 5%, 7.5%, 10%}.
+The results are categorized based on the attack objective:
+• Table 4 presents the results under standard FGSM-based
+promotion attacks without the alignment loss.
+• Table 5 reports the GainHit@50 under FGSM-based
+promotion attacks incorporating the gradient alignment
+loss LAlign. These values correspond to the visualization
+in Figure 5.
+Across both settings, we observe that increasing the defense
+budget ϵd consistently suppresses the attack gain, demonstrat-
+ing the robustness of our method against different variations
+of promotion attacks.
+B.4
+Case Study
+To illustrate how cross-modal gradient mismatch manifests
+during optimization and how gradient-level alignment re-
+shapes the optimization dynamics, we randomly select an
+item i (ID: B004203QQ4, with 5 interactions) from the Baby
+dataset and conduct promotion attacks on VBPR. We com-
+pare PGD w/o LAlign and PGD w/ LAlign, tracking (i) the user
+coverage, measured by N i
+rec, and (ii) the cosine similarity be-
+tween visual and textual perturbation gradients.
+As shown in Fig. 8, vanilla PGD gradually increases the
+cross-modal gradient cosine similarity but quickly saturates
+at a relatively low level, resulting in slower and less stable
+growth in promotion performance. In contrast, when LAlign is
+introduced, the gradient cosine similarity rises more rapidly
+and remains consistently higher. Consequently, PGD with
+LAlign achieves faster and more stable promotion gains. Over-
+all, this case study provides intuitive evidence that explicitly
+enforcing gradient alignment mitigates cross-modal gradient
+mismatch and leads to more effective promotion attacks.
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Jaccard Similarity Value
+10
+30
+Count
+19
+24
+Average=0.557
+(a) VBPR-Baby
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Jaccard Similarity Value
+5
+15
+25
+35
+Count
+15
+8
+5
+6
+5
+Average=0.292
+(b) MMGCN-Baby
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Jaccard Similarity Value
+10
+30
+50
+Count
+20
+23
+Average=0.575
+(c) VBPR-Sports
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Jaccard Similarity Value
+5
+15
+25
+Count
+21
+13
+3
+4
+1
+Average=0.262
+(d) MMGCN-Sports
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Jaccard Similarity Value
+5
+15
+25
+35
+Count
+11
+35
+7
+Average=0.522
+(e) VBPR-Clothing
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Jaccard Similarity Value
+5
+15
+Count
+8
+20
+16
+7
+Average=0.411
+(f) MMGCN-Clothing
+Figure 7: Distribution of Jaccard Similarity between Uv and Ut.
+C
+Computational Complexity Analysis
+Let Tf and Tb denote the forward and backward cost of the
+underlying MRS for one batch, d the embedding dimension,
+and K the nu mber of inner maximization steps. Without ad-
+versarial training, the per-batch complexity is O(Tf + Tb). If
+one explicitly computes per-user gradients for both modal-
+ities to identify Uv and Ut, the cost becomes O(|Up|Tb +
+|Up|d + |Up| log |Up|) ≈O(|Up|Tb) per attack step, i.e.,
+O(K|Up|Tb + Tf + Tb) per batch, which grows linearly with
+the number of users. In contrast, UAT-MC does not explicitly
+identify Uv or Ut. It only adds a gradient-alignment term on
+top of the already available batch-level modality gradients, in-
+troducing an extra cost of only O(d). Therefore, its per-batch
+complexity is approximately O((K + 1)(Tf + Tb)), i.e., the
+same order as standard adversarial training without explicit
+user-wise coordination. Hence, compared with explicit user-
+wise gradient analysis, UAT-MC removes the linear depen-
+dence on |Up| and introduces only a lightweight extra over-
+head.
+1
+3
+5
+7
+9
+Iteration
+40
+80
+Promotion Hits
+PGD w/o Align
+PGD w/ Align
+(a) User coverage of item i (N i
+rec)
+1
+3
+5
+7
+9
+Iteration
+0.65
+0.70
+0.75
+0.80
+0.85
+Cosine Similarity (Gradv, Gradt)
+PGD w/o Align
+PGD w/ Align
+(b) Cosine similarity between Γv and Γt.
+Figure 8: Case study of PGD-based promotion attacks on item B004203QQ4 from the Baby dataset using VBPR, with and without the
+alignment loss LAlign.
+Dataset
+Victim Model
+VBPR
+MMGCN
+ϵ
+ϵa=2.5%
+ϵa=5%
+ϵa=7.5%
+ϵa=10%
+ϵa=2.5%
+ϵa=5%
+ϵa=7.5%
+ϵa=10%
+Baby
+w/o AT
+54.25%
+146.19%
+288.11%
+479.38%
+81.49%
+152.20%
+176.08%
+181.03%
+ϵd=2.5%
+49.33%
+138.78%
+270.46%
+456.33%
+12.39%
+21.72%
+27.69%
+31.13%
+ϵd=5%
+43.01%
+122.32%
+243.43%
+412.88%
+5.65%
+9.30%
+13.07%
+15.82%
+ϵd=7.5%
+28.82%
+73.92%
+142.97%
+233.41%
+3.97%
+7.37%
+10.82%
+12.94%
+ϵd=10%
+19.38%
+48.45%
+89.52%
+143.98%
+2.42%
+4.32%
+5.83%
+7.21%
+Sports
+w/o AT
+734.90% 4636.57% 13506.93% 25722.99%
+201.19%
+505.93%
+789.32%
+1024.04%
+ϵd=2.5%
+277.40% 1946.12%
+6601.83%
+14000.23%
+30.33%
+48.74%
+51.46%
+45.19%
+ϵd=5%
+58.84%
+292.82%
+954.70%
+2356.63%
+16.90%
+21.90%
+26.43%
+27.14%
+ϵd=7.5%
+6.90%
+14.37%
+22.13%
+34.48%
+7.32%
+8.87%
+9.98%
+10.42%
+ϵd=10%
+2.36%
+4.72%
+7.37%
+10.32%
+0.00%
+3.91%
+4.53%
+6.38%
+Clothing
+w/o AT
+121.04%
+519.48%
+1508.35%
+3558.26%
+1072.07% 6460.36% 12045.05% 13282.43%
+ϵd=2.5%
+79.76%
+327.66%
+1004.01%
+2486.97%
+128.08%
+252.71%
+303.45%
+305.42%
+ϵd=5%
+33.95%
+100.20%
+244.99%
+522.09%
+43.98%
+61.28%
+68.42%
+71.80%
+ϵd=7.5%
+13.35%
+36.23%
+67.37%
+123.52%
+30.04%
+48.50%
+51.93%
+56.22%
+ϵd=10%
+2.96%
+9.30%
+16.70%
+26.64%
+21.65%
+25.06%
+28.04%
+29.44%
+Table 4: Comparison of GainHit@50 under different combinations of adversarial training budgets (ϵd) and attack budgets (ϵa) for FGSM-based
+promotion attacks without gradient alignment. Here, ϵd denotes the perturbation budget used during adversarial training, while ϵa represents
+the perturbation budget used during promotion attacks. The best defense performance under each setting is highlighted in bold.
+Dataset
+Victim Model
+VBPR
+MMGCN
+ϵ
+ϵa=2.5%
+ϵa=5%
+ϵa=7.5%
+ϵa=10%
+ϵa=2.5%
+ϵa=5%
+ϵa=7.5%
+ϵa=10%
+Baby
+w/o AT
+54.81%
+148.29%
+291.56%
+485.80%
+81.68%
+152.74%
+176.58%
+181.14%
+ϵd=2.5%
+49.33%
+138.78%
+270.46%
+456.33%
+12.55%
+22.02%
+28.63%
+32.24%
+ϵd=5%
+43.01%
+122.32%
+243.43%
+412.92%
+5.71%
+9.42%
+13.21%
+15.97%
+ϵd=7.5%
+28.82%
+73.92%
+142.97%
+233.41%
+3.97%
+7.39%
+10.85%
+13.05%
+ϵd=10%
+19.38%
+48.47%
+89.54%
+144.00%
+2.44%
+4.35%
+5.88%
+7.47%
+Sports
+w/o AT
+754.29%
+4737.40% 13737.12% 25876.73%
+202.37%
+512.76%
+807.12%
+1033.23%
+ϵd=2.5%
+277.40%
+1947.26%
+6602.51%
+14000.68%
+31.59%
+52.30%
+52.72%
+56.49%
+ϵd=5%
+60.22%
+296.96%
+965.75%
+2384.53%
+17.38%
+30.00%
+30.48%
+31.19%
+ϵd=7.5%
+7.18%
+14.66%
+23.56%
+35.34%
+8.65%
+11.75%
+13.75%
+14.63%
+ϵd=10%
+2.36%
+4.72%
+7.37%
+10.32%
+4.94%
+6.58%
+7.82%
+8.44%
+Clothing
+w/o AT
+125.91%
+534.78%
+1554.78%
+3682.09%
+1091.44% 6598.65% 12292.34% 13670.72%
+ϵd=2.5%
+79.76%
+327.66%
+1004.61%
+2488.58%
+132.02%
+263.05%
+327.59%
+340.89%
+ϵd=5%
+33.95%
+100.61%
+244.99%
+522.70%
+47.37%
+70.30%
+79.70%
+80.83%
+ϵd=7.5%
+13.35%
+36.23%
+67.58%
+123.73%
+32.19%
+54.94%
+57.08%
+63.52%
+ϵd=10%
+3.38%
+9.51%
+16.70%
+26.85%
+22.51%
+27.05%
+29.53%
+33.77%
+Table 5: Comparison of GainHit@50 under different combinations of adversarial training budgets (ϵd) and attack budgets (ϵa) for FGSM-based
+promotion attacks with the gradient alignment loss LAlign. Here, ϵd denotes the perturbation budget used during adversarial training, while ϵa
+represents the perturbation budget used during promotion attacks. A larger value of GainHit@50 indicates higher attack effectiveness and thus
+weaker defense capability. The best defense performance under each setting is highlighted in bold.
+
+0.0242
+0.0243
+0.0244
+0.0245
+Recommendation Performance (NDCG@10) ↑
+220
+260
+Attack Promotion Gain (%) ↓
+λ=1,y=294.91%
+λ=2,y=236.03%
+λ=3,y=219.55%
+λ=4,y=212.12%
+λ=5,y=206.8%
+λ=6,y=205.13%
+λ=7,y=204.77%
+λ=8,y=204.76%
+λ=9,y=203.88%
+λ=10,y=203.52%
+Other λ
+Best λ
+(a) VBPR-Baby (λ)
+325
+α=0.1, y=323.52%
+Other α
+Best α
+0.0220
+0.0225
+0.0230
+0.0235
+0.0240
+0.0245
+Recommendation Performance (NDCG@10) ↑
+140
+160
+180
+200
+Attack Promotion Gain (%) ↓
+α=1, y=206.8%
+α=2, y=180.1%
+α=3, y=158.46%
+α=4, y=148.65%
+α=5, y=135.43%
+α=6, y=134.79%
+α=7, y=136.75%
+α=8, y=140.71%
+α=9, y=146.76%
+α=10, y=152.86%
+(b) VBPR-Baby (α)
+700
+=1, y=700.56%
+140
+=2, y=139.77%
+0.0271
+0.0272
+0.0273
+0.0274
+0.0275
+Recommendation Performance (NDCG@10) 
+15
+25
+35
+45
+Attack Promotion Gain (%) 
+=3, y=42.45%
+=4, y=27.91%
+=5, y=19.48%
+=6, y=17.44%
+=7, y=16.33%=8, y=15.54%
+=9, y=14.33%
+=10, y=14.71%
+Other 
+Best 
+(c) VBPR-Sports (λ)
+0.0271
+0.0272
+0.0273
+0.0274
+0.0275
+Recommendation Performance (NDCG@10) 
+20
+40
+Attack Promotion Gain (%) 
+=0.1,y=10.32%
+=1,y=14.33%
+=2,y=19.06%
+=3,y=20.35%
+=4,y=25.15%
+=5,y=30.41%
+=6,y=36.9%
+=7,y=40.24%
+=8,y=47.34%
+=9,y=51.93%
+=10,y=55.49%
+Other 
+Best 
+(d) VBPR-Sports (α)
+250
+=1, y=245.06%
+110
+=2, y=103.72%
+0.0184
+0.0186
+0.0188
+0.0190
+0.0192
+0.0194
+Recommendation Performance (NDCG@10) 
+10
+30
+50
+Attack Promotion Gain (%) 
+=3, y=52.81%
+=4, y=26.65%
+=5, y=15.27%
+=6, y=10.50%
+=7, y=7.59%
+=8, y=6.55%
+=9, y=6.18%
+=10, y=5.74%
+Other 
+Best 
+(e) VBPR-Clothing (λ)
+900
+=0.1,y=903.02%
+Other 
+Best 
+0.0185
+0.0187
+0.0189
+0.0191
+Recommendation Performance (NDCG@10) 
+15
+25
+35
+45
+Attack Promotion Gain (%) 
+=1,y=15.27%
+=2,y=21.05%
+=3,y=27.7%
+=4,y=31.63%
+=5,y=34.68%
+=6,y=36.31%
+=7,y=39.87%
+=8,y=41.03%
+=9,y=43.56%
+=10,y=46.32%
+(f) VBPR-Clothing (α)
+Figure 9: Impact of λ and α on the trade-off between accuracy and
+attack effectiveness for VBPR under PGD-based attack.
+0.0174
+0.0175
+0.0176
+0.0177
+Recommendation Performance (NDCG@10) ↑
+15
+25
+Attack Promotion Gain (%) ↓
+λ=1,y=30.2%
+λ=2,y=18.43%
+λ=3,y=15.16%
+λ=4,y=12.53%
+λ=5,y=9.37%
+λ=6,y=10.75%
+λ=7,y=8.62%
+λ=8,y=11.51%
+λ=9,y=10.77%
+λ=10,y=9.12%
+Other λ
+Best λ
+(a) MMGCN-Baby (λ)
+0.0170
+0.0172
+0.0174
+0.0176
+Recommendation Performance (NDCG@10) ↑
+8.5
+9.0
+9.5
+10.0
+10.5
+11.0
+Attack Promotion Gain (%) ↓
+α=0.1,y=9.26%
+α=1,y=8.62%
+α=2,y=9.76%
+α=3,y=10.67%
+α=4,y=10.65%
+α=5,y=9.7%
+α=6,y=10.07%
+α=7,y=9.19%
+α=8,y=11.14%
+α=9,y=9.59%
+α=10,y=10.12%
+Other α
+Best α
+(b) MMGCN-Baby (α)
+0.0158
+0.0160
+0.0162
+0.0164
+Recommendation Performance (NDCG@10) 
+30
+50
+Attack Promotion Gain (%) 
+=1,y=64.96%
+=2,y=49.32%
+=3,y=32.23%
+=4,y=30.94%
+=5,y=23.05%
+=6,y=28.21%
+=7,y=27.43%
+=8,y=24.51%
+=9,y=23.98%
+=10,y=19.14%
+Other 
+Best 
+(c) MMGCN-Sports (λ)
+0.0158
+0.0160
+0.0162
+0.0164
+Recommendation Performance (NDCG@10) 
+22
+26
+30
+Attack Promotion Gain (%) 
+=0.1,y=21.83%
+=1,y=19.14%
+=2,y=32.08%
+=3,y=25.63%
+=4,y=26.16%
+=5,y=29.69%
+=6,y=30.6%
+=7,y=25.55%
+=8,y=27.34%
+=9,y=24.72%
+=10,y=23.56%
+Other 
+Best 
+(d) MMGCN-Sports (α)
+0.0110
+0.0111
+0.0112
+0.0113
+0.0114
+0.0115
+Recommendation Performance (NDCG@10) 
+160
+200
+240
+Attack Promotion Gain (%) 
+=1,y=238.11%
+=2,y=170.73%
+=3,y=155.79%
+=4,y=146.33%
+=5,y=160.31%
+=6,y=127.6%
+=7,y=146.15%
+=8,y=148.87%
+=9,y=161.54%
+=10,y=146.34%
+Other 
+Best 
+(e) MMGCN-Clothing (λ)
+0.0110
+0.0111
+0.0112
+0.0113
+0.0114
+Recommendation Performance (NDCG@10) 
+122.5
+125.0
+127.5
+130.0
+132.5
+135.0
+137.5
+140.0
+142.5
+Attack Promotion Gain (%) 
+=0.1,y=129.15%
+=1,y=127.6%
+=2,y=121.65%
+=3,y=128.57%
+=4,y=134.88%
+=5,y=141.63%
+=6,y=123.21%
+=7,y=129.52%
+=8,y=131.94%
+=9,y=123.79%
+=10,y=136.59%
+Other 
+Best 
+(f) MMGCN-Clothing (α)
+Figure 10: Impact of λ and α on the trade-off between accuracy and
+attack effectiveness for MMGCN under PGD-based attack.

@@ -1,0 +1,1479 @@
+Asymmetric On-Policy Distillation: Bridging Exploitation and
+Imitation at the Token Level
+Nan Jia1, Haojin Yang2, Xing Ma3, Jiesong Lian1, Shuailiang Zhang3,
+Weipeng Zhang3, Ke Zeng3, Xunliang Cai3, Zequn Sun4
+1Huazhong University of Science and Technology, 2Peking University, 3Meituan, 4Nanjing University
+Abstract
+On-policy distillation (OPD) trains a student
+on its own trajectories with token-level teacher
+feedback and often outperforms off-policy dis-
+tillation and standard reinforcement learning.
+However, we find that its standard advantage
+weighted policy gradient suffers from three
+structural weaknesses, including high variance
+updates, vanishing gradients in zero-advantage
+regions, and exploration bottlenecks when cor-
+rective signals are insufficient. We therefore
+propose Asymmetric On-Policy Distillation
+(AOPD), which replaces ineffective negative
+reinforcement with localized divergence min-
+imization in non-positive advantage regions
+while preserving positive reinforcement learn-
+ing. Experiments on mathematical reasoning
+benchmarks show that AOPD consistently out-
+performs standard OPD, with average gains of
+4.09 / 8.34 under strong / weak initialization,
+respectively. AOPD also maintains higher pol-
+icy entropy during training and better capability
+retention during sequential tool-use adaptation.
+Introduction
+The strong capabilities of large language models
+(LLMs) (OpenAI, 2025; DeepSeek-AI et al., 2025;
+Yang et al., 2025) come at steep computational
+cost. Knowledge distillation (Hinton et al., 2014)
+offers a principled path to compress these capabil-
+ities into smaller models by training a student to
+mimic a teacher’s output distribution (Zhu et al.,
+2024). Classical off-policy distillation has achieved
+considerable success (Xu et al., 2024; Hsieh et al.,
+2023; Tian et al., 2025). However, this paradigm
+carries a well-known vulnerability that the student
+encounters exposure bias (Bengio et al., 2015) at
+inference time after training exclusively on the
+teacher’s trajectories.
+On-policy distillation (Lu and Thinking Ma-
+chines Lab, 2025) advanced by the work of Think-
+ing Machines Lab resolves this mismatch by lever-
+aging teacher probabilities on student generated
+trajectories to construct dense, token-level reward
+signals under a policy gradient objective. However,
+we observe that this reward formulation exhibits
+several limitations. The calculated updates exhibit
+substantial variance in negative advantage regions.
+Simultaneously, a vast number of generated posi-
+tions yield an advantage of zero, causing the policy
+gradients to vanish almost entirely. Beyond these
+issues, the learning paradigm relies heavily on au-
+tonomous exploration, rendering the model blind
+to correct alternatives outside its prior.
+To address these limitations, we bridge the prin-
+ciples of reinforcement learning and supervised
+learning to propose Asymmetric On-Policy Distil-
+lation (AOPD). Figure 1 provides an illustration of
+the two learning modes in AOPD, namely exploita-
+tion and imitation. Specifically, when a generated
+token receives a negative score, rather than forcing
+the model to learn through self-exploration, AOPD
+directly learns the teacher model’s target distribu-
+tion conditioned on the current on-policy trajectory
+prefix. This asymmetric design allows the student
+to retain the benefit of exploitation in reinforce-
+ment learning while receiving stronger correction
+at genuine optimization bottlenecks.
+We evaluate AOPD on competition-level math-
+ematical reasoning benchmarks. Across model
+scales and warm-up settings, AOPD delivers
+stronger and more robust performance than exist-
+ing baselines. The localized guidance also leads
+to better capability retention in continual learning.
+Our main contributions are summarized as follows:
+• We analyze on-policy distillation in negative
+and zero advantage regions and show that
+the standard advantage-based update provides
+limited learning signal for effective correction.
+• We propose Asymmetric On-Policy Distilla-
+tion (AOPD), a token-level training frame-
+work that adaptively shifts from advantage-
+weighted policy gradient to localized distri-
+arXiv:2605.06387v1 [cs.LG] 7 May 2026
+
+Figure 1: Overview of Asymmetric On-Policy Distillation (AOPD). The asymmetry comes from using two
+different learning modes on student-generated trajectories: preserving exploitation on aligned positions and invoking
+teacher guidance on bottleneck positions. Left (Exploitation): When the student’s reasoning aligns with the teacher,
+AOPD reinforces successful exploration. Right (Imitation): When the student encounters an exploration black
+hole, AOPD actively switches to directed teacher guidance by minimizing the distributional divergence.
+bution matching with the teacher when the
+advantage signal carries limited information.
+• Experiments on mathematical reasoning
+benchmarks across model scales and warm-
+up settings show that AOPD consistently im-
+proves over baselines, especially under weak
+initialization, and better preserves prior capa-
+bilities during sequential tool-use adaptation.
+Related Work
+The foundation of knowledge distillation was es-
+tablished by Hinton et al. (2014), who showed
+that a compact student can learn from a larger
+teacher by matching its softened output logits. For
+sequence generation, Kim and Rush (2016) ex-
+tended this idea to Sequence-Level Knowledge
+Distillation(SeqKD), aligning the student with the
+teacher’s sequence-level distribution. However, all
+these classical methods are trained off-policy on
+teacher-generated trajectories and therefore remain
+vulnerable to exposure bias (Bengio et al., 2015).
+To mitigate this mismatch, recent work has
+shifted toward on-policy distillation, where the
+student learns on its own rollouts with teacher
+feedback.
+Generalized Knowledge Distillation
+(GKD) (Agarwal et al., 2024) formalizes this as
+minimizing generalized f-divergences on student-
+generated trajectories. The Thinking Machines
+Lab (Lu and Thinking Machines Lab, 2025) ad-
+vanced on policy distillation by formulating it as a
+reinforcement learning objective with dense token-
+level rewards derived from the teacher. Beyond
+teacher alignment, ExOPD (Yang et al., 2026) ex-
+trapolates reward scaling to surpass the teacher’s
+capabilities.
+Subsequent work removes the re-
+liance on external teachers by distilling from the
+model’s own outputs. OPSD (Zhao et al., 2026)
+and its long-context extension OPSDL (Zhang
+et al., 2026b) leverage ground-truth feedback on
+self-generated traces, while SDFT (Shenfeld et al.,
+2026) mitigates catastrophic forgetting under the
+same paradigm.
+Preliminaries
+We formalize the training procedure of on-policy
+distillation below. Given an input prompt x, let y
+denote a complete response sampled from the stu-
+dent policy. OPD optimizes the reverse Kullback-
+Leibler (KL) divergence with reinforcement learn-
+(a) Advantage distribution.
+(b) Exploration black hole.
+(c) OPD under insufficient warm-up.
+Figure 2: Observation and analysis of On-policy Distillation.
+ing based on the K1 estimator.
+At step t, let
+ct ≜(x, y<t) denote the current context, and let
+PT (· | ct) and PS(· | ct) denote the teacher and
+student conditional distributions, respectively. The
+advantage of token yt ∼PS(· | ct) is defined as
+At = sg[log PT (yt | ct) −log PS(yt | ct)] , (1)
+where sg[·] denotes the stop-gradient operator. The
+corresponding training loss is
+LOPD = −E
+
+1
+|y|
+|y|
+X
+t=1
+At log PS(yt | ct)
+
+.
+(2)
+Motivated by Zhu et al. (2026) and Tang et al.
+(2025), which highlight the distinct roles of posi-
+tive and negative samples in reinforcement learn-
+ing, we decompose OPD into positive and negative
+reinforcement at the token level. Let S+ and S−
+denote the sets of token positions with positive and
+negative advantages, respectively, and let y+
+t and
+y−
+t denote the corresponding sampled tokens. The
+OPD loss can be written as
+LOPD = −E
+
+1
+|y|
+X
+t∈S+
+At log PS(y+
+t | ct)
+
+
+|
+{z
+}
+LPos
+−E
+
+1
+|y|
+X
+t∈S−
+At log PS(y−
+t | ct)
+
+
+|
+{z
+}
+LNeg
+.
+(3)
+Here, LPos corresponds to positive reinforcement,
+which reinforces teacher-favored sampled tokens
+and corresponds to exploitation. In contrast, LNeg
+corresponds to negative reinforcement, which sup-
+presses teacher-disfavored sampled tokens and pro-
+motes exploration.
+Limitations of Negative Reinforcement
+in OPD
+Despite its intuitive formulation, standard OPD
+remains subject to several challenges in practice.
+Through theoretical analysis and experimental vali-
+dation, we identify three characteristic limitations
+of OPD in negative reinforcement.
+Heavy Tails in Negative Advantages.
+Figure 2a
+shows that the advantage distribution is highly
+asymmetric. Most tokens cluster near zero while
+the negative side exhibits a substantially broader
+tail. This extreme variance originates directly from
+the logarithmic nature of the advantage formula-
+tion. The difference between the log probability
+of the teacher and the student amplifies exponen-
+tially as the student probability approaches zero.
+Because the update magnitude is directly scaled by
+this unbounded scalar, the mechanism artificially
+inflates gradient variance and renders the overall
+optimization fragile.
+Stagnation at Zero Advantages.
+A second limi-
+tation arises in the neutral regime. As illustrated by
+the distribution peak in Figure 2a, the vast majority
+of sampled tokens cluster around an advantage of
+zero. The standard OPD objective consequently
+yields an almost vanishing update. Even when the
+advantage of the sampled token is zero, the teacher
+still provides a rich conditional distribution over
+the vocabulary, offering fine-grained preferences
+over alternative reasoning paths. However, OPD
+compresses this supervision into a scalar signal that
+is close to zero.
+Exploration Black Hole.
+A fundamental opti-
+mization problem arises in negative reinforcement,
+where the update of OPD is restricted in both direc-
+tion and magnitude. To understand this behavior,
+we examine the OPD update at the logit level. By
+the softmax Jacobian, the update for any token v is
+given by:
+∆zOPD
+v
+∝At
+ I(v = yt) −PS(v | ct)
+
+.
+(4)
+When At < 0, the sampled token is penalized,
+and for every unsampled token v ̸= yt, the update
+becomes
+∆zOPD
+v
+∝−AtPS(v | ct) > 0.
+(5)
+Hence, the released probability mass is redis-
+tributed strictly according to the current prior of the
+student. For an essential token v∗with negligible
+prior probability PS(v∗| ct) ≈0, the corrective up-
+date is correspondingly negligible even if that token
+is favored by the teacher. OPD therefore suppresses
+the sampled mistake without effectively promoting
+the correct alternative, trapping the model in an ex-
+ploration black hole as illustrated in Figure 2b. This
+pathology is more severe for student models with
+weaker foundational capabilities, as essential to-
+kens are more likely to reside in the low-probability
+tail of the student prior. Figure 2c illustrates this
+effect by comparing OPD models with different
+lengths of SFT warm-up on OpenThoughts (Guha
+et al., 2026), followed by continual training on
+ToolAlpaca (Tang et al., 2023). Models with fewer
+warm-up steps begin from a weaker starting point,
+making exploration black holes more likely and
+thereby undermining both reasoning improvement
+and subsequent continual learning.
+These observations suggest that tokens in non-
+positive regions should not be optimized in the
+same way as positive reinforcement, motivating an
+asymmetric training rule.
+Asymmetric On-Policy Distillation
+5.1
+The AOPD Framework
+To systematically resolve the structural vulnera-
+bility of standard on-policy distillation, we pro-
+pose Asymmetric On-Policy Distillation (AOPD).
+This framework dynamically modulates the learn-
+ing paradigm at the token level, shifting between
+reinforcement learning for exploitation and soft-
+label supervised learning for imitation based on the
+student’s immediate capability.
+We compute the token-level advantage At using
+Eq. 1 like standard OPD. As discussed in Section 4,
+the main optimization difficulties of OPD are con-
+centrated in negative and zero-advantage regions.
+We therefore replace the update in non-positive re-
+gions with forward KL guidance computed on the
+teacher-defined support. For each position t, we
+define the teacher support as
+St = TopK(PT (· | ct), K) ,
+(6)
+where St contains the K highest-probability tokens
+under the teacher distribution. On this support, the
+forward KL guidance loss is instantiated as
+LFKL
+t
+= 1
+K
+X
+v∈St
+PT (v | ct)
+
+log PT (v | ct)
+−log PS(v | ct)
+
+.
+(7)
+Accordingly, the AOPD objective is defined as
+LAOPD =E
+
+1
+|y|
+X
+t∈S≤0
+LFKL
+t
+
++ LPos,
+(8)
+where S≤0 denotes the zero and negative advantage
+token set.
+AOPD chooses zero advantage as the default in-
+tervention boundary. To define the intervention lo-
+cation in a more general form, we further introduce
+a threshold parameter τ. Considering the logarith-
+mic nature of the standard advantage formulation
+and its unbounded variance, we use the bounded
+probability difference to determine whether to trig-
+ger teacher intervention. Specifically, we define the
+token-level mask as:
+Gt = I(PT (yt | ct) −PS(yt | ct) ≤τ) ,
+(9)
+where I(·) denotes the indicator function. The gen-
+eralized AOPD objective is then defined as:
+LAOPD = E
+ 1
+|y|
+|y|
+X
+t=1
+
+GtLFKL
+t
++ (1 −Gt)LOPD
+t
+
+.
+(10)
+Setting τ = −1 disables intervention for all tokens
+and reduces AOPD to standard OPD, while setting
+τ = 1 applies supervised distribution matching ev-
+erywhere and recovers a GKD objective. In our
+method, we set τ = 0, so that intervention is ap-
+plied exactly to the non-positive regime. The role
+of alternative choice of τ and other intervention
+locations are further analyzed in Section 5.3 and
+Section 6.4.
+5.2
+Truncated Forward-KL Guidance
+In principle, the intervention objective should min-
+imize the divergence between the teacher and the
+student over the full vocabulary. The divergence
+family can be written in the general form of Jensen-
+Shannon divergence as
+JSDβ(PT ∥PS) = βDKL(PT ∥PM)
++ (1 −β)DKL(PS ∥PM),
+(11)
+wherePM = βPT + (1 −β)PS and β ∈[0, 1].
+Here, β = 1 corresponds to forward KL, while
+β = 0 corresponds to reverse KL.
+20
+60
+Training Step
+1
+3
+Gradient Norm
+= 0.0
+= 0.1
+= 0.5
+= 0.9
+= 1.0
+Figure 3: Gradient norm under different values of β.
+However, evaluating such a divergence at every
+intervened position is computationally prohibitive
+in large-vocabulary LLM training. We therefore in-
+stantiate the guidance term on the teacher-selected
+top-K support in Eq. 6. Under top-K truncation,
+the objective is no longer a full-vocabulary di-
+vergence, but a correction objective defined on a
+teacher-selected domain. In this setting, the teacher
+specifies both the candidate tokens in the optimiza-
+tion domain and the reference distribution within
+that domain. Therefore, the intervention objec-
+tive should remain teacher-centered after trunca-
+tion. Forward KL is the natural choice because it
+preserves the same teacher-conditioned measure
+in both support construction and loss weighting,
+whereas reverse KL would reweight the update ac-
+cording to the student’s current distribution on a
+domain selected by the teacher. Detailed gradient
+comparisons are deferred to Appendix B.
+This teacher-centered preference is also sup-
+ported empirically. Figure 3 shows that as the di-
+vergence becomes more biased toward the teacher
+distribution, the optimization exhibits more stable
+gradient behavior. In particular, β = 0.9 and 1
+yield the smoothest training dynamics. This trend
+is consistent with the performance comparison in
+Section 6.4. Based on both this empirical evidence
+and the support-consistency argument above, we
+adopt β = 1 in AOPD.
+5.3
+Why AOPD Resolves the Three
+Bottlenecks of OPD
+We now explain why the single confidence-based
+rule in AOPD is sufficient to unify the solutions
+for the three optimization bottlenecks identified in
+Section 4. By setting τ = 0, the core mechanism is
+to switch from policy gradient to direct distribution
+matching exactly where At ≤0.
+(1) Eliminating high-variance negative advan-
+tages.
+As analyzed in Section 4, standard OPD
+suffers from heavy-tailed gradient noise when
+At < 0 because the scalar advantage is unbounded.
+AOPD eliminates this instability by halting the pol-
+icy gradient update in these regions and replacing
+it with divergence guidance. For the forward KL
+case, the logit-level correction is instead governed
+by the bounded distribution gap:
+∆zAOPD
+v
+∝PT (v | ct) −PS(v | ct).
+(12)
+Constrained by the probability simplex, this sig-
+nal naturally caps the maximum update magnitude.
+Figure 4a confirms this effect, showing that AOPD
+maintains a substantially smaller gradient norm
+than OPD throughout training.
+(2) Recovering gradients in zero-advantage re-
+gions.
+Recall from Section 4 that informative sig-
+nal is lost when At ≈0 because the advantage-
+weighted update vanishes. AOPD avoids this stag-
+nation because its intervention relies on the discrep-
+ancy between the conditional distributions, rather
+than the scalar At. Consequently, even in neutral
+regions where the sampled token provides only a
+weak learning signal, the student can still receive
+meaningful corrections on the teacher-defined sup-
+port. Figure 4b directly supports this by evaluating
+AOPD-ZERO, a variant that applies KL-divergence
+intervention only to tokens whose advantages are
+zero. Compared with standard OPD, this targeted
+replacement already yields clear gains, confirming
+that neutral regions contain useful teacher signals
+that are discarded by policy gradient method. Fur-
+thermore, as training progresses and the student’s
+output aligns more closely with the teacher, an
+increasing number of generated tokens begin to
+cluster around At ≈0. This trend is explicitly
+(a) Gradient norm during training.
+20
+60
+Training Step
+52.5
+55.0
+57.5
+60.0
+62.5
+65.0
+AIME 2024 Pass@1 (%)
+OPD ( = 1.0)
+AOPD ( = 0.2)
+AOPD ( =0)
+AOPD-Zero
+(b) AIME 2024 Pass@1 training curves
+under different intervention strategies.
+(c) Ratio of tokens receiving forward KL
+guidance during training.
+Figure 4: Training dynamics under different divergence-guidance strategies.
+captured in Figure 4c where the proportion of to-
+kens triggering AOPD-ZERO intervention steadily
+rises from near zero to roughly 30%, ensuring that
+learning does not prematurely stagnate.
+(3) Escaping exploration bottlenecks through
+teacher guidance.
+When trapped in an explo-
+ration black hole, OPD merely suppresses the sam-
+pled mistake without promoting the correct, unsam-
+pled reasoning path, forcing the model to blindly
+explore. AOPD resolves this by explicitly injecting
+the missing directional signal. Any token favored
+by the teacher but underestimated by the student
+immediately receives a positive correction propor-
+tional to their probability gap. By directly match-
+ing the teacher’s target distribution on the on-policy
+prefix, AOPD repairs optimization bottlenecks in-
+stantly rather than waiting for the student to dis-
+cover the correct token. This is further evidenced
+in Figure 4b by the τ = −0.2 variant, which ap-
+plies forward KL guidance only when the teacher-
+student gap is sufficiently negative. As shown in
+Figure 4c, this variant intervenes on fewer than
+10% of all generated tokens. However, even this
+sparse intervention over strongly negative regions
+already yields clear gains over standard OPD, con-
+firming that targeted teacher distribution guidance
+is highly efficient at rescuing optimization from
+exploration black holes.
+5.4
+Localized Supervision Preserves the Policy
+Space
+Beyond resolving the three optimization bottle-
+necks of OPD, the localized supervision in AOPD
+also leads to a training dynamic that avoids exces-
+sive reshaping of the full policy. Figure 4c shows
+that the fraction of tokens receiving forward KL
+guidance is limited and gradually decreases during
+training from roughly 40% to 30%, which indicates
+that direct distributional correction remains con-
+fined to a shrinking subset of positions. Figure 5
+shows that AOPD maintains a substantially higher
+policy entropy throughout training than OPD and
+remains above GKD over the course of optimiza-
+tion, which indicates that its policy stays less con-
+centrated during training.
+Figure 5: Policy entropy during training.
+These two observations jointly suggest that
+AOPD does not continuously reshape the full pol-
+icy during training. Instead, it preserves a broader
+policy space while restricting teacher intervention
+to a limited set of difficult positions. This training
+behavior is consistent with the continual learning
+results in Section 6.3, where AOPD retains prior
+reasoning ability better after tool-use adaptation.
+Experiments
+6.1
+Experimental Setup
+Models.
+We evaluate our approach under two dis-
+tinct distillation settings: (1) distilling from Qwen3-
+32B to Qwen3-8B-Base, and (2) distilling from
+Qwen3-8B to Qwen3-4B-Base (Yang et al., 2025).
+These settings provide challenging scenarios to val-
+idate our method across different parameter scales.
+Table 1: Main distillation results across multiple math reasoning benchmarks. Baseline capabilities before on-policy
+distillation are given by the SFT Checkpoint. We compare AOPD against SeqKD, OPD, GKD and ExOPD. Bold
+indicates the best result within each configuration block, while underlined values denote the second best.
+Method
+AIME 2024
+AIME 2025
+HMMT 2025(Feb)
+Average
+Pass@1
+Pass@4
+Pass@1
+Pass@4
+Pass@1
+Pass@4
+Pass@1
+Pass@4
+Qwen3-4B-Base
+- 3K SFT Warm-up
+SFT Checkpoint
+52.29
+71.90
+46.25
+64.82
+27.08
+38.97
+41.87
+58.56
++ SeqKD
+42.50
+65.23
+40.00
+60.09
+24.58
+38.01
+35.69
+54.44
++ OPD
+57.08
+76.69
+51.88
+68.12
+32.92
+47.65
+47.29
+64.15
++ ExOPD
+59.17
+73.99
+51.25
+66.59
+32.08
+47.30
+47.50
+62.63
++ GKD
+58.13
+76.61
+50.42
+69.12
+29.79
+45.39
+46.11
+63.71
++ AOPD
+61.04
+75.08
+54.37
+69.73
+32.08
+47.40
+49.16
+64.07
+Qwen3-8B-Base
+- 1K SFT Warm-up
+SFT Checkpoint
+45.21
+68.29
+39.79
+58.62
+24.58
+34.68
+36.53
+53.86
++ SeqKD
+40.21
+68.08
+30.63
+50.00
+20.62
+36.78
+26.11
+42.87
++ OPD
+43.13
+67.38
+38.12
+56.84
+23.13
+34.95
+34.79
+53.06
++ ExOPD
+45.83
+72.31
+36.04
+53.86
+24.37
+38.02
+35.41
+54.73
++ GKD
+54.79
+77.92
+42.08
+63.69
+25.83
+40.21
+40.90
+60.61
++ AOPD
+53.75
+77.39
+45.21
+66.86
+30.42
+46.73
+43.13
+63.66
+- 3K SFT Warm-up
+SFT Checkpoint
+58.96
+74.95
+47.71
+66.73
+31.04
+44.19
+45.90
+61.96
++ SeqKD
+51.04
+76.56
+40.00
+56.98
+25.42
+43.80
+38.82
+59.11
++ OPD
+61.46
+78.61
+52.29
+70.44
+34.17
+50.86
+49.31
+66.64
++ ExOPD
+61.67
+77.55
+48.75
+65.83
+34.17
+50.22
+48.20
+64.53
++ GKD
+66.25
+80.65
+48.54
+70.56
+34.17
+49.67
+49.65
+66.96
++ AOPD
+66.87
+79.58
+55.00
+70.28
+38.33
+52.42
+53.40
+67.43
+Training Data.
+For the warm-up stage, we utilize
+the OpenThoughts dataset (Guha et al., 2026) for
+general and mathematical reasoning. During the on-
+policy distillation phase, mathematical reasoning
+is conducted on DeepMath (He et al., 2025). For
+the tool-use task in the continual learning stage, we
+use ToolAlpaca (Tang et al., 2023).
+Benchmarks.
+We evaluate mathematical reason-
+ing on AIME 2024, AIME 2025, and HMMT
+2025(Feb). For tool-use evaluation, we use the
+ToolAlpaca test set. We report Pass@1/4 for rea-
+soning benchmarks, and tool-call success rate for
+tool-use evaluation.
+Training Pipeline.
+We first perform warm-up
+training with 128 batch size on the base models.
+Specifically, the Qwen3-4B-Base model is warmed
+up for 3,000 steps. For the Qwen3-8B-Base model,
+we warm it up for 3,000 steps, alongside an experi-
+mental setting of 1,000 steps to yield variants with
+distinct foundational capabilities for robustness as-
+sessment. During the subsequent distillation phase,
+we uniformly set the learning rate to 1e-5 and batch
+size to 512. We set the teacher support size K to
+32 in AOPD and GKD. Models are trained for 90
+steps on mathematical tasks, followed by 40 steps
+on tool-calling tasks for continual learning.
+Baselines.
+We compare AOPD against four base-
+lines: (i) SeqKD (Kim and Rush, 2016), which
+continues supervised fine-tuning on the DeepMath
+dataset, utilizing sequence-level knowledge distil-
+lation with trajectories generated by the teacher
+model; (ii) OPD (Lu and Thinking Machines
+Lab, 2025), standard on-policy distillation us-
+ing K1-estimated KL divergence as the per-token
+advantage for policy gradient optimization; (iii)
+GKD (Agarwal et al., 2024), which minimizes
+Jensen-Shannon divergence on student-generated
+trajectories; and (iv) ExOPD (Yang et al., 2026),
+an extrapolation-based variant for on-policy distil-
+lation.
+6.2
+Main Results on Reasoning
+Table 1 shows that AOPD consistently delivers the
+best overall reasoning performance across model
+scales and warm-up settings. For Qwen3-4B-Base
+with 3K SFT warm-up, AOPD already achieves the
+best average Pass@1, showing that the proposed
+method is effective in the smaller-scale distillation
+setting. Moving to Qwen3-8B-Base with the harder
+1K warm-up initialization, AOPD continues to de-
+liver the best overall performance, whereas stan-
+dard OPD falls below the warm-up baseline. This
+result highlights that AOPD is substantially more
+robust when the student starts from relatively weak
+base capabilities. Under the stronger 3K warm-
+up initialization, AOPD further achieves the best
+overall results, reaching 53.40 average Pass@1 and
+67.43 average Pass@4.
+20
+60
+Training Steps
+25
+35
+45
+Avg. Score (%)
+OPD
+ExOPD
+GKD
+AOPD
+(a) Qwen3-8B-Base with 1K
+SFT warm-up
+20
+60
+Training Steps
+40.0
+42.5
+45.0
+47.5
+50.0
+52.5
+Avg. Score (%)
+OPD
+ExOPD
+GKD
+AOPD
+(b) Qwen3-8B-Base with 3K
+SFT warm-up
+Figure 6: Average math score training dynamics under
+different initializations.
+Figure 6 further helps explain these results by
+plotting the average math score throughout train-
+ing under different warm-up settings. Across both
+settings, OPD and ExOPD show a noticeable per-
+formance drop at the beginning, which indicates
+that their optimization is vulnerable to early degra-
+dation. This problem is especially severe under the
+weaker 1K initialization, where the models strug-
+gle to recover once performance falls into a poor
+state, while under the stronger initialization they
+can recover from degradation but still remain af-
+fected by the initial decline. GKD exhibits a more
+stable trajectory, but its final performance still does
+not surpass AOPD. In contrast, AOPD improves
+steadily from the start under both initialization set-
+tings and consistently reaches the highest perfor-
+mance ceiling, showing that its asymmetric design
+not only avoids the early optimization degradation
+observed in existing baselines but also translates
+training stability into stronger final reasoning per-
+formance.
+6.3
+Continual Learning and Tool-Use
+Performance
+We evaluate continual learning on ToolAlpaca to
+test whether the models can acquire new abil-
+ity while retaining mathematical reasoning perfor-
+mance. Starting from the checkpoints with 3K SFT
+warm-up in Table 1, we further train each model on
+ToolAlpaca after math reasoning tasks and report
+tool-use success rate together with math retention.
+Table 2 shows that AOPD achieves the best balance
+between adaptation and retention. It attains a com-
+petitive 75.0% success rate while preserving the
+strongest math performance, improving from 67.43
+to 68.04 in average Pass@4. By contrast, OPD,
+ExOPD, and GKD all suffer math degradation after
+continual learning, with OPD showing the largest
+drop. These results suggest that localized teacher
+guidance enables new ability adaptation without
+overwriting previously acquired reasoning ability.
+Table 2: Performance after continual learning.
+Method
+Tool Use
+Math Avg. Pass@4
+Before / After
+Drop (↓)
+OPD
+65.0
+66.64 / 59.15
+-7.49
+ExOPD
+67.0
+64.53 / 63.04
+-1.49
+GKD
+76.0
+66.96 / 64.54
+-2.42
+AOPD
+75.0
+67.43 / 68.04
++0.61
+6.4
+Ablation Studies
+Effect of the JSD Parameter β.
+The parame-
+ter β controls the interpolation between student-
+centric smoothing (β →0) and teacher-centric
+guidance (β →1) during interventions. As dis-
+50
+70
+Math Avg. Score (%)
+pass@1
+pass@4
+53.4
+52.2
+49.9
+48.6
+33.7
+67.4
+67.7
+65.8
+64.6
+51.9
+= 0
+= 0.1
+= 0.5
+= 0.9
+= 1
+Figure 7: Ablation study on the JSD parameter β.
+cussed in Section 5.1, once intervention is restricted
+to a teacher-defined support, the correction should
+remain weighted according to the teacher distribu-
+tion on that support. Figure 7 shows that AOPD
+attains its highest Pass@1 score at β = 1, cor-
+responding to strict forward KL. More generally,
+the results show a clear trend that performance in-
+creases as the divergence becomes more biased to-
+ward the teacher distribution. This empirical trend
+further validates the support-consistency principle
+underlying our design.
+Effect of the Top-K.
+We further study the ef-
+fect of the teacher support size K in AOPD. As
+AIME 2024
+AIME 2025
+HMMT 2025(Feb)
+40
+60
+Pass@1 (%)
+65.0
+52.7
+35.2
+66.5
+53.5
+33.5
+66.9
+55.0
+38.3
+k=8
+k=16
+k=32
+(a) Scores of differnet top-K.
+20
+60
+Training Steps
+50
+54
+AIME 2025 Pass@1 (%)
+k=8
+k=16
+k=32
+(b) Training dynamics of differnet top-K.
+20
+60
+Training Step
+46
+50
+Math Avg. Pass@1 (%)
+AOPD ( =0)
+AOPD ( =0)+Filter 
+AOPD ( = 0.2)
+AOPD-Zero
+(c) Effect of intervention locations.
+Figure 8: Ablation study on top-K and intervention location.
+K increases from 8 to 16 and 32 in Figure 8a,
+the final Pass@1 scores on AIME 2024, AIME
+2025, and HMMT 2025(Feb) improves, suggest-
+ing that a larger top-K preserves a richer portion
+of the teacher distribution and thus provides more
+complete signals. At the same time, we observe
+that smaller K often yields larger gains at the
+early stage of training in Figure 8b, indicating that
+restricting supervision to a few high-probability
+teacher tokens produces denser and more concen-
+trated learning signals, which is more beneficial
+for rapid initial improvement. In contrast, although
+larger K brings less pronounced early gains, it re-
+tains a broader candidate distribution and therefore
+provides more informative signals in later training,
+leading to a higher final performance ceiling.
+Effect of Intervention Location.
+The effective-
+ness of AOPD depends not only on whether KL
+guidance is used, but also on where the interven-
+tion is triggered. We consider three strategies: a
+token-level threshold τ, which selects low confi-
+dence positions for intervention; an accuracy filter,
+which applies KL guidance only to negative advan-
+tage regions from trajectories with incorrect final
+answers; and AOPD-Zero, which focuses exclu-
+sively on neutral regions with At ≈0. Figure 8c
+shows that standard AOPD with τ = 0 delivers the
+strongest overall performance, whereas the more
+conservative setting τ = −0.2 yields slower im-
+provement. The accuracy-filtered variant remains
+competitive but consistently trails standard AOPD
+under the same threshold, suggesting that informa-
+tive correction signals also arise in correct trajec-
+tories. Meanwhile, AOPD-Zero consistently out-
+performs τ = −0.2, which confirms that neutral
+regions are a major source of optimization stagna-
+tion in OPD. Taken together, these results support
+a clear conclusion: effective intervention should
+be decided locally at the token-level rather than by
+coarse trajectory-level outcomes, and focusing only
+on zero advantage regions captures an important
+but incomplete subset of the positions that require
+guidance.
+Conclusion
+While
+on-policy
+distillation
+is
+an
+effective
+paradigm for transferring reasoning capabilities,
+its scalar advantage signal does not fully capture
+the teacher’s richer distributional preferences in dif-
+ficult regions. In this work, we identify this limita-
+tion in non-positive advantage regions and propose
+Asymmetric On-Policy Distillation, which retains
+the standard policy gradient update where it is re-
+liable and applies direct teacher distribution align-
+ment where stronger correction is required. Ex-
+periments across multiple scales and benchmarks
+show that AOPD consistently improves mathemat-
+ical reasoning and remains stable under different
+model scale and initialization, where standard OPD
+often struggles. More broadly, our findings suggest
+that a learning paradigm combining exploitation
+and imitation can improve both training efficiency
+and the capabilities of the student model. We dis-
+cuss limitations in Section C and leave extension
+to broader tasks for future work.
+References
+Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr
+Stanczyk, Sabela Ramos, Matthieu Geist, and Olivier
+Bachem. 2024. On-Policy distillation of language
+models: Learning from self-generated mistakes. In
+Proceedings of the Twelfth International Conference
+on Learning Representations.
+Samy Bengio, Oriol Vinyals, Navdeep Jaitly, and Noam
+Shazeer. 2015. Scheduled sampling for sequence
+prediction with recurrent neural networks. In Ad-
+vances in Neural Information Processing Systems,
+volume 28.
+Jiaqi Chen, Fazhong Liu, Minghao Liu, Yuhan Luo,
+Erqu Qin, Haoran Zheng, Tian Dong, Haojin Zhu,
+Yan Meng, and Xiao Wang. 2025a. Step-wise adap-
+tive integration of supervised fine-tuning and rein-
+forcement learning for task-specific LLMs. arXiv
+preprint arXiv:2505.13026.
+Liang Chen, Xueting Han, Li Shen, Jing Bai, and Kam-
+Fai Wong. 2025b. Beyond two-stage training: Co-
+operative SFT and RL for LLM reasoning. arXiv
+preprint arXiv:2509.06948.
+DeepSeek-AI, Daya Guo, Dejian Yang, Haowei Zhang,
+Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin
+Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, Xiaokang
+Zhang, Xingkai Yu, Yu Wu, Z. F. Wu, Zhibin Gou,
+and Zhihong Shao. 2025. DeepSeek-R1: Incentiviz-
+ing reasoning capability in LLMs via reinforcement
+learning. arXiv preprint arXiv:2501.12948.
+Yuqian Fu, Tinghong Chen, Jiajun Chai, Xihuai Wang,
+Songjun Tu, Guojun Yin, Wei Lin, Qichao Zhang,
+Yuanheng Zhu, and Dongbin Zhao. 2026. SRFT: A
+single-stage method with supervised and reinforce-
+ment fine-tuning for reasoning. In Proceedings of
+the Fourteenth International Conference on Learning
+Representations.
+Etash Guha, Ryan Marten, Sedrick Keh, Negin Raoof,
+Georgios Smyrnis, Hritik Bansal, Marianna Nezhu-
+rina, Jean Mercat, Trung Vu, Zayne Sprague, and 1
+others. 2026. OpenThoughts: Data recipes for rea-
+soning models. In Proceedings of the Fourteenth
+International Conference on Learning Representa-
+tions.
+Zhiwei He, Tian Liang, Jiahao Xu, Qiuzhi Liu, Xingyu
+Chen, Yue Wang, Linfeng Song, Dian Yu, Zhen-
+wen Liang, Wenxuan Wang, Zhuosheng Zhang, Rui
+Wang, Zhaopeng Tu, Haitao Mi, and Dong Yu. 2025.
+DeepMath-103K: A large-scale, challenging, decon-
+taminated, and verifiable mathematical dataset for ad-
+vancing reasoning. arXiv preprint arXiv:2504.11456.
+Geoffrey E. Hinton, Oriol Vinyals, and Jeffrey Dean.
+2014. Distilling the knowledge in a neural network.
+In NIPS Deep Learning and Representation Learning
+Workshop.
+Cheng-Yu Hsieh, Chun-Liang Li, Chih-Kuan Yeh,
+Hootan Nakhost, Yasuhisa Fujii, Alexander Ratner,
+Ranjay Krishna, Chen-Yu Lee, and Tomas Pfister.
+2023. Distilling step-by-step! outperforming larger
+language models with less training data and smaller
+model sizes. In Findings of the Association for Com-
+putational Linguistics: ACL 2023, pages 8003-8017.
+Zeyu Huang, Tianhao Cheng, Zihan Qiu, Zili Wang,
+Yinghui Xu, Edoardo M. Ponti, and Ivan Titov.
+2025.
+Blending supervised and reinforcement
+Fine-Tuning with prefix sampling. arXiv preprint
+arXiv:2507.01679.
+Yoon Kim and Alexander M Rush. 2016. Sequence-
+level knowledge distillation. In Proceedings of the
+2016 conference on empirical methods in natural
+language processing, pages 1317-1327.
+Kevin Lu and Thinking Machines Lab. 2025. On-Policy
+distillation. Thinking Machines Lab: Connectionism.
+Lu Ma, Hao Liang, Meiyi Qiang, Lexiang Tang, Xi-
+aochen Ma, Zhen Hao Wong, Junbo Niu, Chengyu
+Shen, Runming He, Bin Cui, and Wentao Zhang.
+2026. Learning what reinforcement learning can’t:
+Interleaved online fine-tuning for hardest questions.
+In Proceedings of the Fourteenth International Con-
+ference on Learning Representations.
+OpenAI. 2025. Openai o3-mini system card. https://
+cdn.openai.com/o3-mini-system-card-feb10.
+pdf.
+Idan Shenfeld, Mehul Damani, Jonas Hübotter, and
+Pulkit Agrawal. 2026. Self-distillation enables con-
+tinual learning. arXiv preprint arXiv:2601.19897.
+Qiaoyu Tang, Ziliang Deng, Hongyu Lin, Xianpei
+Han, Qiao Liang, Boxi Cao, and Le Sun. 2023.
+ToolAlpaca: Generalized tool learning for language
+models with 3000 simulated cases. arXiv preprint
+arXiv:2306.05301.
+Xinyu Tang, Yuliang Zhan, Zhixun Li, Wayne Xin Zhao,
+Zhenduo Zhang, Zujie Wen, Zhiqiang Zhang, and
+Jun Zhou. 2025. Rethinking sample polarity in rein-
+forcement learning with verifiable rewards. Preprint,
+arXiv:2512.21625.
+Yijun Tian, Yikun Han, Xiusi Chen, Wei Wang, and
+Nitesh V. Chawla. 2025. Beyond answers: Transfer-
+ring reasoning capabilities to smaller LLMs using
+multi-teacher knowledge distillation. In Proceedings
+of the 18th ACM International Conference on Web
+Search and Data Mining, pages 251-260.
+Xiaohan Xu, Ming Li, Chongyang Tao, Tao Shen,
+Reynold Cheng, Jinyang Li, Can Xu, Dacheng Tao,
+and Tianyi Zhou. 2024. A survey on knowledge dis-
+tillation of large language models. arXiv preprint
+arXiv:2402.13116.
+Jianhao Yan, Yafu Li, Zican Hu, Zhi Wang, Ganqu
+Cui, Xiaoye Qu, Yu Cheng, and Yue Zhang. 2025.
+Learning to reason under Off-Policy guidance. In
+Advances in Neural Information Processing Systems,
+volume 38.
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang,
+Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao,
+Chengen Huang, and 1 others. 2025. Qwen3 techni-
+cal report. arXiv preprint arXiv:2505.09388.
+Wenkai Yang, Weijie Liu, Ruobing Xie, Kai Yang,
+Saiyong Yang, and Yankai Lin. 2026.
+Learn-
+ing beyond teacher: Generalized On-Policy distil-
+lation with reward extrapolation.
+arXiv preprint
+arXiv:2602.12125.
+Wenhao Zhang, Yuexiang Xie, Yuchang Sun, Yanxi
+Chen, Guoyin Wang, Yaliang Li, Bolin Ding, and Jin-
+gren Zhou. 2026a. On-Policy RL meets Off-Policy
+experts: Harmonizing supervised fine-tuning and re-
+inforcement learning via dynamic weighting. In Pro-
+ceedings of the Fourteenth International Conference
+on Learning Representations.
+Xinsen Zhang, Zhenkai Ding, Tianjun Pan, Run Yang,
+Chun Kang, Xue Xiong, and Jingnan Gu. 2026b.
+Opsdl: On-policy self-distillation for long-context
+language models. Preprint, arXiv:2604.17535.
+Siyan Zhao, Zhihui Xie, Mengchen Liu, Jing Huang,
+Guan Pang, Feiyu Chen, and Aditya Grover. 2026.
+Self-distilled reasoner: On-policy self-distillation for
+large language models. Preprint, arXiv:2601.18734.
+Xinyu Zhu, Mengzhou Xia, Zhepei Wei, Wei-Lin Chen,
+Danqi Chen, and Yu Meng. 2026. The surprising
+effectiveness of negative reinforcement in LLM rea-
+soning. In The Thirty-ninth Annual Conference on
+Neural Information Processing Systems.
+Xunyu Zhu, Jian Li, Yong Liu, Can Ma, and Weiping
+Wang. 2024. A survey on model compression for
+large language models. Transactions of the Associa-
+tion for Computational Linguistics, 12:1556-1577.
+A
+Related Work about Joint SFT-RL Optimization
+Because on-policy distillation follows a reinforcement learning paradigm, it remains vulnerable to
+exploration bottlenecks. To alleviate this issue, recent work incorporates supervised learning or expert
+demonstrations into RL. Some methods dynamically interleave SFT and RL, such as ReLIFT (Ma et al.,
+2026), SASR (Chen et al., 2025a), and BRIDGE (Chen et al., 2025b), while others unify them in a
+single-stage objective, including SRFT (Fu et al., 2026) and Prefix-RFT (Huang et al., 2025). A related
+line instead interprets SFT as off-policy guidance within on-policy RL, as in LUFFY (Yan et al., 2025) and
+CHORD (Zhang et al., 2026a). In this spirit, AOPD introduces localized soft-label supervised learning to
+improve exploration efficiency in OPD.
+B
+Extended Analysis on Truncated Teacher Guidance
+B.1
+Gradient Analysis
+In this section, we compare the logit-level gradients induced by forward KL and reverse KL under the
+same teacher-defined support St. For simplicity, PS(· | ct) and PT (· | ct) denote the normalized student
+and teacher distributions on St. We first consider the forward KL objective
+LFKL
+t
+= DKL(PT (· | ct) ∥PS(· | ct)) =
+X
+v∈St
+PT (v | ct) log PT (v | ct)
+PS(v | ct).
+(13)
+Taking derivatives with respect to the student logits, the term P
+v∈St PT (v | ct) log PT (v | ct) can be
+treated as a constant. We therefore have
+∂LFKL
+t
+∂zj
+=
+∂
+∂zj
+ 
+−
+X
+v∈St
+PT (v | ct) log PS(v | ct)
+!
+= PS(j | ct) −PT (j | ct),
+j ∈St.
+(14)
+We next consider the reverse KL objective
+LRKL
+t
+= DKL(PS(· | ct) ∥PT (· | ct)) =
+X
+v∈St
+PS(v | ct) log PS(v | ct)
+PT (v | ct).
+(15)
+Differentiating with respect to zj gives
+∂LRKL
+t
+∂zj
+= PS(j | ct)
+
+log PS(j | ct)
+PT (j | ct) −DKL(PS(· | ct) ∥PT (· | ct))
+
+,
+j ∈St.
+(16)
+The difference between Eq. 14 and Eq. 16 is important in the intervention regime. Forward KL yields a
+direct distribution-gap correction on the selected support. By contrast, the reverse KL gradient depends
+on the current student distribution in a more involved way. Its update is explicitly scaled by PS(j | ct),
+and the inner term is also determined by a student-dependent log-ratio relative to the global reverse KL
+value. As a result, the recovery signal is less direct when a teacher-preferred token has already been
+strongly suppressed by the student. This comparison explains why forward KL is better suited to the
+teacher-defined support used in AOPD.
+B.2
+Training Dynamics
+We further examined the training dynamics under different β values and observed an anomalous pattern
+when the objective tilts toward reverse KL. As shown in Section 6.4, the entropy under reverse KL
+(β = 0.0) undergoes a sharp initial surge, followed by an abrupt collapse to near zero. This trajectory
+indicates that the student rapidly transits into a converged, low-entropy policy. Concurrently, Figure 9b
+reveals that the proportion of tokens receiving forward-KL guidance plummets at the same entropy collapse
+phase, implying that most generated positions register positive advantages and exit the intervention regime.
+0
+40
+80
+Training Step
+4
+Entropy
+= 0.0
+= 0.1
+= 0.5
+= 0.9
+= 1.0
+(a) Policy entropy evolution.
+20
+60
+Training Step
+0%
+20%
+40%
+60%
+80%
+Forward-KL Token Ratio
+= 0.0
+= 0.9
+= 0.1
+= 1.0
+= 0.5
+(b) Ratio of tokens receiving Jensen-Shannon divergence guid-
+ance.
+Figure 9: Training dynamics under different β values.
+The ablation results in Section 6.4 demonstrate that this apparent convergence coincides with severe
+degradation in reasoning capability, with β = 0.0 attaining merely 33.7% Pass@1 compared to 53.4%
+under forward KL. We attribute this to a reward hacking phenomenon in on-policy distillation. The
+student discovers a mode-collapsed strategy that artificially suppresses the reverse KL value while failing
+to acquire the teacher’s reasoning patterns. In contrast, forward KL maintains stable entropy and sustained
+intervention throughout training, yielding both superior and more robust performance.
+C
+Limitations
+Our study focuses on teacher-student distillation and evaluates AOPD mainly on mathematical reasoning
+and sequential tool-use adaptation. Extending the same asymmetric intervention mechanism to self-
+distillation is a promising direction, but we leave a careful investigation of that setting to future work.
+More broadly, assessing AOPD across a wider range of tasks and training regimes would further clarify
+its generality.
+D
+Detailed Training Curves
+We report the full test-set performance dynamics throughout training for both warm-up settings on Qwen3-
+8B-Base. All metrics are evaluated every 10 steps on the held-out test sets of AIME 2024, AIME 2025,
+and HMMT 2025(Feb). Figures 10 and 11 trace Pass@1/4/8 across the training trajectory.
+Across both initialization settings, AOPD consistently achieves the highest scores on Pass@1/4/8 across
+all benchmarks. Under weak initialization, this advantage is particularly pronounced. AOPD maintains
+steady improvement from the outset, whereas OPD and ExOPD exhibit severe early degradation followed
+by slow recovery. The substantial performance gap indicates that AOPD remains effective even for
+students with weaker foundational capabilities. Under strong initialization, the margin between AOPD and
+baselines narrows, though AOPD still reaches the highest performance ceiling. This convergence suggests
+that methods such as OPD are more dependent on the student’s initial capability. A stronger base model
+produces trajectories where student tokens more frequently receive positive advantages from the teacher,
+thereby reducing the frequency of exploration black holes and alleviating the structural weaknesses of
+standard negative reinforcement.
+0
+40
+80
+Training Steps
+40
+Score (%)
+AIME 2024 - pass@1
+20
+60
+Training Steps
+30
+40
+Score (%)
+AIME 2025 - pass@1
+20
+60
+Training Steps
+20
+30
+Score (%)
+HMMT 2025(Feb) - pass@1
+20
+60
+Training Steps
+50
+70
+Score (%)
+AIME 2024 - pass@4
+20
+60
+Training Steps
+50
+Score (%)
+AIME 2025 - pass@4
+20
+60
+Training Steps
+30
+40
+Score (%)
+HMMT 2025(Feb) - pass@4
+20
+60
+Training Steps
+60
+80
+Score (%)
+AIME 2024 - pass@8
+20
+60
+Training Steps
+60
+Score (%)
+AIME 2025 - pass@8
+20
+60
+Training Steps
+40
+Score (%)
+HMMT 2025(Feb) - pass@8
+OPD
+ExOPD
+GKD
+AOPD
+Figure 10: Detailed training dynamics of Qwen3-8B-Base under weak initialization.
+20
+60
+Training Steps
+60
+Score (%)
+AIME 2024 - pass@1
+20
+60
+Training Steps
+50
+Score (%)
+AIME 2025 - pass@1
+20
+60
+Training Steps
+30
+Score (%)
+HMMT 2025(Feb) - pass@1
+20
+60
+Training Steps
+76
+80
+Score (%)
+AIME 2024 - pass@4
+20
+60
+Training Steps
+62.5
+65.0
+67.5
+70.0
+72.5
+75.0
+Score (%)
+AIME 2025 - pass@4
+20
+60
+Training Steps
+45
+Score (%)
+HMMT 2025(Feb) - pass@4
+20
+60
+Training Steps
+80
+84
+Score (%)
+AIME 2024 - pass@8
+20
+60
+Training Steps
+75
+Score (%)
+AIME 2025 - pass@8
+20
+60
+Training Steps
+50
+54
+58
+Score (%)
+HMMT 2025(Feb) - pass@8
+OPD
+ExOPD
+GKD
+AOPD
+Figure 11: Detailed training dynamics of Qwen3-8B-Base under strong initialization.

@@ -1,0 +1,948 @@
+Litespark Inference on Consumer CPUs:
+Custom SIMD Kernels for Ternary Neural Networks
+Nii Osae Osae Dade
+Tony Morri
+Moinul Hossain Rahat
+Sayandip Pal
+Mindbeam AI ∗
+Abstract
+Large language models (LLMs) have transformed artificial intelligence, but their
+computational requirements remain prohibitive for most users. Standard infer-
+ence demands expensive datacenter GPUs or cloud API access, leaving over one
+billion personal computers underutilized for AI workloads. Ternary models of-
+fer a path forward: their weights are constrained to {−1, 0, +1}, theoretically
+eliminating the need for floating-point multiplication. However, existing frame-
+works fail to exploit this structure, treating ternary models as dense floating-point
+networks. We address this gap with custom SIMD kernels that replace matrix
+multiplication with simple addition and subtraction operations, targeting the in-
+teger dot product instructions available on modern CPUs. Our implementation,
+Litespark-Inference, is pip-installable and integrates directly with Hugging-
+Face, achieving 9.2× faster time-to-first-token, 52× higher throughput, and 14×
+memory reduction compared to standard PyTorch inference on Apple Silicon, with
+similar speedups on Intel and AMD processors.
+Introduction
+Large language models have demonstrated remarkable capabilities across a wide range of tasks,
+from natural language understanding to code generation. However, deploying these models remains
+challenging due to their substantial computational and memory requirements. GPU-based inference
+requires datacenter GPUs costing $25,000-$40,000 per unit [1], or cloud API access at $2.50-$10
+per million tokens [2]. Meanwhile, there are over one billion personal computers in use worldwide
+[3]. These devices have capable CPUs that remain underutilized for AI workloads, and could run
+LLMs if the software existed to exploit them.
+Beyond cost, on-device inference offers compelling advantages for privacy and accessibility. Run-
+ning models locally keeps sensitive data on the user’s machine, avoiding transmission to external
+servers. It enables offline operation without network connectivity, reduces latency by eliminating
+round-trip communication, and democratizes access to AI capabilities for users in regions with lim-
+ited cloud infrastructure or unreliable internet.
+Recent advances in model quantization have reduced the resource requirements for LLM inference.
+Approaches like 4-bit and 8-bit quantization [20] have made it possible to run smaller models on
+consumer hardware. Ternary models, e.g., BitNet [5], TriLM [6], take quantization to its theoretical
+limit: ternary weights that can only take values from {−1, 0, +1}. This extreme quantization has
+a profound implication: matrix multiplication, the dominant operation in neural networks, becomes
+unnecessary. When weights are ternary, computing y = P
+j xj · wj reduces to simple conditional
+operations, adding xj to the accumulator when wj = +1, subtracting xj when wj = −1, and
+skipping the operation entirely when wj = 0.
+∗Correspondence to: research@mindbeam.ai
+Mindbeam AI 2026
+arXiv:2605.06485v1 [cs.CL] 7 May 2026
+
+While the theoretical advantages of ternary models are clear, their practical CPU-based inference has
+only recently become feasible. Three developments make efficient CPU inference for these models
+timely.
+First, the required hardware capabilities have only recently become widespread. The SIMD instruc-
+tions required for efficient integer dot products arrived when Intel introduced AVX-512 VNNI with
+Ice Lake (2019), ARM Holdings developed and deployed SDOT as part of their NEON Advanced
+SIMD architecture, first appearing in Apple’s M1 chip (2020) and now ubiquitous across billions
+of ARM-based mobile devices, and AMD brought AVX-512 to consumer chips with Zen4 (2022).
+ARM’s foresight in incorporating efficient integer dot product capabilities into their architecture has
+proven particularly impactful, as ARM-based processors now power not only Apple’s entire Mac
+lineup but also the vast majority of smartphones and tablets worldwide. Before these instructions,
+CPU-based neural network inference was bottlenecked by the lack of efficient integer arithmetic.
+Second, production-quality ternary LLMs have become available. While ternary quantization has
+been studied theoretically, Microsoft’s release of BitNet b1.58 in 2024 provided a 2-billion parame-
+ter model trained on 4 trillion tokens that demonstrates competitive performance with full-precision
+models of similar size.
+Third, the demand-supply gap has widened. LLM usage is growing rapidly, but GPU availability
+remains constrained and costs remain high. Most developers and researchers cannot justify dedicated
+GPU hardware for experimentation. Efficient CPU inference offers an accessible alternative that
+runs on hardware already owned.
+Given these converging developments in hardware, models, and demand, we address the gap be-
+tween the theoretical potential of ternary models and its practical realization. Despite the theoretical
+advantage of ternary weights, existing inference frameworks do not fully exploit their structure.
+Standard PyTorch [4] treats these models as dense floating-point networks, missing the opportu-
+nity for optimization. Specialized frameworks like llama.cpp focus on 4-bit quantization rather than
+ternary operations.
+We present custom SIMD kernels that eliminate multiplication for ternary inference. Our imple-
+mentation targets three major CPU architectures. On Apple Silicon (M1-M4), we use NEON SDOT
+instructions with 128-bit vectors. On Intel Ice Lake and AMD Zen4 (and later), we use AVX-512
+VNNI instructions with 512-bit vectors. On Intel Core Ultra, we use AVX-VNNI instructions with
+256-bit vectors.
+This work makes three contributions. First, we develop custom SIMD kernels that exploit ternary
+weight structure for multiplication-free inference, replacing floating-point matrix multiplication with
+integer addition and subtraction via hardware dot product instructions. Second, we package these
+kernels as a pip-installable Python library called Litespark-Inference, with automatic platform
+detection and HuggingFace Transformers [24] integration. Third, we provide comprehensive bench-
+marks for the specific case of BitNet b1.58 model, demonstrating 21-52× throughput improvement
+and ∼14× memory reduction across platforms.
+Background
+2.1
+Neural Network Quantization
+Neural networks store their learned knowledge in weights, numerical parameters that transform input
+data into predictions. In standard networks, weights are stored as 32-bit floating-point numbers
+(float32), allowing fine-grained values like 0.00142 or -3.7891. However, this precision comes at a
+cost: a 2-billion parameter model requires 8 GB of memory just for weights.
+Quantization reduces memory by storing weights with fewer bits. Common approaches range from
+16-bit formats like bfloat16 and float16, which halve memory with minimal accuracy loss, down
+through 8-bit integer representation (one quarter the memory with small accuracy loss) and 4-bit
+quantization (one-eighth the memory with moderate accuracy loss). At the extreme end lies ternary
+quantization at 1.58 bits, where weights are restricted to only three possible values: {−1, 0, +1}.
+The idea of extreme weight quantization has a rich history. BinaryConnect [8] first demonstrated
+that neural networks could be trained with a set of binary weights {−1, +1} during forward and
+backward propagation, achieving competitive results on MNIST and CIFAR-10. This work estab-
+lished that the computational benefits of binary weights, replacing multiplications with simple sign
+changes, could be realized without catastrophic accuracy loss, laying the groundwork for modern
+ternary approaches.
+Recent work has developed increasingly sophisticated quantization techniques for large language
+models. LLM.int8() [9] introduced mixed-precision decomposition to handle outlier features in
+billion-scale transformers, enabling 8-bit inference without performance degradation. GPTQ [10]
+introduced accurate post-training quantization using approximate second-order information, en-
+abling 3-4 bit quantization with minimal accuracy loss. AWQ [11] demonstrated that protecting
+only 1% of salient weights significantly reduces quantization error. SmoothQuant [12] enables
+W8A8 quantization by migrating quantization difficulty from activations to weights. QLoRA [13],
+building on LoRA’s [14] low-rank adaptation approach, extended these techniques to enable effi-
+cient fine-tuning of 4-bit quantized models on consumer hardware. For a comprehensive overview
+of quantization methods, we refer the readers to recent surveys [15].
+Ternary quantization is the most extreme form. Each weight can only say "add," "subtract," or
+"skip", nothing in between. This seems limiting, but models like BitNet and TriLM trained natively
+with this constraint demonstrate that ternary quantized models can match the performance of full-
+precision models.
+2.2
+Ternary Model Architecture
+Ternary models follow the standard transformer architecture [16] but constrain all linear layer
+weights to ternary values. For our benchmarks, we use BitNet b1.58 [7], a 2-billion parameter
+model trained on 4 trillion tokens that demonstrates competitive performance with full-precision
+counterparts.
+2.2.1
+The Computational Advantage
+In a standard linear layer, the forward pass computes:
+Y = XW
+(1)
+where X ∈RM×K is the input activation matrix (M tokens, K features) and W ∈RK×N is the
+weight matrix. Each output element requires K multiply-accumulate operations:
+Yij =
+K
+X
+k=1
+Xik · Wkj
+(2)
+For a typical layer with K = 2048 and N = 8192, this means 16 million multiplications per token,
+and a 2B parameter model has dozens of such layers.
+With ternary weights W ∈{−1, 0, +1}K×N, multiplication becomes trivial:
+Yij =
+X
+k:Wkj=+1
+Xik −
+X
+k:Wkj=−1
+Xik
+(3)
+The computation reduces to addition and subtraction. Weights equal to zero contribute nothing and
+can be skipped entirely.
+2.2.2
+Memory Savings
+The memory advantage of ternary weights is straightforward to quantify. Since each weight takes
+one of three values, two bits per parameter suffice to encode the full weight space. This stands in
+stark contrast to the 32 bits required for standard float32 representation.
+For a 2B parameter ternary model, this difference translates to substantial memory savings. A float32
+representation would require 2×109×32 bits, or approximately 8 GB of memory for weights alone.
+A pure 2-bit ternary encoding would theoretically need only 2 × 109 × 2 bits, approximately 500
+MB.
+In practice, our implementation uses 8 bits per weight rather than the theoretical minimum of 2
+bits. This decision prioritizes compatibility with hardware dot product instructions, which expect
+8-bit integer inputs. The practical storage footprint is approximately 556 MB after accounting for
+alignment padding, still achieving a 14× reduction compared to float32. We discuss the rationale
+for this design choice in detail in Section 3.
+2.3
+SIMD Instructions on Modern CPUs
+While ternary weights reduce the computational complexity of neural network operations, realizing
+these benefits in practice requires specialized hardware support. Modern CPUs provide such support
+through SIMD instructions.
+Single Instruction Multiple Data (SIMD) is a CPU feature that processes multiple values simultane-
+ously with a single instruction. Rather than adding two numbers one at a time, a SIMD instruction
+can add 16 or 64 pairs of numbers in one cycle.
+Modern CPUs have wide vector registers that hold multiple data elements. A 128-bit register can
+hold 16 int8 values (or 4 int32 values), a 256-bit register holds 32 int8 values, and a 512-bit register
+holds 64 int8 values.
+2.3.1
+Dot Product Instructions
+The critical enabler for efficient ternary inference is a family of specialized SIMD instructions de-
+signed for neural network workloads. These instructions compute integer dot products with native
+hardware support, eliminating the need for explicit loops over vector elements.
+ARM’s NEON instruction set, available on Apple Silicon (M1 through M4) and mobile ARM pro-
+cessors, provides the SDOT instruction. ARM Holdings developed the NEON Advanced SIMD
+architecture as a key component of their energy-efficient processor designs. The SDOT (signed
+dot product) instruction, part of ARM’s ARMv8.2-A DotProd extension, computes the dot product
+of 16 int8 values, accumulating into four int32 results. Each instruction performs 16 multiply-add
+operations with exceptional power efficiency. This instruction set is now deployed across billions
+of devices worldwide, from Apple’s Mac lineup to Android smartphones and embedded systems.
+ARM’s comprehensive documentation [17] provides detailed specifications for developers leverag-
+ing these capabilities. The widespread adoption of ARM’s NEON architecture has made efficient
+on-device AI inference accessible to a global user base.
+On x86 architectures, Intel and AMD provide the AVX-512 VNNI instruction set (Intel Ice Lake
+and later, AMD Zen4 and later). The VPDPBUSD instruction computes dot products across 64 int8
+values per instruction, 4× the throughput of NEON. Intel provides detailed documentation as part
+of Intel Deep Learning Boost [18].
+For Intel processors without full AVX-512 support, the AVX-VNNI instruction set (available start-
+ing with 12th generation Core processors and Core Ultra) offers a middle ground. These 256-bit
+instructions process 32 int8 values per operation, providing better throughput than NEON while
+maintaining compatibility with processors that lack full AVX-512 capability.
+On Apple Silicon, the undocumented AMX (Apple Matrix Extensions) coprocessor [19] provides
+additional matrix acceleration capabilities, which we leverage through the Accelerate framework for
+our float32 accuracy mode.
+Table 1 summarizes the SIMD capabilities across platforms.
+Platform
+Vector Width
+int8 ops/instruction
+Instruction
+Apple M1-M4
+128-bit
+SDOT
+Intel Core Ultra
+256-bit
+VPDPBUSD
+Intel Ice Lake+
+512-bit
+VPDPBUSD
+AMD Zen4+
+512-bit
+VPDPBUSD
+Table 1: SIMD capabilities for integer dot products across CPU platforms.
+3
+Related Work
+With an understanding of the hardware capabilities available, we now examine how existing frame-
+works approach CPU inference for LLMs and where our work fits within this landscape. Several
+strategies for efficient CPU-based inference have been explored, each with distinct architectural
+choices and performance tradeoffs. Table 2 provides a comparative overview of the major frame-
+works.
+Framework
+Precision
+Ternary-Optimized
+pip install
+HuggingFace
+llama.cpp [20]
+4/8-bit
+No
+No
+No
+T-MAC [21]
+Ternary
+Yes (LUT)
+No
+No
+BitNet.cpp [22]
+Ternary
+Yes
+No
+No
+Litespark-Inference
+Ternary
+Yes (SIMD)
+Yes
+Yes
+Table 2: Comparison of CPU inference frameworks.
+The llama.cpp and GGML frameworks [20] have established themselves as widely-used tools for
+CPU inference of quantized language models. These frameworks primarily target 4-bit and 8-bit
+quantization schemes, applying general-purpose quantization techniques that do not exploit the spe-
+cific algebraic properties of ternary weights. While effective for their target precision levels, these
+approaches cannot leverage the multiplication-free computation enabled by ternary quantization.
+T-MAC [21] takes a fundamentally different approach to ternary inference through lookup-table-
+based (LUT) computation. Rather than computing dot products directly, T-MAC precomputes re-
+sults for all possible input combinations and retrieves them during inference via table lookups. This
+method can achieve strong performance by trading computation for memory bandwidth. However,
+the approach requires substantial memory to store the lookup tables and introduces implementation
+complexity in managing table organization and access patterns.
+Microsoft’s BitNet.cpp [22] provides an official reference implementation for ternary inference with
+specialized optimizations. While this framework demonstrates effective ternary inference, it requires
+specific build configurations, compiler flags, and manual setup. The lack of integration with standard
+Python package managers and the HuggingFace ecosystem creates friction for practitioners seeking
+to experiment with ternary models.
+FlashAttention [23] addresses a different bottleneck, the quadratic memory complexity of attention,
+through IO-aware algorithms that reduce memory reads/writes between GPU HBM and SRAM.
+While orthogonal to our work on linear layer optimization, FlashAttention demonstrates the impor-
+tance of hardware-aware algorithm design for efficient inference.
+Litespark-Inference differs by using direct SIMD dot product instructions rather than lookup tables,
+resulting in simpler code that is easier to understand and maintain. The implementation is packaged
+as a standard pip-installable library with automatic HuggingFace model loading.
+Method
+Having established the theoretical foundations and limitations of existing approaches, we now de-
+scribe our implementation. The key challenge is bridging the gap between the theoretical simplicity
+of ternary operations (just add and subtract) and the practical requirements of hardware execution,
+which must account for memory alignment constraints, numerical precision through quantization,
+and computational stability.
+4.1
+Kernel Design
+Our kernel design philosophy centers on three core principles. First, we exploit the ternary weight
+structure to eliminate multiplication operations entirely, replacing them with conditional addition
+and subtraction. Second, we leverage hardware SIMD dot product instructions to achieve data-level
+parallelism, processing multiple elements simultaneously. Third, we maintain numerical accuracy
+through careful quantization of activations and systematic correction of quantization-induced biases.
+The following subsections detail how each principle is realized in our implementation.
+4.1.1
+Weight Representation
+A natural question is how to store ternary weights. Since each weight can take one of the three
+possible values from the set {−1, 0, +1}, two bits per weight would suffice. However, we store
+weights as 8-bit signed integers instead.
+This choice is driven by hardware constraints. The SIMD dot product instructions we rely on (SDOT,
+VPDPBUSD) expect 8-bit integer inputs. Using 2-bit packing would require unpacking weights
+before every computation, negating the performance benefit. By storing weights as int8, we can
+feed them directly to hardware instructions with no preprocessing.
+The memory cost of this choice is modest. For a 2B parameter ternary model, 2-bit packing would
+require approximately 500 MB, while our 8-bit storage requires approximately 556 MB after align-
+ment padding. The 56 MB difference is small compared to the 14× reduction from float32 (8 GB),
+and the performance gain from direct hardware utilization far outweighs this cost.
+4.1.2
+Activation Quantization
+While weights are ternary, input activations (the values flowing through the network) are continuous
+floating-point numbers. To use integer dot product instructions, we must quantize these activations
+to int8.
+We employ per-row symmetric quantization. For each row of the activation matrix (corresponding
+to one token), we find the maximum absolute value and scale all values to fit within the int8 range
+[−127, +127]:
+xint8 = round
+ x · 127
+max(|x|)
+
+,
+scale = max(|x|)
+(4)
+The scale factor is saved so we can convert results back to float32 after computation. This approach
+preserves relative magnitudes within each token’s activations, if one value was twice another before
+quantization, it remains approximately twice as large after.
+4.1.3
+The Computation Pipeline
+The complete forward pass through a linear layer proceeds through four stages. First, activations
+are quantized by converting float32 inputs to int8 while saving the scale factor. Next, the kernel
+computes dot products using SIMD instructions to calculate P
+k xk · wk for each output. The re-
+sults then undergo zero-point correction, subtracting the bias introduced by quantization (explained
+below). Finally, the int32 results are rescaled back to float32 by multiplying with the saved scale
+factor.
+4.1.4
+SIMD Dot Product
+The core computation uses hardware dot product instructions that process multiple int8 pairs si-
+multaneously. On ARM-based processors, ARM’s NEON vsdotq_s32 instruction computes the
+dot product of 16 int8 value pairs, accumulating into 4 int32 results. ARM’s design philosophy
+emphasizes power efficiency alongside performance, making these instructions particularly well-
+suited for mobile and edge deployment scenarios. On Intel and AMD processors with AVX-512, the
+_mm512_dpbusd_epi32 instruction processes 64 int8 pairs per instruction, while the AVX-VNNI
+variant _mm256_dpbusd_epi32 handles 32 int8 pairs per instruction on Intel Core Ultra processors.
+These instructions are designed for neural network inference and achieve high throughput on modern
+processors, with multiple operations completing per cycle when pipelined. The int32 accumulator
+prevents overflow even when summing thousands of int8 products.
+4.1.5
+Zero-Point Correction
+Symmetric int8 quantization maps floating-point zero to integer zero. However, the quantization
+formula can introduce a small bias when values are not perfectly centered. This bias, called the
+zero-point, must be corrected to maintain accuracy.
+The correction is straightforward. We precompute the sum of each weight column:
+col_sumj =
+X
+i
+Wij
+(5)
+After the dot product, we subtract zero_point × col_sumj from each output j. Since column sums
+are constant for a given model, they are computed once during model loading and reused for every
+inference.
+4.2
+Platform-Specific Implementations
+The diversity of SIMD instruction sets across modern CPU architectures necessitates platform-
+specific kernel implementations. While the algorithmic approach remains consistent across plat-
+forms, each target requires its own low-level implementation tailored to the available instruction set
+and register organization. Table 3 summarizes the configurations.
+Platform
+Instruction
+Vector Width
+Alignment
+Apple Silicon (M1-M4)
+NEON SDOT
+128-bit
+16 bytes
+Intel Ice Lake+
+AVX-512 VNNI
+512-bit
+64 bytes
+AMD Zen4+
+AVX-512 VNNI
+512-bit
+64 bytes
+Intel Core Ultra
+AVX-VNNI
+256-bit
+32 bytes
+Table 3: Platform-specific kernel configurations. Alignment refers to the memory boundary weights
+must be padded to for optimal SIMD access.
+Memory alignment is critical for SIMD performance. Vector load instructions work most efficiently
+when data starts at addresses divisible by the vector width (i.e., addresses that are multiples of 16, 32,
+or 64 bytes depending on the platform). Misaligned loads may require multiple memory transactions
+or trigger slower unaligned load paths in the hardware.
+To ensure optimal performance, we pad weight matrices to the appropriate boundary during model
+loading such that each row begins at an address satisfying the platform’s alignment requirement.
+This padding introduces negligible memory overhead but ensures every load operation runs at full
+speed.
+Our implementation incorporates automatic platform detection to select the appropriate kernel at
+runtime. During library initialization, the system queries the CPU’s feature flags (using CPUID on
+x86 or equivalent mechanisms on ARM) to determine which SIMD instruction sets are available.
+Based on this information, the library dispatches to the corresponding platform-specific kernel. This
+design eliminates the need for users to manually specify their hardware configuration, simplifying
+deployment across heterogeneous environments.
+4.3
+Accuracy Modes
+Beyond performance optimization, another practical consideration for deployment is the tradeoff
+between computational efficiency and numerical precision. Integer quantization introduces small
+numerical differences compared to full float32 computation. For most applications, these differences
+are imperceptible, the model generates the same text. However, some applications require exact
+numerical reproducibility.
+To accommodate this spectrum of requirements, our implementation on Apple Silicon provides two
+distinct inference modes.
+The NEON mode uses int8 quantized activations for maximum speed. When limiting precision
+to int8, numerical deviations can occur. We quantify this using the "maximum logit difference,"
+defined as the largest deviation from the reference output across all logits. Our measurements show
+this difference is approximately 0.68 compared to float32 reference computation. In practice, this
+small deviation has no observable effect on generation quality: the same tokens are sampled, and
+the output text remains indistinguishable.
+The Accelerate mode provides an alternative for users requiring exact reproducibility. It leverages
+Apple’s Accelerate framework with AMX (Apple Matrix Extensions) for float32 computation. This
+provides bit-exact accuracy matching PyTorch reference output, at the cost of higher memory usage
+and lower throughput compared to NEON mode.
+For Intel and AMD platforms, we currently provide only the int8 quantized mode, which offers the
+best performance while maintaining generation quality indistinguishable from the reference.
+Implementation
+The previous section described the algorithmic techniques underlying our kernels. This section
+turns to engineering concerns: how we package these kernels into a usable system that developers
+can adopt without specialized knowledge.
+A key goal of this work is accessibility. Many efficient inference implementations require com-
+plex build processes, specific compiler versions, or manual hardware configuration. We designed
+our implementation to be installable with a single command and usable without any knowledge of
+the underlying SIMD optimizations. Our implementation is available at 
+Mindbeam-AI/Litespark-Inference.
+5.1
+System Architecture
+The implementation has four main components:
+C++ SIMD kernels. The performance-critical dot product operations are implemented in C++ us-
+ing platform-specific intrinsics (NEON for ARM-based processors, AVX-512/AVX-VNNI for x86).
+These kernels are compiled as PyTorch C++ extensions, allowing them to be called directly from
+Python with minimal overhead. Each platform has its own kernel file, and the build system automat-
+ically compiles only the relevant one.
+Python interface.
+The user-facing API is pure Python, handling model loading, tokeniza-
+tion, and generation. Users interact with familiar PyTorch-style methods (model.generate(),
+model.forward()) without needing to know that custom kernels are running underneath.
+Automatic platform detection. The runtime dispatching mechanism described in Section 4 is im-
+plemented by querying CPU feature flags at import time. The library then loads the appropriate
+pre-compiled kernel, making the optimization transparent to users.
+KV cache. Language models generate text one token at a time. Without caching, each new token
+would require recomputing attention over the entire sequence, an O(n2) cost that grows quadrati-
+cally with sequence length. The KV (key-value) cache stores intermediate attention results, reducing
+each generation step to O(n). Our implementation uses a pre-allocated cache to avoid memory al-
+location during generation.
+5.2
+Weight Conversion
+Ternary models distributed via HuggingFace store weights in standard floating-point format to en-
+sure compatibility with existing frameworks. Our implementation performs an offline conversion to
+the optimized int8 ternary format described in Section 3.
+The conversion process proceeds through several stages. The system first downloads the model from
+HuggingFace, with subsequent downloads served from a local cache. Each weight is then rounded
+to the nearest ternary value (−1, 0, or +1) and converted to int8 representation. The weight matrices
+are padded to satisfy SIMD alignment requirements for the target platform. During this process, we
+also precompute the column sums required for zero-point correction (Section 3.1.5). The converted
+model is serialized to disk, enabling fast loading on subsequent runs.
+This conversion overhead is incurred only on the first load of a model. All subsequent loads directly
+deserialize the converted representation, eliminating the conversion latency.
+5.3
+User Interface
+The package provides both Python and command-line interfaces. The Python API integrates with
+HuggingFace, automatically downloading and converting ternary models:
+from
+litespark_inference
+import
+load_model
+model , tokenizer = load_model("bitnet -2b")
+input_ids = tokenizer.encode("Hello ,␣world!", return_tensors ="pt")
+output = model.generate(input_ids , max_new_tokens =100)
+print(tokenizer.decode(output [0]))
+For users who prefer the command line, we provide a CLI with three modes:
+litespark -inference
+generate "The␣meaning␣of␣life␣is"
+litespark -inference
+chat
+litespark -inference
+benchmark
+The generate command produces a single completion. The chat command starts an interactive
+session with conversation history. The benchmark command measures throughput and memory
+usage on the current hardware.
+5.4
+Installation
+Installation requires only pip:
+pip
+install
+litespark -inference
+5.5
+Reproducibility
+All code, benchmarking scripts, and instructions for reproducing our results are available in the
+repository Litespark-Inference. The benchmark command included in the package measures
+throughput and memory usage on the user’s hardware, enabling direct comparison with our reported
+results. Model weights are automatically downloaded from HuggingFace on first use.
+Experimental Results
+6.1
+Setup
+We evaluate our implementation using the Microsoft BitNet b1.58 2B-4T model, a 2-billion param-
+eter ternary model trained on 4 trillion tokens. This is currently the only publicly available ternary
+model of significant scale.
+We tested on three hardware platforms representing the major CPU architectures in consumer de-
+vices today: Apple M4 (MacBook Pro with 10-core CPU), Intel Ice Lake and AMD Zen4 processors
+with AVX-512 VNNI support, and Intel Core Ultra with AVX-VNNI.
+We establish PyTorch with native backend (Accelerate on macOS, MKL on Linux) as our baseline.
+This configuration represents the standard approach of running ternary models through conventional
+dense matrix operations, treating ternary weights as regular floating-point values.
+We report three metrics. First, memory consumption is measured as peak RSS (Resident Set Size)
+during inference, capturing the actual physical memory footprint of the process. Second, TTFT
+(time to first token) measures the latency from prompt submission to first token generation, char-
+acterizing system responsiveness. Third, throughput is measured as tokens generated per second
+during autoregressive generation with KV caching enabled, characterizing the sustained generation
+rate for complete responses.
+6.2
+Apple Silicon Results
+Figure 1 and Table 4 show the performance comparison on Apple M4. We compare three config-
+urations: standard PyTorch (baseline), Litespark-Inference with NEON (int8 quantized), and the
+Accelerate mode (float32 with Apple’s AMX).
+Figure 1: Performance comparison on Apple Silicon M4. Litespark-Inference achieves ∼14× mem-
+ory reduction, 9.2× faster TTFT, and 52× higher throughput compared to PyTorch.
+Metric
+PyTorch
+NEON
+Accelerate
+Memory (MB)
+7,673
+6,949
+TTFT (ms)
+2,632
+373
+Throughput (tok/s)
+0.39
+20.4
+5.52
+Table 4: Detailed results on Apple Silicon M4. Memory is peak RSS, TTFT is time to first token,
+throughput is tokens per second during generation.
+Litespark-Inference achieves substantial improvements across all metrics. Memory usage drops
+by approximately 14×, from 7,673 MB to just 556 MB. This allows the model to fit comfortably in
+RAM on devices with 8 GB of memory. Time to first token improves by 9.2×, from 2,632 ms to 288
+ms. The model now responds in under 300 milliseconds rather than over 2.5 seconds. Throughput
+increases by 52×, from 0.39 tokens per second to 20.4 tokens per second. At 20 tokens per second,
+text appears instantly; at 0.39 tokens per second, users would wait over two seconds per token.
+The Accelerate mode provides a middle ground with exact accuracy, achieving 7.1× faster TTFT
+and 14.2× higher throughput than PyTorch. This mode is useful when numerical reproducibility is
+required.
+6.3
+Intel and AMD Results
+We evaluate on two x86 configurations: processors with full AVX-512 VNNI support (512-bit vec-
+tors), and Intel Core Ultra with AVX-VNNI (256-bit vectors).
+Figure 2: Performance comparison on Intel Ice Lake / AMD Zen4 using AVX-512 VNNI kernels.
+Metric
+PyTorch
+AVX-512 VNNI
+Speedup
+Memory (MB)
+7,800
+14.0×
+TTFT (ms)
+2,450
+12.6×
+Throughput (tok/s)
+0.42
+11.2
+26.7×
+Table 5: Results on Intel Ice Lake / AMD Zen4 (AVX-512 VNNI). The wider 512-bit vectors enable
+higher throughput than other platforms.
+The AVX-512 VNNI kernel achieves 11.2 tokens per second with a 26.7× speedup. The 512-bit
+vector width allows processing 64 int8 values per instruction, compared to 16 for NEON.
+Figure 3: Performance comparison on Intel Core Ultra using AVX-VNNI kernels.
+Metric
+PyTorch
+AVX-VNNI
+Speedup
+Memory (MB)
+7,750
+13.9×
+TTFT (ms)
+2,580
+8.3×
+Throughput (tok/s)
+0.40
+8.5
+21.3×
+Table 6: Results on Intel Core Ultra (AVX-VNNI). Performance falls between NEON and AVX-512,
+consistent with the 256-bit vector width.
+The AVX-VNNI results demonstrate that even the 256-bit variant provides substantial speedups over
+baseline PyTorch. The 8.5 tokens per second throughput is sufficient for interactive use.
+6.4
+Cross-Platform Comparison
+Figure 4 compares speedups across all tested platforms, normalizing each metric against the PyTorch
+baseline.
+Figure 4: Cross-platform performance comparison showing consistent speedups across Apple Sili-
+con, Intel, and AMD processors.
+Several key observations emerge from the cross-platform comparison. All platforms achieve greater
+than 8× TTFT speedup and greater than 21× throughput improvement over the PyTorch baseline.
+Memory reduction remains consistent at approximately 14× across platforms, as this is determined
+by the weight representation rather than the kernel implementation. Apple Silicon’s NEON achieves
+the highest throughput speedup (52×), likely due to its unified memory architecture and efficient
+cache hierarchy, demonstrating that memory bandwidth rather than SIMD width is the primary bot-
+tleneck for ternary inference.
+Discussion
+The experimental results demonstrate substantial performance improvements across all tested plat-
+forms. We now analyze the sources of these gains, discuss practical considerations for deployment,
+and identify directions for future work.
+7.1
+Why Such Large Speedups?
+The 9-23× throughput improvements we observe are not the result of a single optimization, but
+rather the compounding effect of multiple factors working together.
+First, ternary weights eliminate floating-point multiplication entirely. Standard matrix multiplication
+requires expensive floating-point multiply-accumulate operations. With ternary weights, multiplica-
+tion becomes trivial: multiplying by +1 is a no-op, multiplying by −1 is negation, and multiplying
+by 0 is skipping. This fundamentally changes the computational bottleneck from arithmetic to mem-
+ory bandwidth.
+Second, int8 representation enables direct use of hardware dot product instructions. Modern CPUs
+include specialized SIMD instructions (SDOT, VPDPBUSD) designed specifically for neural net-
+work inference. These instructions process 16-64 int8 pairs per cycle with high throughput. By
+storing weights as int8, we can feed data directly to these instructions without unpacking or conver-
+sion.
+Third, the 14× memory reduction improves cache utilization. A 2B parameter model requires 8 GB
+in float32 but only 556 MB in our int8 ternary format. This allows the entire model to fit in CPU
+cache hierarchies more effectively, reducing memory bandwidth pressure. When weights fit in L3
+cache, access latency drops from hundreds of cycles (DRAM) to tens of cycles (cache).
+Fourth, the KV cache optimization reduces redundant computation during autoregressive generation.
+Without caching, each new token would require recomputing attention over the entire sequence. The
+cache converts this O(n2) cost into O(n), providing speedups that grow with sequence length.
+The baseline PyTorch implementation suffers from treating ternary weights as dense float32 ma-
+trices. It performs full floating-point matrix multiplication, uses 14× more memory, and cannot
+leverage specialized integer dot product instructions. Our implementation exploits the ternary struc-
+ture at every level of the system.
+7.2
+Accuracy Considerations
+A natural concern with int8 quantization is whether it degrades generation quality. We address this
+through careful measurement and comparison.
+We quantify numerical deviation using the maximum logit difference: the largest absolute difference
+between Litespark-Inference’s int8 output and the float32 reference across all logits. For the NEON
+kernel on Apple Silicon, this difference is approximately 0.68, the largest deviation in any logit value
+is less than 1.0.
+In practice, this small numerical difference has no observable effect on generation quality. Language
+model generation uses sampling or greedy decoding based on logit rankings. A deviation of 0.68 is
+insufficient to change which token has the highest probability in almost all cases. We verified this
+by generating hundreds of samples with both the int8 and float32 implementations: the outputs are
+identical.
+For applications requiring bit-exact reproducibility (e.g., regression testing, deterministic debug-
+ging), we provide the Accelerate mode on Apple Silicon, which uses float32 computation and
+matches PyTorch output exactly.
+7.3
+Limitations
+Our implementation targets ternary models specifically. The techniques do not directly apply to
+models using 4-bit or 8-bit quantization, which require different kernel designs. However, the gen-
+eral principle, exploiting quantization structure with hardware SIMD instructions, applies broadly.
+The current implementation has been validated on the BitNet architecture. Adapting to other ternary
+architectures would require modifying the model loading and layer replacement logic, though the
+core kernels would remain unchanged.
+Performance is limited by memory bandwidth rather than compute throughput. On all tested plat-
+forms, the kernels are memory-bound: they spend more time loading weights from memory than
+computing dot products. Future work could explore weight compression or caching strategies to
+further reduce bandwidth pressure.
+7.4
+Future Work
+Several directions could extend this work:
+Mobile deployment. ARM Holdings’ NEON architecture, with its SDOT instruction, is deployed
+across billions of mobile devices worldwide, from Apple’s iPhone and iPad lineup to Android smart-
+phones and tablets powered by Qualcomm, Samsung, and MediaTek processors. The kernels de-
+veloped for Apple Silicon use the same ARM instruction set available on these mobile platforms.
+Adapting the implementation for iOS and Android would enable on-device LLM inference without
+network connectivity, leveraging ARM’s global ecosystem. This would be particularly impactful
+given ARM’s dominant position in mobile computing, where power efficiency and on-device pro-
+cessing are critical. ARM’s consistent architecture across their product lines, from high-performance
+processors in Apple’s M-series chips to energy-efficient cores in mobile SoCs, means that optimiza-
+tions developed for one ARM platform can benefit the entire ARM ecosystem.
+Larger models. Ternary training has been demonstrated at 2B parameters. As larger ternary models
+become available (10B, 70B+), our kernels would scale naturally, with memory savings becoming
+even more critical.
+Training support. Current work focuses on inference. Extending the kernels to support backward
+passes would enable efficient fine-tuning of ternary models on consumer hardware.
+Hybrid quantization. Some models use ternary weights with higher-precision activations (e.g.,
+int16 or bfloat16). Adapting the kernels to support mixed-precision computation could improve
+accuracy while maintaining most of the performance benefits.
+7.5
+Extending to Non-Ternary Models
+While our kernels target ternary weights, the underlying techniques generalize to other quantization
+schemes. The key insight is matching the quantization format to available hardware instructions.
+For 4-bit quantization, one could pack two 4-bit weights into each int8 value and use similar SIMD
+dot product instructions. For 2-bit quantization, four weights could be packed per byte. The chal-
+lenge is balancing the cost of unpacking against the benefit of reduced memory bandwidth.
+For asymmetric quantization (where zero-point is non-zero), the zero-point correction logic would
+need adjustment, but the core SIMD computation remains the same.
+The broader lesson is that hardware-aware quantization, choosing quantization formats that align
+with available instructions, can unlock substantial performance improvements on consumer CPUs.
+Conclusion
+This work demonstrates that ternary neural networks can achieve practical, high-performance in-
+ference on consumer CPUs through hardware-aware kernel design. By exploiting the structure of
+ternary weights and leveraging modern SIMD dot product instructions, we achieve 21-52× through-
+put improvements and 14× memory reduction compared to standard PyTorch implementations in
+the case of the BitNet 2B model.
+The key insight is that extreme quantization, restricting weights to just three values, enables a quali-
+tatively different computational approach. Rather than treating quantization as an approximation to
+full-precision computation, we design kernels specifically for the ternary case, eliminating floating-
+point multiplication entirely and using specialized integer instructions.
+Litespark-Inference packages these optimizations as a pip-installable library with automatic plat-
+form detection and HuggingFace integration, making efficient ternary inference accessible to devel-
+opers without specialized knowledge of SIMD programming or hardware architecture.
+The results suggest that ternary models like BitNet represent a promising direction for democratizing
+large language model deployment. A 2-billion parameter model that fits in 556 MB and generates
+11-20 tokens per second on consumer hardware enables applications previously requiring expensive
+GPU infrastructure or cloud API calls.
+As ternary training techniques continue to improve and larger models become available, the perfor-
+mance benefits demonstrated here will become increasingly important. The ability to run billion-
+parameter models efficiently on consumer CPUs, from desktop workstations to laptops to mobile
+devices, could fundamentally change how we think about deploying and using large language mod-
+els.
+References
+[1] NVIDIA Corporation. NVIDIA H100 Tensor Core GPU. 
+en-us/data-center/h100/, 2024.
+[2] OpenAI. OpenAI API Pricing.  2024.
+[3] Statista. Number of PCs in use worldwide 2015-2024. 
+statistics/748551/worldwide-pc-installed-base/, 2024.
+[4] Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan,
+Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, et al. PyTorch: An Imperative
+Style, High-Performance Deep Learning Library. In Advances in Neural Information Process-
+ing Systems (NeurIPS), 2019.
+[5] Hongyu Wang, Shuming Ma, Li Dong, Shaohan Huang, Huaijie Wang, Lingxiao Ma, Fan
+Yang, Ruiping Wang, Yi Wu, and Furu Wei. BitNet: Scaling 1-bit Transformers for Large
+Language Models. arXiv preprint arXiv:2310.11453, 2023.
+[6] Ayush Kaushal, Tejas Pandey, Tejas Vaidhya, Aaryan Bhagat, and Irina Rish. Spectra: A
+Comprehensive Study of Ternary, Quantized, and FP16 Language Models. arXiv preprint
+arXiv:2407.12327, 2024.
+[7] Shuming Ma, Hongyu Wang, Lingxiao Ma, Lei Wang, Wenhui Wang, Shaohan Huang, Li
+Dong, Ruiping Wang, Jilong Xue, and Furu Wei. The Era of 1-bit LLMs: All Large Language
+Models are in 1.58 Bits. arXiv preprint arXiv:2402.17764, 2024.
+[8] Matthieu Courbariaux, Yoshua Bengio, and Jean-Pierre David. BinaryConnect: Training Deep
+Neural Networks with binary weights during propagations. In Advances in Neural Information
+Processing Systems (NIPS), 2015.
+[9] Tim Dettmers, Mike Lewis, Younes Belkada, and Luke Zettlemoyer. LLM.int8(): 8-bit Ma-
+trix Multiplication for Transformers at Scale. In Advances in Neural Information Processing
+Systems (NeurIPS), 2022.
+[10] Elias Frantar, Saleh Ashkboos, Torsten Hoefler, and Dan Alistarh. GPTQ: Accurate Post-
+Training Quantization for Generative Pre-trained Transformers. In International Conference
+on Learning Representations (ICLR), 2023.
+[11] Ji Lin, Jiaming Tang, Haotian Tang, Shang Yang, Xingyu Dang, and Song Han. AWQ:
+Activation-aware Weight Quantization for LLM Compression and Acceleration. In MLSys,
+2024. Best Paper Award.
+[12] Guangxuan Xiao, Ji Lin, Mickael Seznec, Hao Wu, Julien Demouth, and Song Han.
+SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models.
+In International Conference on Machine Learning (ICML), 2023.
+[13] Tim Dettmers, Artidoro Pagnoni, Ari Holtzman, and Luke Zettlemoyer. QLoRA: Efficient Fine-
+tuning of Quantized LLMs. In Advances in Neural Information Processing Systems (NeurIPS),
+2023.
+[14] Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang,
+Lu Wang, and Weizhu Chen. LoRA: Low-Rank Adaptation of Large Language Models. In
+International Conference on Learning Representations (ICLR), 2022.
+[15] Amir Gholami, Sehoon Kim, Zhen Dong, Zhewei Yao, Michael W. Mahoney, and Kurt
+Keutzer. A Survey of Quantization Methods for Efficient Neural Network Inference. arXiv
+preprint arXiv:2103.13630, 2021.
+[16] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez,
+Łukasz Kaiser, and Illia Polosukhin. Attention is All You Need. In Advances in Neural Infor-
+mation Processing Systems (NIPS), 2017.
+[17] Arm
+Ltd.
+Arm
+NEON
+Intrinsics
+Reference.
+
+architectures/instruction-sets/intrinsics/, 2024.
+[18] Intel
+Corporation.
+Intel
+Deep
+Learning
+Boost
+(Intel
+DL
+Boost)
+Documentation.
+
+deep-learning-boost.html, 2024.
+[19] Dougall Johnson. Apple AMX Instructions.  2021.
+[20] Georgi Gerganov. llama.cpp: Inference of LLaMA model in pure C/C++. 
+com/ggerganov/llama.cpp, 2023.
+[21] Wei Huang, Haotong Qin, Yangdong Liu, Yawei Li, Xianglong Liu, Luca Benini, Michele
+Magno, and Xiaojuan Qi. T-MAC: CPU Renaissance via Table Lookup for Low-Bit LLM De-
+ployment on Edge. arXiv preprint arXiv:2407.00088, 2024.
+[22] Microsoft Research. BitNet.cpp: Official inference framework for 1-bit LLMs. https://
+github.com/microsoft/BitNet, 2024.
+[23] Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. FlashAttention: Fast
+and Memory-Efficient Exact Attention with IO-Awareness. In Advances in Neural Information
+Processing Systems (NeurIPS), 2022.
+[24] Thomas Wolf, Lysandre Debut, Victor Sanh, Julien Chaumond, Clement Delangue, Anthony
+Moi, Pierric Cistac, Tim Rault, Rémi Louf, Morgan Funtowicz, Joe Davison, Sam Shleifer,
+Patrick von Platen, Clara Ma, Yacine Jernite, Julien Plu, Canwen Xu, Teven Le Scao, Sylvain
+Gugger, Mariama Drame, Quentin Lhoest, and Alexander M. Rush. Transformers: State-of-
+the-Art Natural Language Processing. In Proceedings of the 2020 Conference on Empirical
+Methods in Natural Language Processing: System Demonstrations, 2020.
+[25] Microsoft Research. BitNet.cpp v2: 2-6x Faster Inference with 2-bit Kernels. https://
+github.com/microsoft/BitNet/releases/tag/v1.1, 2025.
+[26] Arm Holdings. Arm Ecosystem: Powering 99% of the World’s Smartphones. 
+arm.com/markets/mobile, 2024.
+[27] Raspberry Pi Foundation. Raspberry Pi Documentation. 
+documentation/, 2024.
+[28] Cass, Stephen. Taking AI to the Edge: Google, Apple, and Amazon want to put neural networks
+in your devices. IEEE Spectrum, 2019.
+[29] Warden, Pete and Situnayake, Daniel. TinyML: Machine Learning with TensorFlow Lite on
+Arduino and Ultra-Low-Power Microcontrollers. O’Reilly Media, 2019.
+[30] Xu, Daliang and Yin, Wangsong and Jin, Xin and Zhang, Ying and Wei, Shiyun and Xu,
+Mengwei and Liu, Xuanzhe. LLMCad: Fast and Scalable On-device Large Language Model
+Inference. arXiv preprint arXiv:2309.04255, 2023.
+A
+Comparison with BitNet.cpp v2
+Shortly after we completed Litespark-Inference, Microsoft released BitNet.cpp v2 [25], an improved
+version of their inference framework that introduces optimized 2-bit kernels and achieves 2 −6×
+speedups over the original implementation. We benchmarked both implementations on identical
+hardware to compare their performance characteristics.
+A.1
+Benchmark Setup
+We followed Microsoft’s pp128+tg128 methodology: processing a 128-token prompt (pp128, mea-
+suring prefill speed) followed by generating 128 new tokens (tg128, measuring autoregressive gen-
+eration speed). All tests used the BitNet b1.58 2B-4T model.
+We tested on three platforms:
+• AMD EPYC 9R14 (AWS c7a.2xlarge): 8 vCPUs, 3.7 GHz, AVX-512 VNNI
+• Intel Xeon Platinum 8488C (AWS c7i.2xlarge): 8 vCPUs, 3.8 GHz, AVX-512 VNNI
+• Apple M4 (MacBook Pro): 10-core CPU, ARM NEON with SDOT
+For the Apple M4 platform, we present Litespark-Inference results only. We hope to see more
+testing and attention from Microsoft on ARM platforms in the future, as the billions of ARM devices
+worldwide, from laptops to smartphones to IoT devices, represent a critical deployment target for
+efficient on-device inference [26].
+A.2
+x86 Results
+Tables 7 and 8 present detailed results on x86 platforms. Figures 5 and 6 visualize how performance
+scales with thread count.
+Prefill pp128 (tok/s)
+Generation tg128 (tok/s)
+Threads
+Original
+V2
+Litespark
+Original
+V2
+Litespark
+35.0
+43.4
+38.2
+10.0
+15.6
+15.9
+70.0
+81.2
+74.7
+18.0
+28.7
+28.1
+140.0
+156.8
+140.7
+30.0
+49.2
+48.2
+210.0
+291.8
+230.7
+42.0
+66.2
+67.5
+Table 7: AMD EPYC 9R14 comparison. BitNet.cpp V2 leads on prefill (1.26× faster at 8 threads),
+while Litespark-Inference slightly edges ahead on token generation.
+Prefill pp128 (tok/s)
+Generation tg128 (tok/s)
+Threads
+Original
+V2
+Litespark
+Original
+V2
+Litespark
+27.0
+43.4
+59.7
+10.0
+13.3
+13.6
+40.0
+65.8
+85.9
+13.0
+19.1
+19.5
+55.0
+77.9
+110.2
+16.0
+24.3
+25.0
+79.0
+101.3
+120.7
+20.0
+29.5
+28.0
+Table 8: Intel Xeon Platinum 8488C comparison. Litespark-Inference achieves 1.19× higher prefill
+throughput and matches token generation performance.
+Figure 5: Scaling behavior on AMD EPYC 9R14. BitNet.cpp V2 shows strong prefill scaling, while
+all three implementations converge on similar token generation performance at higher thread counts.
+Figure 6: Scaling behavior on Intel Xeon Platinum 8488C. Litespark-Inference maintains a consis-
+tent lead in prefill throughput across all thread configurations.
+A.3
+ARM Results (Apple Silicon)
+Table 9 shows Litespark-Inference’s performance scaling on Apple M4. These results demonstrate
+that efficient ternary inference is achievable on ARM platforms using NEON SDOT instructions,
+with strong scaling characteristics across different thread counts.
+Threads
+Prefill pp128 (tok/s)
+Generation tg128 (tok/s)
+26.1
+6.5
+43.1
+11.0
+81.9
+15.4
+101.2
+14.0
+108.8
+19.6
+Table 9: Litespark-Inference performance on Apple M4. The slight dip at 8 threads for token gener-
+ation recovers at 10 threads, suggesting optimal performance when utilizing all available cores.
+Figure 7: Litespark-Inference scaling on Apple M4. Prefill throughput scales nearly linearly up to 4
+threads, while token generation benefits from using all 10 CPU cores.
+ARM-based processors have become ubiquitous, powering not only Apple’s Mac lineup but also
+the vast majority of smartphones, tablets, Raspberry Pi devices, and embedded systems worldwide
+[26, 27]. The combination of ARM’s energy efficiency and ternary neural networks’ reduced com-
+putational requirements creates a compelling opportunity for on-device AI, enabling private, offline
+inference without cloud connectivity or expensive hardware [28, 29]. We encourage Microsoft and
+the broader research community to invest more attention in ARM benchmarking and optimization, as
+this ecosystem represents one of the most impactful deployment targets for efficient LLM inference.
+A.4
+Summary
+The x86 results show platform-dependent performance characteristics. BitNet.cpp V2 achieves
+1.26× higher throughput than Litespark-Inference at prefill on AMD processors, while Litespark-
+Inference leads by 1.19× on Intel. For token generation, the metric that determines perceived speed
+during interactive use, both implementations perform comparably, with differences within 5%.
+Litespark-Inference’s memory efficiency (14× reduction, fitting the 2B model in 556 MB) remains
+a key differentiator, enabling deployment on memory-constrained devices common in edge and IoT
+scenarios [28]. Combined with our ARM results, this positions Litespark-Inference for deployment
+on billions of ARM-based devices worldwide, from MacBooks and Chromebooks to smartphones,
+smart home devices, and industrial IoT systems [30]. These platforms have historically been under-
+served by AI inference frameworks optimized primarily for datacenter GPUs.
+The two implementations represent complementary design approaches: BitNet.cpp prioritizes raw
+performance for users comfortable with C++ compilation, while Litespark-Inference emphasizes
+accessibility through a simple pip install and automatic HuggingFace integration, while main-
+taining competitive performance.

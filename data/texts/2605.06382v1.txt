@@ -1,0 +1,1175 @@
+RETHINKING VACUITY FOR OOD DETECTION IN EVIDENTIAL
+DEEP LEARNING
+Claire McNamara
+c.mcnamara@accenture.com∗†
+ABSTRACT
+Vacuity, or Uncertainty Mass (UM), is commonly used as a metric to evaluate Out-of-Distribution
+(OOD) detection in Evidential Deep Learning (EDL). It generally involves dividing the number of
+classes (K) by the total strength of belief (S) of the model’s predictions, where S is derived from
+summing the Dirichlet parameters. As such, UM is sensitive to the cardinality of K. In particular, it
+is unlikely in practice that there is a linear relationship between K and S as K and S increase due
+to the nature of EDL (suppressing incorrectly assigned evidence). As a result, when comparing In
+Distribution (ID) and OOD results, it is important that KID and KOOD are equal; something that is
+not always ensured in practice. We provide an empirical demonstration of how results for AUROC
+and AUPR can substantially differ when class cardinality between ID and OOD differs by 1, with
+AUROC differing by as much as 0.318 and AUPR by 0.613 for standard EDL, and AUROC by 0.360
+and AUPR by 0.683 for IB-EDL. More concretely, our findings isolate an evaluation artefact: when K
+differs between ID and OOD, AUROC/AUPR can be artificially inflated without any change in model
+predictions. We further discuss the evaluation of EDL over causal language models using Multiple-
+Choice Question-Answer (MCQA) datasets and argue for clearer definitions of ID and OOD in this
+context. Our primary contribution is an empirical and theoretical demonstration that vacuity-based
+OOD detection in EDL-fine-tuned LLMs is highly sensitive to uncontrolled differences in evaluated
+class cardinality. Code Available: 
+Keywords Evidential Deep Learning · Vacuity · Out-of-Distribution Detection · LLM · Multiple-Choice Question
+Answer
+Introduction
+Evidential Deep Learning (EDL) [1] has emerged as a promising way to quantify uncertainty in causal large language
+models (LLMs) by fine-tuning them to operate as next token classifiers over Multiple-Choice Question-Answer (MCQA)
+datasets [2, 3]. The utilisation of datasets like MCQAs rather than free-text generation stems from how EDL operates.
+More specifically, it requires a set number of classes with which to create Dirichlet parameters over. Summing the
+Dirichlet parameters gives you the model’s total strength of belief (S) and from this, vacuity can then be understood
+as the uncertainty mass, K
+S . It is important to note that in EDL, uncertainty mass (UM) is a quantitative measure,
+vacuity is its interpretation as ignorance-based uncertainty, and epistemic uncertainty is the broader concept that vacuity
+approximates but they are not strictly identical. For the purpose of this paper however, when we refer to vacuity we
+mean UM. While calculating vacuity-based uncertainty in this manner can be useful [1, 4, 5], as we will present in this
+paper, i) vacuity-based Out-of-Distribution (OOD) detection can be highly sensitive to class number (K) specification
+in MCQA-based EDL settings, and (ii) as such, due to this sensitivity, when using it to compare results across datasets,
+great care must be taken to ensure that the value of K remains constant. This issue is particularly salient in MCQA-based
+LLM evaluation because the class set is not a fixed semantic label space in the same way as standard image classification
+(where EDL originates [1]). The labels, such as A - D, are placeholders whose semantic content changes with each
+question, and the number of answer options can differ across datasets. Therefore, class-dependent uncertainty quantities
+may reflect changes in task format or answer-option structure rather than only epistemic uncertainty about the input.
+∗Accenture Labs
+†Trinity College Dublin.
+arXiv:2605.06382v1 [cs.AI] 7 May 2026
+
+Rethinking Vacuity for OOD Detection in Evidential Deep Learning
+Specifically, the paper highlights an implementation-sensitive failure mode in vacuity-based OOD detection for MCQA
+fine-tuned LLMs, rather than proposing a new uncertainty method. As such, this paper demonstrates that vacuity-based
+OOD detection in EDL-fine-tuned LLMs can be highly sensitive to uncontrolled differences in effective class cardinality
+(K), leading to substantially inflated AUROC and AUPR estimates.
+This paper makes three contributions:
+1. We empirically demonstrate that mismatched effective class cardinality can substantially inflate AUROC and
+AUPR for vacuity-based OOD detection in EDL-fine-tuned LLMs.
+2. We show formally that vacuity, K
+S , is not invariant to class expansion unless the added class receives concen-
+tration equal to the mean concentration of the original classes.
+3. We discuss why MCQA-based LLM evaluation differs from fixed-label classification and why clearer defini-
+tions of ID, OOD, and task-format shift are needed when applying EDL to LLMs.
+The paper first introduces EDL and a variation of it more formally, it then presents how vacuity-based uncertainty is
+used currently to detect OOD inputs, next it shows the impact of (i) and (ii) above in practice, and finally, the impact of
+the current utilisation of uncertainty within the context of LLMs and the broader EDL domain is discussed.
+Background and Related Work
+As mentioned in the introduction, in order to work around the fact that causal language models operate by outputting
+tokens sequentially rather than performing classification tasks, it is common to fine-tune an LLM using Parameter
+Efficient Fine-Tuning (PEFT) methods like LoRA [6] on MCQA datasets when examining how they perform with EDL
+[2, 3]. Working this way yields a constrained set of possible next token options - the options (classes) of the MCQA
+dataset. This section details how EDL operates over MCQA datasets with LLMs and outlines a variation of EDL -
+Information-Bottleneck EDL (IB-EDL) [2].
+2.1
+Evidential Deep Learning (Standard EDL)
+In standard EDL, instead of using an activation function like Softmax over all logits at the output head of the model, a
+non-negative activation function like Softplus is used over just the target logits (where the targets correspond to the
+answer options of the MCQA). The result is what is referred to as the "evidence" or support that the model has assigned
+each class (e). From that the Dirichlet parameters are calculated as αi = ei + 1, ∀i ∈{1, ..K}. Finally, the prediction is
+taken as the expected probability of a chosen class, ˆy = arg max
+i
+E[pi] = arg max
+i
+αi
+S , where S = PK
+i=1 αi corresponds
+to the strength of belief the model has overall. A more formal representation is as follows:
+Dir(p|α) =
+Γ(α0)
+QK
+i=1 Γ(αi)
+K
+Y
+i=1
+pαi−1
+i
+Where,
+E[pk] = αk
+α0
+,
+α0 =
+K
+X
+k=1
+αk
+From this, as introduced previously, vacuity (Uncertainty Mass, UM) can be expressed as, K
+S where the S = α0 (we
+use S, SK, and α0 interchangeably to denote total Dirichlet strength).
+When fine-tuning the LLM, following [1], the loss function typically operates as follows:
+LEDL = LMSE + λ · LReg(θ)
+where λ > 0, LMSE = PK
+i=1(yi −αi
+α0 )2 + αi(α0−αi)
+α2
+0(αi+1) , and LReg(θ) = DKL(Dir(p|˜α)||Dir(p|1)).
+2.2
+Information-Bottleneck EDL (IB-EDL)
+A commonly raised issue with standard EDL is that, as a result of the fact that the model is only penalised for assigning
+evidence to the wrong class, the amount of evidence the model assigns to the correct class is unbounded. This can result
+in an overconfident model which is the issue that the authors of IB-EDL sought to address through the addition of an
+Rethinking Vacuity for OOD Detection in Evidential Deep Learning
+information-bottleneck. In other words, to encourage the model to keep only the most necessary evidence that still
+results in a correct prediction.
+The loss function for IB-EDL is instead:
+min
+θ LIB−MSE + βLIB−Info(θ)
+where LIB−MSE follows the standard EDL MSE objective in form, but is re-derived within the Information Bottleneck
+framework, and LIB−Info = LIB-Info(θ) = Ep(x)[DKL(p(z | x) ∥r(z))] ∝1
+2Ep(x)
+h
+∥µ∥2
+2 + ∥σ∥2
+2 −2 PC
+i=1 log(σi)
+i
+.
+The bottleneck term regularises the information retained in the latent representation, which in turn constrains the
+evidence available for prediction. The result is a loss function that penalises too much evidence assigned to a prediction
+(encouraging the model to only keep the most necessary information needed to make a prediction) along with the
+standard EDL objective of encouraging evidence assigned to the wrong class to 0.
+2.3
+Metrics Used in Evaluation
+There are a variety of methods used to assess a fine-tuned LLMs performance when fine-tuned using EDL or one of
+its variations. One of the most commonly used ones is Expected Calibration Error (ECE) [7, 2, 8]. Another method
+used to assess model performance in general across modalities (Computer Vision, CV, for instance) is an assessment of
+how well the model performs when conducting Out-of-Distribution (OOD) detection. This is typically carried out by
+using the Area Under the Receiver Operating Characteristic curve (AUROC) [9] or Area Under the Precision-Recall
+curve (AUPR) [10] using metrics like UM (vacuity) with ID and OOD inputs [2, 5, 11]. We raise concerns over
+evaluating model performance using OOD with UM in this manner as will be presented below. Broader skepticism
+over vacuity-based uncertainty measured as K
+S has been raised describing the formulation as "somewhat arbitrary" [12]
+noting that it does not follow from subjective logic and may not achieve practical effectiveness.
+Impact of Altering K
+The problem can be more generally understood by the following:
+Proposition 1 (Vacuity Invariance Under Class Expansion). Let
+uK = K
+SK
+,
+SK =
+K
+X
+i=1
+αi
+denote the vacuity for a K-class EDL classifier. Suppose one additional class is introduced with concentration
+parameter αK+1, giving
+uK+1 =
+K + 1
+SK + αK+1
+.
+Then vacuity remains unchanged, i.e.
+uK+1 = uK,
+if and only if
+αK+1 = SK
+K .
+Equivalently, since αK+1 = eK+1 + 1,
+eK+1 = SK
+K −1.
+Thus, vacuity is invariant to an increase in classes only when the newly introduced class receives concentration equal to
+the pre-existing mean concentration across classes. Proof follows by setting uK+1=uK and rearranging; full proof is
+provided in the Appendix 7.1.
+In practice, such conditions are unlikely to hold due to the nature of EDL. Namely, that it suppresses evidence assigned
+to the wrong class. This non-invariance directly explains the AUROC/AUPR inflation observed under mismatched K in
+the next section.
+Rethinking Vacuity for OOD Detection in Evidential Deep Learning
+3.1
+Isolating K
+Table 1 presents the results of running the predictions generated using standard EDL using our code (Implementation B,
+presented in more detail in the next section) with Llama3-8b fine-tuned on the OBQA [13] dataset as ID with ARC-C
+as OOD [14] where K is isolated. More specifically, the model predictions (logits/evidence) are held fixed and we
+recompute the reciprocal of UM and OOD metrics under varying evaluated class cardinalities without retraining or
+modifying the model. Therefore, any change in AUROC or AUPR (where ID=1, and OOD=0) reflects a deterministic
+property of the evaluation procedure rather than differences in model behaviour. OOD-only expansion refers to where
+the set of evidence for the OOD example only has been expanded to include x additional evidence terms where K + x
+and 0 ≤x ≤4. The appended evidence is 0 (as a reminder, αi = ei + 1 and thus, expansion still changes both K and
+S, but not in the proportional manner required for vacuity invariance.). Matched expansion refers to where the evidence
+has been appended to both ID and OOD examples. As is evident by the results, when K increases for OOD-only, the
+results show a substantial (unjustified) improvement even when K has only increased by 1 (AUROC: +0.272, AUPR:
++0.494). This demonstrates that vacuity-based OOD performance can be dominated by evaluation dimensionality rather
+than uncertainty quality. As such, it follows that all valid comparisons of vacuity-based OOD performance require
+KID = KOOD.
+Table 1: Effect of class-cardinality expansion on OOD detection performance using OBQA →ARC-C. Deltas are
+computed relative to the baseline (KID=4, KOOD=4). Values of K used as the effective evaluated output dimensionality
+when computing evidence, Dirichlet strength, and OOD scores. Baseline KID=4, KOOD=4 →AUROC=0.570,
+AUPR=0.351
+Condition
+KID
+KOOD
+AUROC
+∆
+AUPR
+∆
+Baseline
+4
+0.570
+0.000
+0.351
+0.000
+OOD-only expansion
+5
+0.842
+↑0.272
+0.845
+↑0.494
+OOD-only expansion
+6
+0.888
+↑0.318
+0.901
+↑0.550
+OOD-only expansion
+7
+0.909
+↑0.339
+0.921
+↑0.570
+OOD-only expansion
+8
+0.922
+↑0.352
+0.935
+↑0.584
+Matched expansion
+5
+0.570
+0.000
+0.351
+0.000
+Matched expansion
+6
+0.570
+0.000
+0.351
+0.000
+Matched expansion
+7
+0.570
+0.000
+0.351
+0.000
+Matched expansion
+8
+0.570
+0.000
+0.351
+0.000
+Figures 1a and 1b visually show the results on AUROC and AUPR respectively when K increases.
+(a) AUROC for OBQA →ARC-C with increasing K.
+(b) AUPR for OBQA →ARC-C with increasing K.
+Figure 1: OOD detection performance for OBQA →ARC-C as the effective number of classes K increases.
+Impact in Practice
+This section details how using different numbers of K can impact results in practice using a published account.
+4.1
+OOD using UM and MP
+A motivating example of the unreliability of using vacuity-based uncertainty as a means of detecting OOD inputs in
+practice can be seen through a faithful reproduction of the work of the authors of IB-EDL [2]. As discussed above,
+Rethinking Vacuity for OOD Detection in Evidential Deep Learning
+IB-EDL aims to reduce spurious evidence by applying a bottleneck regularisation over the evidence. The results show
+that when Llama3-8b [15] is fine-tuned on variations of EDL and equivalent methods (e.g., R-EDL [11] and I-EDL
+[16], IB-EDL generally maintains or increases accuracy across the MCQA datasets tests and reports generally lower
+ECE results. Thus it suggests that the IB-EDL does indeed generally work better in practice when calibrating an LLM.
+An important consideration that arose during reproduction however was that OOD detection was achieved using the
+reciprocal of Uncertainty Mass (UM) and Max Probability (MP) with ID=1 and OOD=0. AUROC results from [2]
+report that both using the UM and MP results in strong OOD detection across EDL methods, models, and datasets
+indicating that both metrics are useful when used in the context of detecting OOD inputs. Specifically, the reported
+AUROC for reciprocal of UM across all tested MCQA datasets for Llama3-8b with IB-EDL was reported to be between
+85.45 and 94.77, and the MP was reported to be between 88.14 and 89.16. During reproduction, while it was possible
+to achieve close to the reported number using the author’s provided GitHub implementation 3, it was not possible to
+recreate close to the reported numbers for UM nor MP using an independent implementation. A detailed account of the
+full reproduction procedure can be found in the Appendix 7.2. This prompted an inspection of the released dataset
+helper code that indicated that for all OOD tests in the main paper, while the number of classes (K) for the ID dataset
+was four, the number of classes for the OOD datasets tested was five. The result was a much larger difference between
+ID and OOD uncertainties and probabilities. This highlighted two issues: 1., vacuity-based uncertainty is sensitive to K
+(naturally as K
+S ) more specifically, when class cardinality differs, the impact is a much larger separation between ID
+and OOD in AUROC; from which the second point directly follows, 2., when corrected, UM and MP perform weakly at
+detecting OOD in this context. It is important to note that we include MP for completeness in line with IB-EDl [2] but
+is not governed by the same K
+S dependence as vacuity and is not a primary object of analysis.
+4.2
+Implementation Details
+In order to perform a faithful reproduction of the work of [2], we used both the code associated with the paper (which
+we will refer to as implementation A) and our own separate implementation 4 (which we will refer to as implementation
+B) using both IB-EDL and standard EDL to fine-tune Llama3-8b [15] on the OBQA dataset [13] (following [2]) with
+the same training arguments and number of training steps (exact details can be found in the Appendix 7.2). We further
+used the same datasets as part of the main paper to test the fine-tuned models with as OOD inputs: ARC-E [14], ARC-C
+[14], and CSQA [17]. Table 2 presents the correct value of K (number of classes) for each dataset and the value of K
+used when generating outputs for each dataset (these details will become important further on).
+Table 2: Values of K for the in-distribution (ID) dataset and Out-of-Distribution (OOD) datasets and the value used in
+the two different implementations.
+ID
+OOD
+OBQA
+ARC-C
+ARC-E
+CSQA
+K (correct)
+4
+5
+K (implementation A)
+5
+5
+K (implementation B)
+4
+5
+Because we recompute AUROC/AUPR on the same fixed predictions while varying only the evaluated class cardinality,
+the observed differences reflect a deterministic property of the evaluation procedure rather than training variability;
+therefore, multiple runs are not required for this comparison.
+4.3
+Results of Implementation A
+As previously stated, implementation A refers to the code provided by the authors of [2]. In reviewing implementation
+A, we observed that the variable for K (n_labels) had been set to 5 rather than 4 for ARC-C and ARC-E. After a re-run
+of implementation A changing K to equal 4 for ARC-C and ARC-E, the AUROC drops substantially. We also show
+the AUPR for completeness which similarly displays a significant drop. To examine the effect more thoroughly, we
+also removed the fifth option in CSQA ("E") to assess the impact of comparing outputs of a four-class MCQA dataset
+to a five-class one. Namely, examples whose correct answer was option E were excluded, so that the four-option
+evaluation did not create instances without a valid correct label. Because CSQA is used here as OOD input rather
+than for accuracy evaluation, this manipulation is intended to isolate the effect of changing the evaluated output space.
+We further examined the impact on standard EDL, which showed the same overall pattern as IB-EDL. Both sets of
+results, IB-EDL and standard EDL, can be seen in Tables 3 and 4 respectively. It is important to note that these results
+3
+4
+Rethinking Vacuity for OOD Detection in Evidential Deep Learning
+are obtained using the author’s implementation, where ARC-C and ARC-E were evaluated with five-dimensional
+evidence/concentration vectors despite having four answer options. This matters because the expected probability for
+each class is calculated as αi/S, where S is the total Dirichlet strength over the evaluated class set. Increasing the
+effective output dimensionality can therefore lower the maximum expected probability for OOD examples, increasing
+separation from the four-class ID scores and thereby inflating AUROC and AUPR (as seen in both tables). The same
+issue stands for CSQA where, while the correct number of classes is five (K = 5) as was implemented, when compared
+against outputs for the four-class OBQA dataset, the overall max probability is lower as the probabilities are distributed
+across a greater number of classes. More specifically, the formal K
+S dependence applies specifically to UM (vacuity).
+MP is included because it is also computed over the evaluated class set through the Dirichlet expected probabilities, αi
+S
+and therefore may change when the effective output space changes. However, MP should be understood as indirectly
+affected by output-space construction rather than directly defined by K
+S .
+Table 3: Implementation A: IB-EDL OOD detection results for Llama3-8B fine-tuned on OBQA (sigma_mult = 0.0).
+∆denotes the absolute performance drop (mismatch/original minus correct/removed "E"). AUPRbase is the ID-ratio
+baseline.
+MP
+UM
+Dataset K
+AUPRbase AUROC
+∆
+AUPR
+∆
+AUROC
+∆
+AUPR
+∆
+ARC-C 5 (mismatch)
+0.299
+0.910
+↓
+0.922
+↓
+0.947
+↓
+0.944
+↓
+ARC-C 4 (correct)
+0.299
+0.653
+-0.256
+0.472
+-0.449
+0.642
+-0.305
+0.446
+-0.498
+ARC-E 5 (mismatch)
+0.174
+0.902
+↓
+0.897
+↓
+0.940
+↓
+0.917
+↓
+ARC-E 4 (correct)
+0.174
+0.581
+-0.321
+0.257
+-0.641
+0.580
+-0.360
+0.234
+-0.683
+CSQA
+5 (as-is)
+0.291
+0.915
+↓
+0.921
+↓
+0.913
+↓
+0.859
+↓
+CSQA
+4 (removed "E")
+0.337
+0.651
+-0.264
+0.449
+-0.472
+0.612
+-0.300
+0.399
+-0.460
+Table 4: Implementation A: Standard EDL OOD detection results for Llama3-8B fine-tuned on OBQA. ∆denotes the
+absolute performance drop (mismatch/original minus correct/removed "E"). AUPRbase is the ID-ratio baseline.
+MP
+UM
+Dataset K
+AUPRbase AUROC
+∆
+AUPR
+∆
+AUROC
+∆
+AUPR
+∆
+ARC-C 5 (mismatch)
+0.299
+0.865
+↓
+0.879
+↓
+0.850
+↓
+0.862
+↓
+ARC-C 4 (correct)
+0.299
+0.614
+-0.251
+0.394
+-0.485
+0.613
+-0.237
+0.393
+-0.469
+ARC-E 5 (mismatch)
+0.174
+0.854
+↓
+0.848
+↓
+0.836
+↓
+0.817
+↓
+ARC-E 4 (correct)
+0.174
+0.557
+-0.296
+0.206
+-0.642
+0.556
+-0.280
+0.203
+-0.614
+CSQA
+5 (as-is)
+0.291
+0.862
+↓
+0.877
+↓
+0.841
+↓
+0.848
+↓
+CSQA
+4 (removed "E")
+0.337
+0.566
+-0.297
+0.381
+-0.496
+0.564
+-0.277
+0.371
+-0.477
+4.4
+Results of Implementation B
+As mentioned previously, implementation B is our separate implementation of fine-tuning Llama3-8b with IB-EDL and
+standard EDL on the OBQA MCQA dataset using the same setup (hyperparameters, training steps, etc.) as [2] and
+using their code implementation and paper for reference.
+A core difference between implementations A and B is the fact that the predictions for implementation B with ARC-C
+and ARC-E were generated using four classes rather than the five that are present in implementation A. As seen in
+Table 5, this means that while UM decreases as before, MP stays stable. There is a difference present however for
+CSQA as the number of classes does decrease by one during inference through the removal of the fifth answer option.
+The weak matched-K results for ARC-C and ARC-E should not necessarily be interpreted as evidence that the model
+cannot detect any distribution shift. Rather, these datasets may constitute near-OOD [18] shifts relative to OBQA
+because they remain MCQA science/reasoning datasets. In order to address this, in line with [2], we also evaluate using
+the MMLU Math MCQA dataset [19]. The stronger performance on MMLU Math suggests that UM and MP may be
+more informative under larger domain shifts. This reinforces the need to distinguish dataset shift, domain shift, and
+task-format shift when evaluating OOD detection in MCQA-based EDL, something which is discussed in more detail
+below.
+Rethinking Vacuity for OOD Detection in Evidential Deep Learning
+Another important difference between implementation A and B is that we observed that padding strategy can affect logit
+extraction when using fixed positional indexing (e.g., logits[:, -1]). To account for this, implementation B standardises
+on left-padding to ensure alignment between sequence end and prediction position.
+Table 5: Implementation B: IB-EDL OOD detection results for Llama3-8B fine-tuned on OBQA. ∆denotes the absolute
+performance drop (mismatch / as-is minus correct / removed "E"). AUPRbase is the ID-ratio baseline.
+MP
+UM
+Dataset
+K
+AUPRbase AUROC
+∆
+AUPR
+∆
+AUROC
+∆
+AUPR
+∆
+MMLU Math 5 (mismatch)
+0.516
+0.871
+-
+0.887
+-
+0.936
+↓
+0.932
+↓
+MMLU Math 4 (correct)
+0.516
+0.871
+0.000
+0.887
+0.000
+0.804
+-0.132 0.765 -0.167
+ARC-C
+5 (mismatch)
+0.303
+0.583
+-
+0.371
+-
+0.912
+↓
+0.912
+↓
+ARC-C
+4 (correct)
+0.303
+0.583
+0.000
+0.371
+0.000
+0.576
+-0.336 0.364 -0.547
+ARC-E
+5 (mismatch)
+0.180
+0.479
+-
+0.171
+-
+0.902
+↓
+0.893
+↓
+ARC-E
+4 (correct)
+0.180
+0.479
+0.000
+0.171
+0.000
+0.477
+-0.425 0.177 -0.717
+CSQA
+5 (as-is)
+0.291
+0.916
+↓
+0.924
+↓
+0.911
+↓
+0.908
+↓
+CSQA
+4 (removed "E")
+0.337
+0.711
+-0.205 0.560 -0.364
+0.714
+-0.197 0.551 -0.357
+Table 6: Implementation B: Standard EDL OOD detection results for Llama3-8B fine-tuned on OBQA. ∆denotes the
+absolute performance drop (mismatch / as-is minus correct / removed "E"). AUPRbase is the ID-ratio baseline.
+MP
+UM
+Dataset
+K
+AUPRbase AUROC
+∆
+AUPR
+∆
+AUROC
+∆
+AUPR
+∆
+MMLU Math 5 (mismatch)
+0.516
+0.896
+-
+0.888
+-
+0.950
+↓
+0.964
+↓
+MMLU Math 4 (correct)
+0.516
+0.896
+0.000
+0.888
+0.000
+0.907
+-0.043 0.910 -0.054
+ARC-C
+5 (mismatch)
+0.303
+0.563
+-
+0.337
+-
+0.850
+↓
+0.855
+↓
+ARC-C
+4 (correct)
+0.303
+0.563
+0.000
+0.337
+0.000
+0.571
+-0.279 0.351 -0.504
+ARC-E
+5 (mismatch)
+0.180
+0.510
+-
+0.186
+-
+0.835
+↓
+0.812
+↓
+ARC-E
+4 (correct)
+0.180
+0.510
+0.000
+0.186
+0.000
+0.517
+-0.318 0.199 -0.613
+CSQA
+5 (as-is)
+0.291
+0.860
+↓
+0.862
+↓
+0.846
+↓
+0.839
+↓
+CSQA
+4 (removed "E")
+0.337
+0.619
+-0.240 0.411 -0.451
+0.623
+-0.223 0.443 -0.397
+Appendix 8 demonstrates how this pattern holds for Implementation A and Implementation B over normalised Shannon
+entropy over the output probabilities also.
+Discussion
+We do not argue that EDL or IB-EDL is ineffective as a calibration method and these findings as such should be
+interpreted as a clarification of evaluation conditions rather than a critique of prior work. When class cardinality
+is controlled, IB-EDL continues to exhibit strong calibration properties; however, OOD separability measured via
+class-dependent metrics requires careful interpretation. Indeed, our reproduced fine-tuning results show competitive
+accuracy, ECE, and NLL. Our claim is narrower: vacuity-based OOD comparisons can be misleading when the effective
+number of evaluated classes differs between ID and OOD datasets. This phenomenon is not unique to IB-EDL. For
+example, [8] evaluate a model trained on a 2-class dataset (Amazon Reviews [20]) on a 10-class dataset (Yahoo Answers
+[21]). While their work does not rely on vacuity, their uncertainty measures (predictive entropy, expected entropy, and
+mutual information) are defined over the output simplex and therefore scale with the number of classes K. As such,
+differences in uncertainty between ID and OOD settings may also reflect differences in output dimensionality rather
+than solely differences in data distribution. More generally, this highlights that evidential uncertainty measures are
+defined with respect to a particular output space. When the dimensionality or semantics of this space change between
+ID and OOD settings, the resulting uncertainty values are not strictly comparable, even when computed correctly. In
+practice, this suggests that controlling for class cardinality, or applying appropriate normalisation, is important when
+interpreting uncertainty-based OOD comparisons.
+The consideration of what metric to use when detecting OOD inputs raises a larger issue relating to the ambiguity of
+what constitutes OOD input in the context of an EDL evaluation with LLMs. In the context of an LLM fine-tuned
+Rethinking Vacuity for OOD Detection in Evidential Deep Learning
+on common-sense MCQA data, should we consider a different MCQA common-sense dataset truly OOD? While it
+may not reflect the precise data the model was trained on, it likely can still be considered within the realm of its ID
+distribution. In other words, it may be more apt to consider such datasets as near OOD [18] datasets. As seen above,
+when confronted with input data from a different domain to its training data (Math MMLU), MP and UM perform better
+as OOD detectors. Such datasets perhaps can be considered as far OOD [18] ones. Furthermore, due to the nature of
+LLMs and the method by which they are fine-tuned, there is another distinction we can make - task OOD. If considering
+an LLM that has been fine-tuned to distinguish between four options of an MCQA input, can we consider providing it
+with five options instead as an alternate source of OOD?
+A related, though not identical, consideration arises in CV classification scenarios with EDL, the domain from which it
+originates. In standard CV OOD evaluation, the classifier output space usually remains fixed by the ID training labels;
+for example, a CIFAR-10 classifier still produces CIFAR-10 outputs when evaluated on CIFAR-100 images. Therefore,
+the explicit MCQA class-cardinality mechanism demonstrated here does not directly transfer to CV. However, methods
+such as R-EDL [11], while reducing the explicit dependence of UM on the number of classes through a learnable prior
+weight, may still raise broader questions about how vacuity-based scores vary across OOD datasets with different
+semantic granularity. Consequently, comparisons across heterogeneous OOD datasets may still risk conflating epistemic
+uncertainty with differences in semantic granularity, domain shift, or task mismatch. A related consideration also arises
+for I-EDL [16]: although it does not explicitly use UM, it relies on the total evidence strength S, which can vary with
+the model’s evidence allocation over its evaluated output space. Thus, while the explicit class-cardinality mismatch
+demonstrated in MCQA is less applicable to standard CV classification because the output space remains fixed by the
+training labels, care is still needed when interpreting vacuity- or evidence-based OOD scores across heterogeneous
+OOD benchmarks. Shen et al. [22] suggest that the current definitions of epistemic and aleatoric uncertainty and the
+way in which they are measured within context of EDL is misaligned due to the absence of model uncertainty and that
+while methods appear to work downstream, that is in spite of their poor ability to capture uncertainty. In other words,
+EDL in its current form may reflect properties of the predicted distribution rather than fully capturing model uncertainty
+in the Bayesian sense.
+Reasoning over these problems and considerations surfaces an underlying assumption - that causal language models
+operating over MCQAs can be considered comparable to CV models operating over image classification. The problem
+is that MCQA fundamentally differs from CV classification in that the output space is dynamically defined by the input.
+More specifically, in MCQA, the semantic meaning of classes is instance-dependent, unlike fixed semantic labels in
+standard image classification. As a result, uncertainty or belief measures that depend on output dimensionality or class
+semantics are not invariant under changes in the number of answer options, even when the underlying task remains
+identical. This makes MCQA a less than ideal proxy for evaluating class-based uncertainty or causal belief models
+without explicit correction. There are further concerns raised about using MCQAs in general to evaluate uncertainty
+in LLMs [23] where the output may reflect less about uncertainty and more general decoding variability. Other work
+has surfaced the fact that LLMs may default to choosing the "least incorrect option" [24] raising questions about their
+performance when no correct option is available.
+Conclusion
+Our findings do not argue against evidential uncertainty itself, but against comparing vacuity-based OOD scores
+across mismatched class cardinalities. We argue that when considering using vacuity as UM for OOD detection, it is
+imperative that KID and KOOD are equal and demonstrate how K-variance can impact results in practice. We further
+raise questions surrounding the direct transferability of using EDL in the context of causal language models over
+MCQAs and a need for greater clarity in what exactly is being thought of as OOD input. It is hoped that our work will
+contribute to greater transparency in how ID and OOD datasets are defined within the context of EDL with LLMs and
+result in greater care being taken when calculating and comparing UM as a metric for OOD detection. Our follow-up
+work aims to be able to clarify types of OOD input in this context and how they affect EDL in practice. In short,
+vacuity-based OOD comparisons are only meaningful under controlled output dimensionality; otherwise, they reflect
+evaluation artefacts rather than model behaviour.
+Generative AI Disclosure
+Open AI’s ChatGPT-5 was used for sentence level polishing. Claude Code was used to scaffold the code used as part of
+the implementation and analysis. The authors take full responsibility for the manuscript and code and have verified all
+output thoroughly.
+Rethinking Vacuity for OOD Detection in Evidential Deep Learning
+References
+[1] Murat Sensoy, Lance Kaplan, and Melih Kandemir.
+Evidential Deep Learning to Quantify Classification
+Uncertainty, October 2018. arXiv:1806.01768 [cs].
+[2] Yawei Li, David Rügamer, Bernd Bischl, and Mina Rezaei. Calibrating LLMs with Information-Theoretic
+Evidential Deep Learning, February 2025. arXiv:2502.06351 [cs].
+[3] Yongchan Chun, Chanhee Park, Jeongho Yoon, Jaehyung Seo, and Heuiseok Lim. Evidential Transformation
+Network: Turning Pretrained Models into Evidential Models for Post-hoc Uncertainty Estimation, April 2026.
+arXiv:2604.08627 [cs].
+[4] Eduardo Aguilar, Bogdan Raducanu, Petia Radeva, and Joost Van De Weijer. Continual Evidential Deep Learning
+for Out-of-Distribution Detection. In 2023 IEEE/CVF International Conference on Computer Vision Workshops
+(ICCVW), pages 3436-3446, Paris, France, October 2023. IEEE.
+[5] Eduardo Aguilar, Bogdan Raducanu, Petia Radeva, and Joost Van De Weijer. CEDL+: Exploiting evidential deep
+learning for continual out-of-distribution detection. Expert Systems with Applications, 283:127774, July 2025.
+[6] Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu
+Chen. LoRA: Low-Rank Adaptation of Large Language Models, October 2021. arXiv:2106.09685 [cs].
+[7] Nicolas Posocco and Antoine Bonnefoy. Estimating expected calibration errors. In International conference on
+artificial neural networks, pages 139-150. Springer, 2021.
+[8] Lakshmana Sri Harsha Nemani, P. K. Srijith, and Tomasz Ku´smierczyk. Efficient Uncertainty in LLMs through
+Evidential Knowledge Distillation, July 2025.
+[9] Christopher Brown and Herbert Davis. Receiver operating characteristics curves and related decision measures: A
+tutorial. Chemometrics and Intelligent Laboratory Systems, 80:24-38, 01 2006.
+[10] Christopher Manning and Hinrich Schutze. Foundations of statistical natural language processing. MIT press,
+1999.
+[11] Mengyuan Chen, Junyu Gao, and Changsheng Xu. Revisiting Essential and Nonessential Settings of Evidential
+Deep Learning, October 2024. arXiv:2410.00393 [cs].
+[12] Junyu Gao, Mengyuan Chen, Liangyu Xiang, and Changsheng Xu. A comprehensive survey on evidential deep
+learning and its applications. IEEE Transactions on Pattern Analysis and Machine Intelligence, 48(3):2118-2138,
+2026.
+[13] Todor Mihaylov, Peter Clark, Tushar Khot, and Ashish Sabharwal. Can a suit of armor conduct electricity? a new
+dataset for open book question answering. In EMNLP, 2018.
+[14] Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord.
+Think you have solved question answering? try arc, the ai2 reasoning challenge. arXiv preprint arXiv:1803.05457,
+2018.
+[15] Aaron Grattafiori et al. The llama 3 herd of models, 2024.
+[16] Danruo Deng, Guangyong Chen, Yang Yu, Furui Liu, and Pheng-Ann Heng. Uncertainty Estimation by Fisher
+Information-based Evidential Deep Learning, June 2023. arXiv:2303.02045 [cs].
+[17] Alon Talmor, Jonathan Herzig, Nicholas Lourie, and Jonathan Berant. CommonsenseQA: A question answering
+challenge targeting commonsense knowledge. In Proceedings of the 2019 Conference of the North American
+Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and
+Short Papers), pages 4149-4158, Minneapolis, Minnesota, June 2019. Association for Computational Linguistics.
+[18] Jim Winkens, Rudy Bunel, Abhijit Guha Roy, Robert Stanforth, Vivek Natarajan, Joseph R Ledsam, Patricia
+MacWilliams, Pushmeet Kohli, Alan Karthikesalingam, Simon Kohl, et al. Contrastive training for improved
+out-of-distribution detection. arXiv preprint arXiv:2007.05566, 2020.
+[19] Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou, Mantas Mazeika, Dawn Song, and Jacob Steinhardt.
+Measuring massive multitask language understanding. Proceedings of the International Conference on Learning
+Representations (ICLR), 2021.
+[20] Ruining He and Julian McAuley. Ups and downs: Modeling the visual evolution of fashion trends with one-class
+collaborative filtering. In Proceedings of the 25th International Conference on World Wide Web, WWW ’16, page
+507-517, Republic and Canton of Geneva, CHE, 2016. International World Wide Web Conferences Steering
+Committee.
+Rethinking Vacuity for OOD Detection in Evidential Deep Learning
+[21] Xiang Zhang, Junbo Jake Zhao, and Yann LeCun. Character-level convolutional networks for text classification.
+CoRR, abs/1509.01626, 2015.
+[22] Maohao Shen, J. Jon Ryu, Soumya Ghosh, Yuheng Bu, Prasanna Sattigeri, Subhro Das, and Gregory W. Wornell.
+Are Uncertainty Quantification Capabilities of Evidential Deep Learning a Mirage? In A. Globerson, L. Mackey,
+D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang, editors, Advances in Neural Information Processing
+Systems, volume 37, pages 107830-107864. Curran Associates, Inc., 2024.
+[23] Qingcheng Zeng, Mingyu Jin, Qinkai Yu, Zhenting Wang, Wenyue Hua, Guangyan Sun, Yanda Meng, Shiqing
+Ma, Qifan Wang, Felix Juefei-Xu, Fan Yang, Kaize Ding, Ruixiang Tang, and Yongfeng Zhang. Uncertainty
+Quantification for Multiple-Choice Questions is Just One-Token Deep. In Proceedings of the 34th ACM Interna-
+tional Conference on Information and Knowledge Management, CIKM ’25, pages 5474-5478, New York, NY,
+USA, November 2025. Association for Computing Machinery.
+[24] Haochun Wang, Sendong Zhao, Zewen Qiang, Nuwa Xi, Bing Qin, and Ting Liu. Llms may perform mcqa
+by selecting the least incorrect option. In Proceedings of the 31st International Conference on Computational
+Linguistics, pages 5852-5862, 2025.
+Appendix
+7.1
+Vacuity Invariance Under Class Expansion Proof
+Proof. Let
+uK = K
+SK
+,
+SK =
+K
+X
+i=1
+αi
+denote the vacuity of a K-class EDL classifier. Suppose one additional class is introduced with concentration parameter
+αK+1, so that the updated total strength becomes
+SK+1 = SK + αK+1,
+and the new vacuity is
+uK+1 =
+K + 1
+SK + αK+1
+.
+We seek the condition under which vacuity remains unchanged after adding the new class, i.e.
+uK+1 = uK.
+Substituting the definitions of uK and uK+1, we obtain
+K + 1
+SK + αK+1
+= K
+SK
+.
+Cross-multiplying gives
+(K + 1)SK = K(SK + αK+1).
+Expanding the right-hand side,
+(K + 1)SK = KSK + KαK+1.
+Rearranging,
+KSK + SK = KSK + KαK+1.
+Subtracting KSK from both sides yields
+SK = KαK+1.
+Hence,
+αK+1 = SK
+K .
+This establishes that vacuity is invariant under the addition of one class if and only if the newly introduced class receives
+concentration equal to the mean concentration of the original K classes.
+Rethinking Vacuity for OOD Detection in Evidential Deep Learning
+Finally, since in EDL
+αK+1 = eK+1 + 1,
+it follows that
+eK+1 = SK
+K −1.
+Therefore, vacuity remains unchanged if and only if the added class receives evidence satisfying
+eK+1 = SK
+K −1.
+As mentioned in the main text, such a condition where eK+1 = SK
+K −1 is unlikely to hold in practice as it depends on
+the evidence scaling linearly with K.
+7.2
+Implementation Procedure
+The same hardware and hyperparameters were used for both Implementation A and Implementation B. Specifically,
+in order to both fine-tune the Llama3-8b and generate predictions for ID and OOD inputs, we used one A100 GPU.
+Following [2], we fine-tuned Llama3-8b for 10080 steps on the OBQA dataset using LoRA with the following
+hyperparameters: r= 8, alpha= 16, dropout: 0.1, targeting the query and value projections and the output head. It should
+be noted that for both implementations, we obtained results similar, though not identical, to those reported by the
+authors. Such variation can arise from stochastic training effects and environment-level nondeterminism common in
+LLM fine-tuning. Exact replication of fine-tuning metrics was not the primary objective of this study, as our focus was
+on assessing metric differences arising from class cardinality rather than differences in model training performance.
+Table 7 provides a full overview of the implementation details for both implementations.
+7.2.1
+Implementation A
+Implementation A was carried out using the code and implementation procedure provided by the authors of IB-EDL [2].
+With this configuration (that utilises the specifications provided above) we achieved similar results to the authors as
+seen in Table 8.
+It is important to note that IB-EDL can make use of an additional optional hyperparameter: ς. When running the
+implementation for the experiments presented above, in accordance with the authors implementation for their main
+experiment, we used ς = 0.0.
+7.2.2
+Implementation B
+Implementation B utilised our own separate implementation of IB-EDL standard EDL - both for the fine-tuning of
+Llama3-8b and the generation of predictions. As mentioned, we use the precise hyperparameters as used by IB-EDL
+and implementation specifics such as prompt formatting. With our implementation, we were similarly able to achieve
+close to the reported results for Llama3-8b fine-tuned using standard EDL and IB-EDL (Table 9).
+Entropy Analysis
+Tables 10 and 11 show how the AUROC and AUPR for the normalised Shannon entropy of the probabilities reflects the
+results seen as part of that main text - that, when class cardinality is matched appropriately (Implementation B), the
+entropy does not change. This provides supporting evidence of sensitivity to K-variance.
+Rethinking Vacuity for OOD Detection in Evidential Deep Learning
+Table 7: Implementation and evaluation details for both Implementation A and Implementation B.
+Category
+Details
+Base model
+meta-llama/Meta-Llama-3-8B
+Training dataset
+allenai/openbookqa, train split
+Validation dataset
+allenai/openbookqa, validation split
+Inference datasets
+ID:
+allenai/openbookqa,
+test
+split.
+OOD:
+allenai/ai2_arc
+ARC-
+Challenge test split; allenai/ai2_arc ARC-Easy test split; cais/mmlu with
+college_mathematics, high_school_mathematics, and abstract_algebra test
+splits; commonsense_qa, validation split.
+Prompt template
+Return the label of the correct answer for the question below.
+Question:
+{question}
+Choices:
+A) ...
+B) ...
+Answer:
+Answer token set
+OBQA, ARC, and MMLU: A, B, C, D. CSQA: A, B, C, D, E.
+Target logits
+IB-EDL: last-token logits at target IDs; tail logits, corresponding to the last K positions,
+are passed through Softplus to produce per-class σ for IB noise injection. Standard EDL:
+last-token logits at target IDs are passed through Softplus directly to produce evidence.
+LoRA configuration
+Target modules: q_proj, v_proj, lm_head. Rank r = 8; LoRA α = 16; dropout
+= 0.1; bias = lora_only; task type = CAUSAL_LM.
+Training steps
+10080 steps
+Batch size
+Per-device train batch size: 4; per-device evaluation batch size: 4; gradient accumulation
+steps: 1.
+Learning rate and optimisation
+Learning rate: 5 × 10−5; scheduler: cosine; warmup steps: 20; weight decay: 0.001;
+maximum gradient norm: 20.0.
+Seed
+Implementation A: 42, Implementation B: Training seed not set in so default used,
+TrainingArguments, i.e., HuggingFace default=42.
+Prediction checkpoint
+Predictions are generated from the same final checkpoint for each method:
+checkpoint-10080.
+Metric orientation
+Accuracy: higher is better. NLL: lower is better. ECE: lower is better. ECE computed
+with 15 bins (following [2]).
+K per dataset
+OBQA: K = 4; ARC-Challenge: K = 4; ARC-Easy: K = 4; MMLU Math: K = 4;
+CSQA: primary setting K = 5, also evaluated as K = 4. For CSQA, two output files
+were generated per method: five-class A-E and four-class A-D.
+Table 8: Fine-tuning Results for Implementation A: Llama3-8b fine-tuned using the authors of IB-EDL’s provided code
+with IB-EDL and Standard EDL on the OBQA MCQA dataset.
+Method
+Accuracy
+ECE
+NLL
+IB-EDL
+0.888
+0.028
+0.427
+Standard EDL
+0.874
+0.045
+0.459
+Table 9: Fine-tuning Results for Implementation B: Llama3-8b fine-tuned using our code with IB-EDL and Standard
+EDL on the OBQA MCQA dataset.
+Method
+Accuracy
+ECE
+NLL
+IB-EDL
+0.876
+0.040
+0.472
+Standard EDL
+0.886
+0.043
+0.428
+Rethinking Vacuity for OOD Detection in Evidential Deep Learning
+Table 10: Implementation A: OOD detection performance using normalised entropy (H/ log2 K). Results are shown
+for mismatch / as-is versus correct / removed "E" configurations. ∆denotes the absolute performance drop (mismatch /
+as-is minus correct / removed "E").
+Standard EDL
+IB-EDL
+Dataset K
+AUROC
+∆
+AUPR
+∆
+AUROC
+∆
+AUPR
+∆
+ARC-C 5 (mismatch)
+0.832
+-
+0.838
+-
+0.876
+-
+0.885
+-
+ARC-C 4 (correct)
+0.614
+-0.217
+0.394
+-0.444
+0.654
+-0.222
+0.472
+-0.413
+ARC-E 5 (mismatch)
+0.816
+-
+0.785
+-
+0.863
+-
+0.844
+-
+ARC-E 4 (correct)
+0.557
+-0.259
+0.206
+-0.579
+0.581
+-0.282
+0.257
+-0.588
+CSQA
+5 (as-is)
+0.831
+-
+0.837
+-
+0.881
+-
+0.881
+-
+CSQA
+4 (removed "E")
+0.566
+-0.266
+0.381
+-0.455
+0.651
+-0.230
+0.449
+-0.432
+Table 11: Implementation B: OOD detection performance using normalised entropy (H/ log2 K). Results are shown
+for mismatch / as-is versus correct / removed "E" configurations. ∆denotes the absolute performance drop (mismatch /
+as-is minus correct / removed "E").
+Standard EDL
+IB-EDL
+Dataset
+K
+AUROC
+∆
+AUPR
+∆
+AUROC
+∆
+AUPR
+∆
+MMLU Math 5 (mismatch)
+0.899
+-
+0.904
+-
+0.871
+-
+0.887
+-
+MMLU Math 4 (correct)
+0.899
+0.000
+0.904
+0.000
+0.871
+0.000
+0.887
+0.000
+ARC-C
+5 (mismatch)
+0.567
+-
+0.359
+-
+0.583
+-
+0.371
+-
+ARC-C
+4 (correct)
+0.567
+0.000
+0.359
+0.000
+0.583
+0.000
+0.371
+0.000
+ARC-E
+5 (mismatch)
+0.511
+-
+0.204
+-
+0.479
+-
+0.171
+-
+ARC-E
+4 (correct)
+0.511
+0.000
+0.204
+0.000
+0.479
+0.000
+0.171
+0.000
+CSQA
+5 (as-is)
+0.819
+↓
+0.805
+↓
+0.889
+↓
+0.889
+↓
+CSQA
+4 (removed "E")
+0.621
+-0.198
+0.435
+-0.370
+0.711
+-0.178
+0.560
+-0.329

@@ -1,0 +1,1103 @@
+On the Security of Research Artifacts
+Nanda Rani and Christian Rossow
+CISPA - Helmholtz Center for Information Security
+{nanda.rani,rossow}@cispa.de
+Abstract. Research artifacts are widely shared to support reproducibil-
+ity, and artifact evaluation (AE) has become common at many lead-
+ing conferences. However, AE mainly checks whether artifacts work as
+claimed and can be reproduced. It largely overlooks potential security
+risks. Since these artifacts are publicly released and reused, they may
+unintentionally create opportunities for misuse and raise concerns about
+safe and responsible sharing. We study 509 research artifacts from top-
+tier security venues and find that many contain insecure code patterns
+that may introduce potential attack vectors. We propose a taxonomy for
+context-aware security assessment to enable structured analysis of such
+risks. We perform static analysis and examine the resulting findings,
+filtering false positives and identifying real security risks. Our analysis
+shows that 41.60% of the prevalent findings may pose security concerns
+under practical usage. To support scalable analysis, we introduce SAFE
+(Security-Aware Framework for Artifact Evaluation), a first step toward
+an autonomous framework that analyzes tool-reported findings by con-
+sidering code semantics, execution context, and practical exploitability.
+SAFE achieves 84.80% accuracy and 84.63% F1-score in distinguishing
+security and non-security risks. Overall, our results show that security is
+also important in AE for promoting safe and responsible research sharing.
+The source code is available at: 
+Keywords: Artifact Evaluation · Empirical Security Analysis · Vulner-
+ability Analysis · Context-Aware Security · Security Measurement
+Introduction
+The sharing of research artifacts has become a central part of modern scien-
+tific practice, especially in systems and security research [18,24]. Authors now
+routinely release code, datasets, and scripts alongside their papers to support
+reproducibility and transparency [14,17,20]. Many top-tier venues encourage this
+practice through artifact evaluation (AE) processes and badge systems, which
+reward artifacts that are available, functional, and reproducible [6,8,19,23].
+While this shift has improved the credibility and transparency of experimen-
+tal results, current evaluation pipelines still focus mainly on whether an artifact
+works as expected [2,5,18,23]. They check if the code runs and reproduces re-
+ported results [8,17]. However, the security of these artifacts is largely overlooked.
+Artifacts are often regarded as safe once they are publicly released, but this as-
+sumption is rarely examined. As a result, the community has limited insight into
+arXiv:2605.06508v1 [cs.CR] 7 May 2026
+N. Rani et al.
+how secure these artifacts actually are, or whether existing evaluation practices
+create a misleading sense of safety.
+This gap introduces significant risks in real-world reuse scenarios. Research
+artifacts are widely shared and reused by researchers, practitioners, and devel-
+opers [11]. They often include complex code, dependencies, and experimental
+scripts. Even when not intended for production, parts of these artifacts are fre-
+quently reused or adapted in real systems [16,23,26]. In such cases, insecure
+practices can carry over and introduce vulnerabilities. Unfortunately, research
+artifacts may include insecure coding patterns such as unsafe deserialization,
+hardcoded secrets, vulnerable dependencies, or misconfigurations. Identifying
+these issues is not straightforward. Static analysis tools can detect potential
+problems, but they often generate a large number of warnings without consider-
+ing context [9,13]. In addition, the presence of a flagged issue does not necessarily
+mean it is exploitable; its risk depends on real-world usage. Some findings re-
+main harmless in controlled settings but may become exploitable when artifacts
+are reused or extended. These gaps motivated us to address following research
+questions:
+RQ1: To what extent do publicly released research artifacts contain security
+issues, and how often do these issues represent real risks in practice?
+RQ2: How can security findings in research artifacts be analyzed in a scalable
+and context-aware way using an automated framework?
+To answer RQ1, we conduct an empirical study of security risks in publicly
+shared research artifacts from top-tier security conferences. We analyze 509 ar-
+tifacts using static analysis tools and observe that insecure practices are not
+uncommon. At the same time, not all tool-reported warnings lead to actual ex-
+ploitability in artifact-specific contexts. To support a more detailed analysis,
+we consider factors such as attacker-controlled input, execution context, and
+the conditions required for exploitation. Based on this, we assign context-aware
+security labels to the findings identified during static analysis.
+To answer RQ2, we propose SAFE (Security-Aware Framework for Artifact
+Evaluation), a first step toward a scalable and context-aware approach for as-
+sessing the security risk of research artifacts. The framework reasons about code
+semantics, execution context, and attacker feasibility. It uses a large language
+model (LLM) to connect raw static analysis results with practical security under-
+standing. SAFE also brings structured reasoning and security checklists into the
+evaluation process, so that security can be considered alongside reproducibility
+and functionality. In summary, this paper makes the following contributions:
+- We present an empirical study of security risks in publicly shared research
+artifacts by analyzing 509 artifacts from top-tier security conferences.
+- We introduce a taxonomy for context-aware security assessment of static
+findings to support structured classification.
+- We demonstrate that insecure practices are not uncommon in publicly re-
+leased research artifacts and highlight the gap between tool-reported warn-
+ings and their practical exploitability.
+
+On the Security of Research Artifacts
+- We present SAFE , a framework that reasons about code semantics, execu-
+tion context, and attacker feasibility for artifact-level security assessment.
+We evaluate it on static analysis findings and show that it can distinguish
+benign issues from practically exploitable risks.
+Background & Related Work
+Artifact evaluation was first introduced as a voluntary process at ESEC/FSE
+2011 [5] and has become a common practice at most top-tier venues. AE aims to
+improve transparency and reliability by encouraging authors to share artifacts
+such as source code, datasets, and experimental pipelines along with their papers.
+Over time, AE has developed into a structured process supported by dedi-
+cated committees and incentive mechanisms such as badge systems [5]. These
+badges recognize aspects such as artifact availability, functionality, and repro-
+ducibility [6,10]. As a result, sharing artifacts has become more common, and
+reproducibility is now seen as an essential part of scientific progress [4,3].
+2.1
+Related Work
+Existing studies examine AE’s role in reproducibility and identify both its
+strengths and limitations. Olszewski et al. [18] study artifacts from top-tier se-
+curity conferences and show that AE improves reproducibility success rates.
+Winter et al. [23] review artifact evaluation practices over the past decade and
+find that evaluated artifacts do not always meet expectations in terms of usabil-
+ity and long-term impact. Guilloteau et al. [7] highlight concerns around artifact
+longevity and sustainability, which suggests that current evaluation criteria cap-
+ture only a limited view of reproducibility.
+Recent work explores LLM-based agents for automated artifact evaluation
+and result reproduction to reduce reviewer effort. Baek et al. [2] present Artisan,
+an LLM-based agent that generates and validates reproduction scripts to assess
+reproducibility at scale. Heye et al. [12] propose a toolkit for reproducibility
+assessment and environment setup to reduce reviewer effort and improve scal-
+ability. Wu et al. [24] introduce ArtifactCopilot, an agent-based framework to
+automates environment setup, execution, and error recovery. These approaches
+mainly focus on improving the scalability and efficiency of reproducibility checks.
+Research Gap: Prior work focuses mainly on reproducibility and usability, with
+no attention to security. Current AE guidelines and badge systems do not check
+for insecure coding practices, vulnerable dependencies, or exploitable behavior.
+This gap is critical in security research, where artifacts are often reused or inte-
+grated into real systems, which can carry forward hidden risks.
+Our work addresses this gap through an empirical study of security risks in
+research artifacts. We introduce a context-aware approach that connects static
+analysis findings with practical exploitability. By combining empirical analysis,
+a structured taxonomy, and automated reasoning, we extend artifact evaluation
+beyond reproducibility to include security as a key aspect of artifact quality.
+N. Rani et al.
+Threat Model
+We study security risks in research artifacts under realistic usage. Artifacts are
+often shared with good intent, but they may still include weaknesses. Our focus
+is on what happens after release. Artifacts may be reused, extended, or executed
+in shared or cloud environments. Risks can arise when code is unsafe, configu-
+rations are weak, or inputs are wrongly assumed to be trusted. Such attacker
+influence can arise in realistic usage. For example, users may run artifacts on
+datasets downloaded from public repositories, reuse shared configuration files,
+or integrate code into workflows where inputs are not strictly validated. In these
+cases, adversarial content can propagate into execution without requiring privi-
+leged access.
+We assume an attacker interacts with the artifact as a normal user or through
+its exposed interfaces. The attacker can supply inputs such as data files, config-
+uration values, or command-line arguments. We do not assume privileged access
+or direct code modification. The main risk is to users who run or reuse the ar-
+tifact, where unsafe input or coding practices can affect their system or data. A
+vulnerability is treated as exploitable only when three conditions hold: (i) The
+affected code is actually executed. (ii) The attacker can control the input or path
+that reaches it. (iii) The attack does not rely on unrealistic setup or assumptions,
+such as modifying internal code or accessing non-exposed interfaces.
+Dataset & Measurement Setup
+This section describes the artifact collection, the static analysis pipeline, and
+an initial overview of the findings. It establishes the scale and diversity of the
+dataset and sets the stage for contextual analysis.
+4.1
+Artifact Collection
+We collect research artifacts from publicly available artifact repositories as-
+sociated with two top-tier security conferences: USENIX Security Symposium
+2025 and Network and Distributed System Security (NDSS) Symposium 2025.
+These artifacts typically include source code, scripts, datasets, and experimental
+pipelines released alongside the corresponding papers.
+Our dataset comprises a total of 509 artifacts spanning multiple domains,
+including system security, AI security and software security. The collected ar-
+tifacts cover a broad range of programming languages, dependency setups, and
+execution workflows, from lightweight scripts to more complex, multi-component
+systems. Fig. 1 illustrates the distribution of research artifacts across security do-
+mains along with their dominant programming languages. This diversity reflects
+the heterogeneous nature of the collected artifacts.
+4.2
+Static Analysis Pipeline
+To identify potential security issues, we use a multi-tool static analysis pipeline
+that combines both code-level and dependency-level scanning. At the code level,
+
+On the Security of Research Artifacts
+0
+50
+100
+150
+Number of Artifacts
+Malware
+Hardware Security
+Network Security
+Web Security
+Cryptography & Protocol Security
+Systems Security
+Mobile Security
+Privacy & Data Security
+ML & AI Security
+Software & Application Security
+Domain
+(a) Distribution across security domains
+25
+75
+125
+175
+Number of Artifacts
+Hack
+Shell
+Java
+Go
+JavaScript
+RenderScript
+Pkl
+C++
+C
+Python
+Programming Language
+(b) Programming language distribution
+Fig. 1: Overview of the collected artifacts. The diversity in both security domains
+and programming languages demonstrates the heterogeneity of artifacts.
+we use Semgrep [22], a static analysis tool that helps detect insecure coding
+patterns such as unsafe deserialization, command injection, and hardcoded se-
+crets. We also use Trivy [1] to scan third-party dependencies and identify known
+vulnerabilities based on public databases such as CVEs. Together, these tools
+provide a more complete view of possible security weaknesses in the artifacts.
+For each artifact, we run both tools across the codebase and associated de-
+pendency files. The outputs are normalized into a unified structured format,
+where each finding is represented with attributes including: artifact_id, tool,
+finding_id, category, severity, file, line, message, package, version,
+and relevant vulnerability metadata including CWE/CVE identifiers and CVSS
+score. Table 5 in the Appendix describes the fields used in the finding repre-
+sentation. This standardized representation enables systematic aggregation and
+analysis of findings across artifacts and tools.
+4.3
+Initial Findings Overview
+Across all analyzed artifacts, we obtain a total of 325,338 findings from the static
+analysis pipeline. The findings show clear variation in type, severity, and source,
+and are spread across multiple dimensions. The findings span 220 distinct CWEs,
+covering a wide range of issues including insecure coding practices, dependency
+vulnerabilities, and configuration problems. Table 1 lists the top-10 most preva-
+lent CWEs across the artifact collection. Table 2 illustrates the distribution of
+findings across severity levels and tools. The severity of these issues ranges from
+low-severity warnings to critical vulnerabilities. We also note differences across
+the tools used, as Semgrep focuses on pattern-based code analysis while Trivy
+identifies vulnerabilities in third-party dependencies. Findings appear in large
+numbers across artifacts, which shows that potential security issues are common
+in publicly released research code. However, we find later that a large fraction of
+these findings lack sufficient context to determine their practical exploitability.
+This scale allows us to systematically characterize security risks across diverse re-
+search artifacts and identify systemic patterns in tool-reported findings. Overall,
+this dataset provides a comprehensive and diverse foundation for evaluating the
+gap between tool-reported issues and realistic security risks in research artifacts.
+N. Rani et al.
+Table 1: Top-10 prevalent CWEs observed across analyzed research artifacts.
+CWE ID Name
+# of Artifacts
+CWE-502 Deserialization of Untrusted Data
+CWE-676 Use of Potentially Dangerous Function
+CWE-78
+OS Command Injection
+CWE-20
+Improper Input Validation
+CWE-95
+Eval Injection
+CWE-770 Allocation of Resources Without Limits or Throttling
+CWE-1333 Inefficient Regular Expression Complexity
+CWE-22
+Path Traversal
+CWE-400 Uncontrolled Resource Consumption
+CWE-200 Exposure of Sensitive Information
+Table 2: Summary of static analysis findings.
+(a) Severity distribution reported by Trivy
+Severity
+High Medium
+Low
+Critical
+Ratio (%) 32.90%
+47.90%
+14.10%
+5.10%
+(b) Distribution of findings
+Tool Semgrep Trivy Total
+Count
+317,630
+7,708 325,338
+Taxonomy for Contextual Security Assessment
+To distinguish between theoretical vulnerabilities and practical risks, we intro-
+duce a taxonomy for contextual security assessment of research artifacts. It cap-
+tures the relationship between static analysis findings and realistic exploitability.
+5.1
+Design Principles
+Our taxonomy follows four principles: (i) Exploitability over syntax: We dis-
+tinguish insecure patterns from vulnerabilities that are exploitable in practice.
+(ii) Context-aware reasoning: Findings are interpreted based on how the ar-
+tifact is used, such as training, evaluation, or demo code. (iii) Evidence-driven
+analysis: Decisions rely on observed code behavior and dependencies, without
+assuming undocumented inputs or deployments. (iv) Conservative classifica-
+tion: When evidence is limited, we avoid overestimating risk and account for
+uncertainty.
+5.2
+Contextual Dimensions
+To enable consistent and meaningful classification, we define a set of dimensions
+that capture how each finding behaves in its actual usage context. These dimen-
+sions help us reason about whether a reported issue can translate into a practical
+risk. We consider the following dimensions while analyzing the findings:
+- Attacker-controlled input: This dimension captures whether an adver-
+sary can control inputs to the flagged code. For example, user files, command-
+line arguments, or external data. The label takes one of three values: yes,
+no, or uncertain, with a brief explanation of how such control may arise.
+
+On the Security of Research Artifacts
+- Reachability: This dimension checks whether the flagged code is executed
+during use. If it is unreachable, the impact is limited. The label is yes, no,
+or uncertain, with a brief note on whether an attacker can trigger it.
+- Execution context: This dimension describes the role of the code within
+the artifact. For example, a training pipeline, evaluation script, demo, or
+deployment component. This context affects exposure and risk. The label is
+expressed as text, explaining where and how the code runs in the workflow.
+- Exploitation condition: This dimension outlines the conditions needed to
+exploit the issue, such as vulnerable dependencies, malicious inputs, or spe-
+cific privileges. The description helps clarify whether exploitation is straight-
+forward or requires strong assumptions.
+These dimensions serve as necessary conditions for practical exploitability. With-
+out attacker-controlled input and reachable execution, a reported issue is unlikely
+to manifest as a real security risk. Together, they provide a structured basis for
+interpreting tool-reported findings. This enables us to move beyond surface-level
+warnings and assess the actual risk posed by research artifacts.
+5.3
+Classification Labels
+As false positives are a well-known issue in static analysis of codebases, we
+first assign a category to each finding before determining its security label. The
+findings are divided into two categories: (i) security-relevant findings and (ii)
+non-security findings. If a finding reported by static analysis tools is identified
+as a false positive, it is directly categorized as a non-security finding. In contrast,
+true positives are categorized as security-relevant findings. The formal taxonomy
+categorization flow is illustrated in Figure 2. We assign security labels to each rel-
+Static
+Analysis
+Findings
+Security-
+relevant
+Findings
+Non-security
+Findings
+FALSE_POSITIVE
+HARDENING_RECOMMENDATION
+CONTEXTUAL_RISK
+BENIGN_RESEARCH_USAGE
+Fig. 2: Overview of the formal taxonomy categorization
+evant finding using our taxonomy, guided by the design principles in Sections 5.1
+and 5.2. These labels capture the practical relevance of a reported issue, rather
+than merely its presence in the code. The labels used are described below:
+- CONTEXTUAL_RISK: This label captures issues that could become exploitable
+depending on how the artifact is used. The risk may arise under real-world
+deployment settings. For example, a command injection flaw in a script may
+become dangerous if the same code is later exposed through an API.
+- HARDENING_RECOMMENDATION: This label refers to unsafe practices with low
+practical impact in the current context. They are not immediate threats but
+should be improved for better security. For example, weak cryptographic
+usage in non-critical components or missing validation in internal utilities.
+N. Rani et al.
+- BENIGN_RESEARCH_USAGE: This label represents patterns that may appear
+insecure but are acceptable within a controlled research setting. Such cases
+are often tied to experimental constraints. For example, inclusion of hard-
+coded file paths or simplified configurations used for reproducibility.
+- FALSE_POSITIVE: This label is used when the reported issue does not corre-
+spond to a real problem in the given context. This happens due to incorrect
+pattern matching or when the flagged code is not relevant to execution.
+Together, these labels structure the interpretation of tool-reported findings, and
+Table 3 explains them. The taxonomy bridges raw detection and practical risk
+assessment and forms the basis for further analysis.
+Table 3: Labels defined in the taxonomy.
+Dimensions
+Possible Values
+Purpose
+Attacker-controlled input yes / no / uncertain
+Check adversarial input control
+Reachability
+yes / no / uncertain
+Check whether the code is executed
+Execution context
+textual
+Usage context in artifact
+Exploitation condition
+textual
+Required conditions for exploit
+Security label
+CR / HR / BRU / FP Assign final risk category
+CR = CONTEXTUAL_RISK, HR = HARDENING_RECOMMENDATION, FP = FALSE_POSITIVE,
+BRU = BENIGN_RESEARCH_USAGE.
+Empirical Analysis and Key Findings (RQ1)
+We apply our taxonomy for contextual security assessment to manually analyze
+security findings reported by static analysis tools. In total, the tools generated
+325,338 flags, out of which 1,744 were distinct. Given the scale of the data, a
+complete manual analysis was not feasible. Therefore, we perform the analysis
+on a subset of the prevalent findings to understand the security risks associated
+with research artifacts.
+To ensure both coverage and practicality, we focus on the most prevalent
+types of findings. We identify the top-50 flags that appear across a wide range of
+artifacts. Each of these flags is observed in at least 30 distinct artifacts, indicating
+that they represent recurring patterns rather than isolated cases. From these top-
+50 flags, we randomly sample 5 instances per flag, which results in a dataset of
+250 findings for detailed analysis. These instances span 119 distinct artifacts,
+providing a diverse view of artifacts.
+Overall Analysis. As the collected flags are produced by static analysis tools,
+they have the potential to generate false positives, especially in the research arti-
+fact context discussed in Section 3. Therefore, we first analyzed the flags and the
+corresponding research artifacts to identify false positive cases. As shown in Ta-
+ble 4a, out of the 250 findings, 146 (58.40%) were classified as FALSE_POSITIVE
+(non-security findings), while the remaining 104 (41.60%) were identified as
+security-relevant findings, as our taxonomy discussed in Section 5.
+The high proportion of false positives is expected, as static analysis tools are
+known to generate a large volume of such flags [9,13]. For example, an artifact
+
+On the Security of Research Artifacts
+may be flagged for listing a vulnerable package in requirements.txt, even when
+the code does not use that package, because the tool does not consider context.
+One such example is shown later in Listing 1.1. However, the remaining find-
+ings represent security-relevant issues that require careful examination. From
+the perspective of responsible public release of research artifacts, all labels ex-
+cept FALSE_POSITIVE indicate potential concern and therefore warrant explicit
+declaration during artifact evaluation or public release.
+Table 4: Summary of Overall Analysis.
+(a) Findings distribution (in %)
+Finding Types
+Value
+False-positive
+146 (58.40%)
+Security-relevant 104 (41.60%)
+Total
+250 (100.00%)
+(b) Security-relevant findings distribution
+Security Finding Type
+Value
+CONTEXTUAL_RISK
+34 (13.60%)
+BENIGN_RESEARCH_USAGE
+20 (8.00%)
+HARDENING_RECOMMENDATION 50 (20.00%)
+Analysis of Security-relevant Findings. We further analyze the security-relevant
+findings to understand the types of concerns they represent. As shown in Ta-
+ble 4b, within this set, 34 (13.60%) findings are categorized as CONTEXTUAL_RISK,
+where exploitability depends on how the artifact is used or deployed. These cases
+are particularly important, as they may appear safe in controlled settings but
+become risky when reused in different environments. One example (discussed
+later in Section 9.2) takes a host address from an external source and executes
+it without validation to fingerprint software versions. This creates a contextual
+risk, as real use without sanitization can allow command injection. Further, 20
+(8.00%) findings belong to BENIGN_RESEARCH_USAGE, indicating that the flagged
+behavior is intentional and necessary to demonstrate attack methods or proposed
+techniques, even though it involves security risks. One example (discussed later
+in Section 9.1) analyzes bootloader attack surfaces. The code includes private
+keys for signing tools. These keys do not affect execution, but the tool flags them
+as CWE-798 due to pattern matching without context. We also observe that 50
+(20.00%) findings correspond to HARDENING_RECOMMENDATION. These findings
+reflect unsafe practices that should be improved, even if they do not pose imme-
+diate threats.
+RQ1: Key Observation
+Nearly two out of five findings in publicly released research artifacts re-
+quire careful attention during reuse, extension, and practical deployment.
+Implication for Artifact Evaluation. These findings reveal a fundamental gap
+in current artifact evaluation practices. Our analysis shows that a consistent
+and recurring subset of artifacts contains vulnerabilities that are realistically
+exploitable or may become exploitable when reused in different settings. Even
+when issues are not immediately exploitable, it often indicates practices that
+N. Rani et al.
+require attention before artifacts are reused or extended. This calls for a simple
+but explicit step at the time of release. A brief statement on potential security
+risks can promote responsible sharing and safer reuse of research artifacts. This
+observation highlights the need for a more nuanced approach to artifact evalua-
+tion, which can explicitly incorporate security assessment. It also motivates the
+design of our proposed framework, which can potentially integrate structured
+and context-aware security analysis into the artifact evaluation process.
+Towards Security-Aware AE Framework
+To automate the gap identification between findings and realistic exploitability,
+we present SAFE (Security-Aware Framework for Artifact Evaluation)1, a first
+step toward a context-aware security assessment that reasons about execution
+context, input control, and exploit feasibility. The framework is designed to ap-
+proximate analyst-style reasoning through structured, context-aware evaluation
+to enable scalable and automated analysis. The framework is guided by princi-
+ples that reflect how a security analyst would approach the problem in practice.
+It reasons about findings by considering the purpose of the code, how it is exe-
+cuted, and what an attacker can realistically control. It also takes into account
+the role of each component within the artifact to distinguish between exposed
+and non-exposed parts of the system. The framework also remains conservative
+in its decisions, explicitly acknowledges uncertainty and avoids overestimation
+of risk when evidence is limited, as discussed in Section 5.1.
+7.1
+System Overview
+The framework overview is illustrated in Figure 3. It operates on the artifact
+codebase and static analysis findings generated by analysis tools. For each find-
+ing, the framework extracts relevant contextual information, including the as-
+sociated code snippet, file location, and metadata such as vulnerability type,
+severity, dependency, and flagged file details. The system then analyzes the sur-
+rounding code to infer the functional purpose of the code segment, its role within
+the artifact, as well as its dependencies and interactions with other components.
+Semgrep
+Trivy
+List of
+Findings
+Static Analysis Findings
+Repository Exploration
+Contextual Reasoning
+Security Assessment
+Code Parsing
+Dependency Analysis
+Search Tool
+LLM Analysis (ReAct Agent)
+Artifact
+Repository
+Final Labeled Result
+Structured Label
+Security Label
+Code Purpose
+Execution Context
+Required conditions for exploit
+Input controlled by attacker
+Reachability
+Evidence
+Reasoning & Recommendation 
+Fig. 3: SAFE Workflow
+Building on this context, the framework applies structured reasoning to assess
+exploitability. In our implementation, this reasoning is performed using a large
+1 The source code is available at: 
+
+On the Security of Research Artifacts
+language model (LLM), which interprets code semantics and integrates multiple
+contextual signals to produce a classification aligned with the taxonomy defined
+in Section 5. The LLM is instantiated in a ReAct-style agent setting [25], where
+it iteratively performs reasoning and tool-assisted actions to dynamically gather
+additional context and evidence for making a decision. The framework augments
+the agent with a set of filesystem tools shown in the Appendix Table 6.
+Tool augmentation allows the framework to analyze artifacts in context, un-
+derstand their execution environment and dependencies, and assess exploitabil-
+ity in a structured manner. The toolset supports analysis at multiple levels.
+Repository-level tools capture the overall structure, file-level tools provide access
+to relevant code and configuration details, and semantic tools enable reasoning
+about execution flow and program behavior. Together, these components allow
+the system to perform more grounded and context-aware security assessment.
+7.2
+Decision Logic
+The core of the framework lies in how it reasons about each finding in a struc-
+tured manner. It evaluates findings by considering aspects that influence prac-
+tical exploitability. It reasons about whether the input reaching the vulnerable
+code can be influenced by an external adversary. When the input to the vul-
+nerable code is not controlled by an adversary, the likelihood of exploitation is
+significantly reduced.
+The framework also examines whether the flagged code is actually executed
+during normal artifact usage. Code that resides in unused paths is less likely
+to pose a real threat, even if it appears vulnerable in isolation. In addition,
+the broader usage context of the code is taken into account. For instance, code
+used only in offline experimentation has a different risk profile compared to code
+that may be part of a deployable system. This context helps determine how ex-
+posed the code is in practice. Some artifacts intentionally include elements such
+as private keys or insecure configurations to demonstrate or reproduce attacks
+in a controlled setting. These components are used solely for experimentation
+and do not represent real-world deployments. Since they are non-operational
+outside this context and required to demonstrate the attack method proposed
+in the artifact, they are classified as BENIGN_RESEARCH_USAGE. The workflow
+shown in Figure 4 represents the structured reasoning process followed by the
+system. The analysis is performed iteratively by the LLM agent, which gathers
+Static
+Finding
+Input Analysis
+Is input attacker-
+controlled?
+Execution Analysis
+Is code reachable
+in realistic usage?
+Context Assessment
+Offline vs
+deployable setting
+Exploitability
+Reasoning
+Can conditions
+realistically lead to
+impact?
+Final Classification
+﻿CONTEXTUAL_RISK
+﻿HARDENING_RECOMMENDATION
+﻿BENIGN_RESEARCH_USAGE
+﻿FALSE POSITIVE
+Fig. 4: Decision logic workflow for assessing the exploitability of static findings.
+N. Rani et al.
+evidence from the repository and evaluates multiple factors jointly before ar-
+riving at a final decision. For each analyzed finding, the framework produces a
+structured JSON output capturing both the classification, the reasoning behind
+it, and recommendation to fix. captures key details such as the security label,
+code purpose, execution context, exploit conditions, evidence, reasoning, and rec-
+ommendations. Such structured outputs improve interpretability and facilitate
+downstream analysis. An example is shown in Listing 1.1.
+Listing 1.1: Example SAFE output for a finding
+{
+"security_label": "FALSE_POSITIVE ",
+"code_purpose": ".... LLM training , poisoning .... workflows.",
+"execution_context": "requests ==2.29.0 is listed in
+requirements.txt .... the
+provided
+source
+files.",
+"required_conditions_for_exploit": "A real
+exploit .... use ....
+insecure
+certificate -verification
+pattern
+....",
+"input_controlled_by_attacker": "no - no Requests .... found in
+the
+provided
+code ....",
+"reachable_in_artifact_execution": "no - repository
+inspection
+found .... no requests.get , requests.post .... usage.",
+"evidence_snippet": "requirements.txt pins
+requests
+==2.29.0.... anywhere
+else in the
+codebase.",
+"reasoning": "The
+affected .... requires a reachable
+code path
+.... no direct .... usage in the
+repository ....",
+"recommendation": "No artifact -level fix .... Remove
+unused
+requests .... upgrade it if future
+code
+starts
+using ..."
+}
+By integrating static analysis with context-aware reasoning, the proposed frame-
+work addresses a fundamental limitation of tool’s inability to distinguish between
+theoretical and practically exploitable issues. As SAFE is the first step towards
+security-aware artifact evaluation, its modular design allows the framework to
+be extended with alternative reasoning engines or additional contextual signals,
+which makes it applicable beyond the specific implementation used in this work.
+Evaluation
+We evaluate SAFE to assess how closely its decisions align with expert judgment
+on a manually annotated subset of findings. Our goal is to measure classification
+performance along with to understand whether SAFE can distinguish realistic
+security risks from non-exploitable or context-dependent issues.
+8.1
+Experiments
+To evaluate SAFE against human reasoning, we use the annotated subset of
+findings discussed in the Section 6. This subset captures diverse categories of
+issues, including high-severity warnings, common insecure coding patterns, and
+findings occurring in different parts of the artifact. Each finding in this subset
+is labeled based on the taxonomy discussed in Section 5.
+
+On the Security of Research Artifacts
+For each finding, SAFE is provided with the codebases and tool-reported
+information, and produces both a classification and a structured explanation.
+This allows us to analyze how the framework scales and to derive dataset-level
+insights about the nature of security issues present in research artifacts.
+8.2
+Results
+Overall Analysis. On the annotated dataset, SAFE achieves an accuracy of
+84.80%, with a macro F1-score of 84.63% in distinguishing security-relevant and
+non-security findings. Our analysis shows that 82.19% of non-security flags are
+correctly classified, while 88.46% of security-relevant flags are correctly identified.
+It indicates that the framework prioritizes capturing potential risks, at the cost
+of false alarms. Overall, the results suggest that the framework is effective in
+separating security-relevant findings from benign ones.
+Class-wise Analysis. Further, SAFE achieves an accuracy of 74.14% and a macro
+F1-score of 60.35% for overall multi-class analysis. These results indicate that
+the framework is able to demonstrate moderate effectiveness in distinguish-
+ing between multiple security-relevant categories in research artifacts, despite
+the inherent ambiguity and context-sensitive nature of the labels. The current
+implementation is based on a single LLM instance and first-step towards the
+security-aware artifact analysis, and performance is expected to improve with
+more advanced agentic architectures for security assessment.
+Our analysis further reveals that the model fails to correctly identify instances
+belonging to the BENIGN_RESEARCH_USAGE category, resulting in zero true posi-
+tives for this class. The predictions for this category are distributed as 20.00%
+misclassified as CONTEXTUAL_RISK and 80.00% as HARDENING_RECOMMENDATION.
+This behavior may occur because many flagged issues reflect real security risks,
+even when they are intentionally included to demonstrate how the artifact
+works. As a result, the distinction between benign usage, actual risk, and
+simple hardening advice often becomes unclear. We further observe that for
+HARDENING_RECOMMENDATION, 58.00% of instances are correctly predicted, while
+18.00% are misclassified as CONTEXTUAL_RISK and 24.00% as FALSE_POSITIVE.
+For the CONTEXTUAL_RISK class, 67.65% of instances are correctly classified,
+while 32.35% are misclassified as HARDENING_RECOMMENDATION.
+Overall, the performance in identifying both security-relevant and non-security
+findings demonstrates that the framework is effective in filtering out non-security
+issues. The moderate performance on security-relevant categories demonstrates
+that the model captures important aspects of the security context in research ar-
+tifacts, while also indicating room for improvement through enhanced reasoning
+capabilities and agent-based analysis.
+Finally, as a sanity check, we applied SAFE to its own artifact. The analysis
+identified a total of 8 findings, including 1 classified as contextual risk and the
+remaining as false positives. The contextual risk corresponds to a potential unsafe
+deserialization path; however, in our setting, inputs to this component are fully
+N. Rani et al.
+controlled by the user and do not originate from untrusted sources. Therefore,
+the condition required for exploitation is not satisfied under our threat model.
+The generated report is available at: 
+RQ2: Key Observation
+Security findings can be analyzed at scale by combining static analysis
+with context-aware reasoning to effectively rule out false positives, but
+separating closely related cases still remains challenging.
+Cost Analysis We analyze the cost of applying SAFE for artifact evaluation. The
+primary cost comes from LLM-based reasoning, while static analysis using Sem-
+grep and Trivy adds negligible overhead. We use GPT-4o for SAFE evaluation.
+The total input token consumption is 4,483,894 tokens and the total output is
+357,830 tokens. This corresponds to an overall cost of $14.79. This results in an
+average cost of $0.059 per finding and $0.13 per artifact. The cost scales linearly
+with the number of findings since each instance is processed independently. The
+overall cost remains modest, which shows that SAFE can be applied to large ar-
+tifact collections without significant expense. In terms of runtime, each finding
+is processed in 116.82 seconds. The independent nature of the analysis allows
+efficient scaling, which makes SAFE practical for large-scale artifact evaluation.
+8.3
+Limitations and Future Work
+The results reveal few limitations, which leave room for improvement in future
+work. Addressing these issues can strengthen the suitability of the proposed
+framework for inclusion in artifact evaluation and decision-making pipelines.
+The difficulty in correctly classifying BENIGN_RESEARCH_USAGE and the confusion
+with adjacent categories suggest that the model struggles to capture fine-grained
+semantic boundaries between related security concepts. Additionally, the frame-
+work relies on static analysis context and does not incorporate runtime behavior,
+which may further limit its ability to distinguish between contextual risk and
+benign usage. These limitations show the need for better context modeling and
+stronger evidence use in future work.
+8.4
+Implications to Artifact Evaluation Pipeline
+We aim to further refine the efficiency and usability of SAFE to facilitate its
+adoption within artifact evaluation workflows. We encourage authors to use
+SAFE to document execution assumptions, minimize unsafe practices, and en-
+sure that artifacts do not unintentionally expose exploitable behavior when
+reused. In addition, we encourage artifact reviewers to move beyond purely
+functional validation and consider basic security reasoning, particularly when
+assessing whether flagged issues are realistically exploitable. We also encourage
+artifact evaluation committee chairs and top-tier venues to promote the use of
+lightweight security assessment frameworks like SAFE, to enable a broader shift
+toward security-aware evaluation practices.
+
+On the Security of Research Artifacts
+We advocate for introducing optional security checks or badges as part of
+artifact evaluation, supported by automated tools and simple guidelines. At its
+current stage, SAFE is not intended to serve as a mandatory evaluation criterion;
+however, it can be effectively adopted as an optional security assessment layer
+to encourage responsible artifact release.
+Artifact Security Checklist: To support practical adoption, we provide a
+lightweight checklist that can be used by authors, and AE chairs reviewers during
+artifact evaluation:
+- Does the artifact process external or user-controlled input?
+- Are unsafe operations like deserialization and shell execution properly vali-
+dated or restricted?
+- Are third-party dependencies free from known critical known vulnerabilities?
+- Is the intended execution context such as offline experiment vs. deployment
+clearly documented?
+- Are assumptions about trust boundaries and input sources explicitly stated?
+This checklist complements automated analysis by encouraging explicit consid-
+eration of security-relevant aspects that are often implicit in research code.
+Case Studies
+To qualitatively evaluate the effectiveness of SAFE, we present representative
+case studies from the manually analyzed dataset. These examples illustrate the
+importance of context-aware reasoning in distinguishing between benign and
+security-risk specific findings in research artifacts.
+9.1
+Case Study 1: Flagged Issue that is Benign Research Use
+In a research artifact which proposes analysis of possible attack surfaces of vari-
+ous bootloaders, the static analysis tool flags the presence of a private key in the
+repository as a potential security issue (CWE-798: Hard-coded Credentials). At
+face value, embedding private keys in source code is considered a severe security
+violation. In our deeper inspection, it reveals that the key is part of bundled boot-
+loader signing tooling and is explicitly used for local testing and reproducibility
+purposes. The file resides within a vendored tool directory and is referenced by
+documentation and scripts as a test asset rather than a production credential.
+Such reasoning shows that the key is not derived from attacker-controlled
+input and is not associated with any live trust boundary or deployment en-
+vironment. Furthermore, there is no evidence that the key is used for real-
+world authentication or external signing operations. Under the research arti-
+fact threat model, the presence of such test credentials is expected and does
+not constitute a realistic security risk. Therefore, this instance is labeled as
+BENIGN_RESEARCH_USAGE. A sample of the finding label of this case study is
+shown in the Appendix Listing 1.2.
+This case demonstrates the ability to avoid over-reporting by incorporating
+execution context and intended usage, which enables to understand the distinc-
+tion between benign experimental artifacts from real vulnerabilities.
+N. Rani et al.
+9.2
+Case Study 2: Subtle Issue that is a Security-risk
+In one research artifact that provides software version fingerprinting based on
+responses from a given host address, we analyze a Python script used for black-
+box probing of target systems. The code constructs and executes shell commands
+using subprocess.Popen(..., shell=True) while dynamically embedding the
+variable hostinfo into the command string.
+This instance is classified as CONTEXTUAL_RISK. We identify that hostinfo is
+directly interpolated into the shell command without validation or sanitization.
+As a result, an attacker controlling this input can inject shell metacharacters,
+leading to well-known problem of arbitrary command execution [15,21]. More
+importantly, the artifact is about software fingerprinting using host address and
+run curl command with host address to get the response and analyze response
+to identify software version running at host side. If implemented in unsafe envi-
+ronment or real-world, attacker can easily modify the input and inject malicious
+command along with host address to run on the machine.
+The vulnerable code path is directly reachable during normal execution of the
+artifact, especially through the main entry point of the proposed system. This
+misuse of vulnerable argument to the benign function establishes a concrete and
+exploitable command injection pathway. This reasoning demonstrates three crit-
+ical factors: attacker-controlled input, reachability during execution, and direct
+command execution impact. Even in a research setting, the artifact executes
+external input without validation, which makes this input path exploitable in
+practice.
+This case illustrates the ability to detect subtle but critical vulnerabilities. A
+sample of the finding label of this case study is shown in the Appendix Listing 1.3.
+Conclusion
+Security remains a largely overlooked dimension in current artifact evaluation
+processes, which primarily focus on functional correctness and reproducibility.
+While these aspects are essential, they do not capture whether the released
+artifacts may introduce unintended security risks when reused, extended, or de-
+ployed. In this work, we demonstrate the need for context-aware security anal-
+ysis in research artifacts. Our findings demonstrate that the security relevance
+of a finding depends on execution context, attacker control, and intended usage.
+Through SAFE, we show that incorporating structured reasoning enables mean-
+ingful distinctions between benign experimental patterns and realistic security
+risks. We position SAFE as a first step toward integrating security into artifact
+evaluation in a practical and lightweight manner. SAFE provides a framework
+that supports authors, reviewers, and artifact evaluation committees in iden-
+tifying and reasoning about potential risks. The proposed approach opens the
+direction for future systems that combine automated analysis with deeper con-
+textual understanding, ultimately contributing to more secure and responsible
+release of research artifacts. This shift is essential for aligning artifact evaluation
+with the growing need for secure, reusable, and trustworthy research outputs.
+
+On the Security of Research Artifacts
+References
+1. Aqua Security: Trivy: Vulnerability scanner for containers and other artifacts
+(2026),  Accessed: 2026-04-13
+2. Baek, D., Pradel, M.: Artisan: Agentic artifact evaluation. arXiv preprint
+arXiv:2602.10046 (2026)
+3. Barr, E., Bell, J., Hilton, M., Mechtaev, S., Timperley, C.: Continuously acceler-
+ating research. In: 2023 IEEE/ACM 45th International Conference on Software
+Engineering: New Ideas and Emerging Results (ICSE-NIER). pp. 123-128. IEEE
+(2023)
+4. Beyer, D., Hartmanns, A.: Reproducibility and replication of research results: A
+special issue for rrrr 2022. International Journal on Software Tools for Technology
+Transfer 27(4), 397-401 (2025)
+5. Beyer, D., Winter, S.: Artifact evaluations for stronger research results. In: Pro-
+ceedings of the 33rd ACM International Conference on the Foundations of Software
+Engineering. pp. 1234-1237 (2025)
+6. Guevara-Vega, C., Bernárdez, B., Cruz, M., Durán, A., Ruiz-Cortés, A., Solari,
+M.: Research artifacts for human-oriented experiments in software engineering:
+An acm badges-driven structure proposal. Journal of Systems and Software 218,
+112187 (2024)
+7. Guilloteau, Q., Ciorba, F., Poquet, M., Goepp, D., Richard, O.: Longevity of arti-
+facts in leading parallel and distributed systems conferences: A review of the state
+of the practice in 2023. In: Proceedings of the 2nd ACM Conference on Repro-
+ducibility and Replicability. pp. 121-133 (2024)
+8. Guilloteau, Q., Poquet, M., Korndörfer, J.H.M., Ciorba, F.M.: Artifact evaluations
+as authors and reviewers: Lessons, questions, and frustrations. In: Community
+Workshop on Practical Reproducibility in HPC (2024)
+9. Guo, Z., Tan, T., Liu, S., Liu, X., Lai, W., Yang, Y., Li, Y., Chen, L., Dong, W.,
+Zhou, Y.: Mitigating false positive static analysis warnings: Progress, challenges,
+and opportunities. IEEE Transactions on Software Engineering 49(12), 5154-5188
+(2023)
+10. Hermann, B.: What has artifact evaluation ever done for us? IEEE Security &
+Privacy 20(5), 96-99 (2022)
+11. Heumüller, R., Nielebock, S., Krüger, J., Ortmeier, F.: Publish or perish, but do
+not forget your software artifacts. Empirical Software Engineering 25(6), 4585-
+4616 (2020)
+12. Heye, D., Kindermann, K., Decker, R., Lohmöller, J., Belova, A., Geisler, S.,
+Wehrle, K., Pennekamp, J.: Supporting artifact evaluation with llms: A study with
+published security research papers. In: 2025 IEEE International Conference on Big
+Data (BigData). pp. 5077-5085. IEEE (2025)
+13. Kang, H.J., Aw, K.L., Lo, D.: Detecting false alarms from automatic static analysis
+tools: How far are we? In: Proceedings of the 44th International Conference on
+Software Engineering. pp. 698-709 (2022)
+14. Malik, T.: Artifact description/artifact evaluation: A reproducibility bane or a
+boon. In: Proceedings of the 4th International Workshop on Practical Reproducible
+Evaluation of Computer Systems. pp. 1-1 (2020)
+15. MITRE Corporation: Cwe-78: Improper neutralization of special elements used in
+an os command (’os command injection’) (2026), 
+definitions/78.html, accessed: 2026-04-13
+N. Rani et al.
+16. Muttakin, A., Mondal, S., Roy, C.K.: The state of open science in software engi-
+neering research: A case study of icse artifacts. arXiv preprint arXiv:2601.02066
+(2026)
+17. Olszewski, D., Lu, A., Crowder, A., Bennett, N., Layton, S., Varma Bhupathiraju,
+S.H., Tucker, T., Kalgutkar, S., Ver Helst, H., Stillman, C., et al.: Reproducibil-
+ity in applied security conferences: An 11-year review on artifacts and evaluation
+committees. In: Proceedings of the 3rd ACM Conference on Reproducibility and
+Replicability. pp. 96-107 (2025)
+18. Olszewski, D., Lu, A., Stillman, C., Warren, K., Kitroser, C., Pascual, A., Ukirde,
+D., Butler, K., Traynor, P.: " get in researchers; we’re measuring reproducibility":
+A reproducibility study of machine learning papers in tier 1 security conferences.
+In: Proceedings of the 2023 ACM SIGSAC conference on computer and communi-
+cations security. pp. 3433-3459 (2023)
+19. Olszewski, D., Tucker, T., Butler, K.R., Traynor, P.: {SoK}: Towards a unified
+approach to applied replicability for computer security. In: 34th USENIX Security
+Symposium (USENIX Security 25). pp. 469-488 (2025)
+20. Sedghpour, M.R.S., Papadopoulos, A.V., Klein, C., Tordsson, J.: Artifact eval-
+uation for distributed systems: Current practices and beyond. arXiv preprint
+arXiv:2406.13045 (2024)
+21. Semgrep,
+Inc.:
+Command
+injection
+in
+python:
+Prevention
+cheat
+sheet
+(2025), 
+accessed: 2026-04-13
+22. Semgrep, Inc.: Semgrep: Static analysis tool for code security (2026), https://
+github.com/semgrep/semgrep, Accessed: 2026-04-13
+23. Winter, S., Timperley, C.S., Hermann, B., Cito, J., Bell, J., Hilton, M., Beyer, D.:
+A retrospective study of one decade of artifact evaluations. In: Proceedings of the
+30th ACM joint European software engineering conference and symposium on the
+foundations of software engineering. pp. 145-156 (2022)
+24. Wu, Z., Zhao, Y., Chen, Z., Wang, Z., Wang, H.: Agent-based software artifact
+evaluation. arXiv preprint arXiv:2602.02235 (2026)
+25. Yao, S., Zhao, J., Yu, D., Du, N., Shafran, I., Narasimhan, K.R., Cao, Y.: React:
+Synergizing reasoning and acting in language models. In: The eleventh international
+conference on learning representations (2022)
+26. Zilberman, N., Moore, A.W.: Thoughts about artifact badging. SIGCOMM Com-
+put. Commun. Rev. 50(2), 60-63 (May 2020)
+A
+Case Study 1 Output
+Listing 1.2: Findings label output
+{
+"security_label": " BENIGN_RESEARCH_USAGE ",
+"code_purpose": "The file .... private
+key .... for local ....
+workflows.",
+"execution_context": "The key is stored
+under .... as part of
+vendored
+bootloader
+tooling .... as a test
+asset ....",
+"required_conditions_for_exploit": "A real
+exploit .... require
+.... private
+key .... live
+trust
+boundary .... deployed
+service .... grants .... signing
+authority ...."
+
+On the Security of Research Artifacts
+"input_controlled_by_attacker": "no - the key is a static
+bundled
+file ....",
+"reachable_in_artifact_execution": "uncertain - the key may be
+used by local .... signing
+scripts .... no evidence .... used
+for real -world
+authentication ....",
+"evidence_snippet": "In ..../ TestCert.pem , lines 33 onward
+contain
+-----BEGIN
+PRIVATE KEY -----....",
+"reasoning": ".... Semgrep .... detected a private
+key .... The
+surrounding
+path and
+filenames
+show .... part of vendored
+.... tooling .... bundled
+test
+asset .... no evidence ....
+that .... key
+protects a live
+service .... real
+deployment
+signing
+chain ..... reproducibility ....",
+"recommendation": "No .... artifact -level
+action is required ..."
+}
+B
+Case Study 2 Output
+Listing 1.3: Findings label output
+{
+"security_label": " CONTEXTUAL_RISK ",
+"code_purpose": "Runs .... probing
+commands .... target host ,
+executes .... curl .... commands .... stores the HTTP/HTTPS
+responses
+for
+version or fingerprint ....",
+"execution_context": "Executed .... active
+probing
+workflow ....
+vulnerable
+path is reached .... builds a shell
+command
+and
+executes .... subprocess.Popen (... , shell=True).",
+"required_conditions_for_exploit": "... attacker
+must be able to
+.... hostinfo
+value .... control
+command ...."
+"input_controlled_by_attacker": "yes - hostinfo is .... directly
+into
+shell
+command .... without .... sanitization .... can
+alter the
+executed
+command.",
+"reachable_in_artifact_execution": "yes
+-.... code path .... normal
+artifact
+logic .... invokes .... calls
+subprocess.Popen(
+command , shell=True , ...).",
+"evidence_snippet": ".... box.py lines 17 -21 define
+execute_command () with .... Popen(command , shell=True ,
+...) ....",
+"reasoning": ".... command -injection .... executes a shell
+command .... shell=True .... embedded
+directly .... command
+.... execution .... not shell -escaped or validated .... can
+break out .... and
+execute
+arbitrary
+commands ....",
+"recommendation": ".... invoke
+curl .... with
+shell=False ....
+Strictly
+validate
+hostinfo ...."
+}
+N. Rani et al.
+C
+Description of Fields
+Table 5 summarizes the fields used to represent each finding in the dataset,
+covering metadata, location, and severity details.
+Table 5: Description of fields in the finding representation.
+Field
+Description
+artifact_id Unique identifier of the research artifact being analyzed
+tool
+Name of the analysis tool that reported the finding (Semgrep, Trivy)
+finding_id
+Identifier assigned to the specific finding (rule ID or CVE ID)
+category
+Type of issue (code-level issue, dependency vulnerability)
+severity
+Reported severity level of the finding (Low, Medium, High, Critical)
+file
+File path in which the issue was detected
+line
+Line number corresponding to the finding (if applicable)
+message
+Description of the issue reported by the tool
+package
+Name of the affected dependency (if applicable)
+version
+Version of the affected dependency
+CWE/CVE
+Associated CWE or CVE identifiers
+CVSS
+CVSS score indicating severity
+D
+Tools Description
+Table 6 outlines the tools used by SAFE to analyze artifacts, focusing on repos-
+itory structure, code inspection, and dependency analysis.
+Table 6: Tools used by SAFE for context-aware artifact analysis
+Tool
+Purpose
+Functionality
+get_repo_tree
+Repository struc-
+ture analysis
+Extracts a hierarchical view of the
+repository
+find_important_files
+Key file discovery Identifies
+critical
+files
+such
+as
+README and dependencies
+read_file
+File inspection
+Reads file contents
+read_snippet
+Localized
+code
+analysis
+Extracts context around a specific
+line
+extract_dependency_files
+Dependency
+analysis
+Retrieves dependency files like re-
+quirements.txt and pyproject.toml
+detect_entrypoints
+Execution
+flow
+identification
+Identifies potential entry points
+search_package_usage
+Dependency
+us-
+age tracing
+Locates where specific packages are
+used within the codebase
+search_repo
+Codebase search
+Performs search across repository
+extract_enclosing_function Semantic context
+extraction
+AST parsing to identify the enclos-
+ing function or class for a given line

@@ -1,0 +1,2299 @@
+Optimizer-Model Consistency: Full Finetuning with
+the Same Optimizer as Pretraining Forgets Less
+Yuxing Liu1
+Jianyu Wang2
+Tong Zhang1
+1UIUC∗
+2Apple
+Abstract
+Optimizers play an important role in both pretraining and finetuning stages when training large
+language models (LLMs). In this paper, we present an observation that full finetuning with the
+same optimizer as in pretraining achieves a better learning-forgetting tradeoff, i.e., forgetting less
+while achieving the same or better performance on the new task, than other optimizers and, possi-
+bly surprisingly, LoRA, during the supervised finetuning (SFT) stage. We term this phenomenon
+optimizer-model consistency. To better understand it, through controlled experiments and theoret-
+ical analysis, we show that: 1) optimizers can shape the models by having regularization effects on
+the activations, leading to different landscapes around the pretrained checkpoints; 2) in response to
+this regularization effect, the weight update in SFT should follow some specific structures to lower
+forgetting of the knowledge learned in pretraining, which can be obtained by using the same opti-
+mizer. Moreover, we specifically compare Muon and AdamW when they are employed throughout
+the pretraining and SFT stages and find that Muon performs worse when finetuned for reasoning
+tasks. With a synthetic language modeling experiment, we demonstrate that this can come from
+Muon’s strong tendency towards rote memorization, which may hurt pattern acquisition with a
+small amount of data, as for SFT.
+Introduction
+Large language models (LLMs) have achieved remarkable success under the pretrain-finetune training
+paradigm [Radford et al., 2019, Ouyang et al., 2022, Grattafiori et al., 2024, Yang et al., 2025]. In the
+pretraining stage, the models are trained on an enormous mixed corpus to obtain general language
+ability. With the pretrained checkpoint in hand, we typically start the finetuning stage with supervised
+finetuning (SFT), where models are trained upon the pretrained checkpoints with high-quality but
+relatively small amounts of data to learn the skills in specific downstream tasks, e.g., math and code.
+SFT is a significantly different training stage from pretraining, since models not only need to learn
+novel knowledge and skills, but also preserve the general language ability learned in pretraining. We
+call balancing the two factors the learning-forgetting tradeoff.
+Training algorithms, or optimizers, play a central role in the learning-forgetting tradeoff. Among the
+optimizers, the current workhorse for LLM training is undoubtedly AdamW [Kingma and Ba, 2014,
+Loshchilov and Hutter, 2017] and its variants, with Muon [Jordan et al., 2024] and other recently
+emerged matrix-structured optimizers as strong competitors applied in frontier model training [Kimi
+et al., 2026, Zeng et al., 2025, DeepSeek-AI, 2026]. Specifically in SFT, parameter-efficient training
+methods are also powerful, with LoRA [Hu et al., 2022] as the most popular and representative one.
+The rich diversity in training algorithms makes us wonder: Which training algorithms achieve the best
+learning-forgetting tradeoff in the SFT stage?
+In this paper, we provide an answer to the question: full finetuning with the same (family of) optimizer
+as pretraining actually leads to the best learning-forgetting tradeoff compared to other optimizers and
+LoRA. As presented in Figure 1, we plot a Pareto frontier where each point corresponds to a learning
+rate choice and a training period for a specific training method. We can observe that the solid blue line
+∗All experiments were conducted by the university.
+arXiv:2605.06654v1 [cs.LG] 7 May 2026
+
+0.50
+0.52
+0.54
+0.56
+0.58
+0.60
+0.62
+0.64
+General Capability: Avg Acc (Hellaswag, ARC-C, Winogrande)
+0.30
+0.35
+0.40
+0.45
+0.50
+0.55
+0.60
+Task Capability: GSM8K (Exact Match)
+Pareto Optimal Frontier: General vs Task Capability
+Full FT (AdamW)
+Full FT (Muon)
+LoRA (r=256)
+LoRA (r=64)
+LoRA (r=16)
+Figure 1: The Pareto frontier of different optimizers and LoRA finetuning Llama-2-7B with the Meta-
+MathQA dataset for 1 epoch. The x and y axes measure how much general knowledge the model forgets
+and how much math ability the model learns during SFT, respectively (higher is better). Full finetun-
+ing with the same optimizer as pretraining (AdamW) achieves the best learning-forgetting tradeoff,
+i.e., forgetting less when learning the same or better, compared to LoRA and other optimizers. Please
+refer to Section 2 to see detailed experiment settings.
+presenting full finetuning with AdamW (the same optimizer as pretraining) is at the uppermost and
+rightmost position of the figure, which implies that it has the least forgetting while achieving the same
+or even more learning compared to LoRA and Muon. We find this observation that full finetuning
+with the same optimizer as pretraining in the SFT stage gives the best learning-forgetting tradeoff
+consistently holds. We term this phenomenon optimizer-model consistency.
+To understand why optimizer-model consistency occurs, we start by considering the difference in
+the models pretrained by different optimizers. Since LLM training is generally nonconvex, different
+(families of) optimizers consistently favor solutions with specific properties. We discuss the properties
+in weights and activations, and consider the optimizer framework presented in Pethick et al. [2025]
+with matrix induced norms, showing that the activation properties of the model can originate from the
+optimizer’s regularization effect. Then, based on the understanding of the activation regularization
+effect, we provide a theoretical explanation for optimizer-model consistency under specific assumptions
+modeling the observations.
+From the understanding of optimizer-model consistency, we know that we should employ the same
+(family of) optimizers in SFT to have a better learning-forgetting tradeoff. It also implies that the
+learning-forgetting tradeoff when an optimizer is employed throughout pretraining and SFT is a com-
+prehensive metric for an optimizer in LLM training compared to only pretraining performance. We
+conduct a case study for Muon and AdamW in this way and observe that though Muon generally
+provides a stronger pretrained checkpoint, its performance after SFT varies across different tasks, and
+can possibly be no better than AdamW if finetuned on reasoning tasks like math. We further conduct
+a synthetic experiment to suggest that a possible reason is that Muon may be better at memorization
+and potentially weaker at learning patterns due to its update formula, which is particularly significant
+in tasks with only a small amount of data, like SFT. Therefore, a better finetuning method may be an
+interesting direction for improving Muon’s overall performance in LLM training.
+We summarize our contributions:
+• We demonstrate the optimizer-model consistency phenomenon: full finetuning with the same
+optimizer as pretraining leads to a better learning-forgetting tradeoff than full finetuning with
+other optimizers or LoRA in the SFT stage. Specifically comparing with LoRA, we observe that
+full finetuning can surpass LoRA in both learning and forgetting when a learning rate sweep is
+properly considered (Section 2).
+• We show that an optimizer generally applies regularization to the activations related to the norm
+on which it is derived. We build a theoretical explanation for the optimizer-model consistency
+phenomenon under simplified assumptions by connecting the activation properties and how SFT
+update affects the forgetting of pretraining knowledge (Section 3).
+• We specifically compare Muon and AdamW when they are employed throughout pretraining and
+SFT and find that Muon can lose its advantages when finetuning on reasoning tasks like math.
+We demonstrate that this may be because Muon tends to memorize rather than learn patterns
+through a synthetic language modeling experiment (Section 4).
+Full Finetuning with the Same Optimizer Forgets Less
+In this section, we present the optimizer-model consistency phenomenon in two settings: finetuning
+GPT-2-small [Ouyang et al., 2022] and Llama-2-7B [Touvron et al., 2023]. To better compare the SFT
+performance across different optimizers under different checkpoints, we conduct a full pretrain-finetune
+training pipeline on the GPT-2 model. We employ OpenWebText [Gokaslan and Cohen, 2019] as the
+pretraining dataset, and consider three different types of tasks for SFT: MetaMathQA [Yu et al., 2023]
+for math, Alpaca [Taori et al., 2023] for instruction following, Magicoder-Evol-Instruct-110K [Wei
+et al., 2023] for coding.
+For GPT-2 experiments, we evaluate the OpenWebText validation loss as a measure for forgetting,
+i.e., how much the models preserve the pretraining knowledge, and the loss on the new task validation
+loss as a measure for learning, i.e., how much the models learn in SFT (lower is better).
+For a
+comprehensive and fair comparison between algorithms, we plot the Pareto frontier of the learning-
+forgetting tradeoff, with x and y-axis denoting the forgetting and learning metric, respectively. For
+each training algorithm, we consider all the runs in a learning rate grid search, which always contains
+the learning rate that achieves the best SFT performance, and we evaluate intermediate checkpoints
+for a single run. Then, we gather all the data points for each training algorithm to present the Pareto
+frontier to find the limit of this training algorithm in learning and forgetting. The detailed experiment
+settings can be found in Appendix A.1.
+Muon achieves better pretraining performance compared to AdamW. We present the results
+of the models pretrained by Adam and Muon in Table 1. We can see that Muon outperforms AdamW
+across the pretraining dataset and different downstream tasks, validating the favorable performance of
+Muon in pretraining [Jordan et al., 2024, Liu et al., 2025, Wen et al., 2025b].
+Table 1: The validation loss of different datasets after pretraining on GPT-2.
+Optimizer for Pretraining
+OpenWebText
+Alpaca
+MetaMathQA
+Magicoder
+AdamW
+3.010
+3.483
+3.510
+3.264
+Muon
+2.974
+3.235
+3.200
+3.000
+The same optimizer as pretraining leads to the best learning-forgetting tradeoff. With the
+pretrained checkpoints in hand, we start the SFT stage. The Pareto frontier plots of full finetuning
+with AdamW and Muon to quantify the learning-forgetting tradeoff across different downstream tasks
+are summarized in Figure 2, where the x-axis denotes the OpenWebText validation loss and the y-axis
+denotes the task validation loss. One can observe that the same optimizer as pretraining always yields
+the best tradeoff, no matter whether it is AdamW or Muon, which is consistent with the observation
+in Liu et al. [2025] on an instruction following task. It is also worth noting that SGD achieves a
+reasonable downstream performance, indicating its capability to learn from a small amount of data,
+but it forgets significantly more when the same downstream ability is learned.
+3.0
+3.1
+3.2
+3.3
+3.4
+3.5
+3.6
+3.7
+3.8
+General Capability: OWT Val Loss
+2.050
+2.075
+2.100
+2.125
+2.150
+2.175
+2.200
+2.225
+Task Capability: Alpaca Val Loss
+Dataset: Alpaca; Base Model: AdamW
+AdamW
+Muon
+SGD
+3.00
+3.25
+3.50
+3.75
+4.00
+4.25
+4.50
+4.75
+5.00
+General Capability: OWT Val Loss
+0.4
+0.6
+0.8
+1.0
+1.2
+Task Capability: MetaMathQA Val Loss
+Dataset: MetaMathQA; Base Model: AdamW
+AdamW
+Muon
+SGD
+3.0
+3.2
+3.4
+3.6
+3.8
+4.0
+General Capability: OWT Val Loss
+1.4
+1.5
+1.6
+1.7
+1.8
+1.9
+Task Capability: Magicoder Val Loss
+Dataset: Magicoder; Base Model: AdamW
+AdamW
+Muon
+SGD
+3.0
+3.1
+3.2
+3.3
+3.4
+3.5
+3.6
+General Capability: OWT Val Loss
+2.00
+2.02
+2.04
+2.06
+2.08
+2.10
+2.12
+2.14
+2.16
+Task Capability: Alpaca Val Loss
+Dataset: Alpaca; Base Model: Muon
+AdamW
+Muon
+SGD
+3.0
+3.5
+4.0
+4.5
+5.0
+5.5
+6.0
+General Capability: OWT Val Loss
+0.4
+0.6
+0.8
+1.0
+Task Capability: MetaMathQA Val Loss
+Dataset: MetaMathQA; Base Model: Muon
+AdamW
+Muon
+SGD
+3.0
+3.2
+3.4
+3.6
+3.8
+4.0
+4.2
+4.4
+General Capability: OWT Val Loss
+1.4
+1.5
+1.6
+1.7
+1.8
+1.9
+2.0
+Task Capability: Magicoder Val Loss
+Dataset: Magicoder; Base Model: Muon
+AdamW
+Muon
+SGD
+Figure 2: Pareto frontier plots of full finetuning with AdamW and Muon optimizers on GPT-2. The
+rows and columns present the results of different pretraining optimizers and SFT datasets, respectively.
+The measure for learning and forgetting is the corresponding validation loss (lower is better). We can
+observe that the same optimizer performs better in the forgetting-learning trade-off in SFT.
+Full finetuning can forget less than LoRA with appropriate hyperparameters. We also
+evaluate the learning-forgetting tradeoff of LoRA, which is commonly believed to forget less because
+of its low-rank nature [Biderman et al., 2024]. The results are presented in Figure 3. We observe
+that LoRA generally tends to forget less when it achieves the best learning performance (the best
+y-axis value), which is consistent with the common intuition and existing results. However, when
+taking a full view of the tradeoff, we find that for any single LoRA checkpoint, there is always a full
+finetuning checkpoint that is absolutely better, i.e., with less forgetting while achieving the same or
+better learning. Therefore, LoRA in this setting generally gives a worse learning-forgetting tradeoff
+compared to full finetuning with the same optimizer, and additionally, we can observe that a larger
+LoRA rank generally corresponds to a better tradeoff. While LoRA is an effective training algorithm
+with incredible parameter efficiency, the results suggest that it does not necessarily help in improving
+learning-forgetting tradeoff performance.
+Results hold on 7B model. As shown in Figure 1, our conclusions in small models hold still when
+finetuning Llama-2-7B with MetaMathQA, generally following the settings of Biderman et al. [2024].
+We can observe that full finetuning with Adam (the same optimizer as Llama-2-7B pretraining) yields
+a better learning-forgetting tradeoff, even without weight decay, compared to other full finetuning
+optimizers and LoRA. We would be happy to also provide Muon results on this scale in the future due
+to the lack of Muon-pretrained open-source models on an appropriate scale currently.
+For brevity, we name this phenomenon that full finetuning with the same optimizer as pretraining
+leads to the best learning-forgetting tradeoff as optimizer-model consistency.
+Remark 1 (Discussion on Results in Biderman et al. [2024]). While our results seem to be contradictory
+to Biderman et al. [2024], where the authors suggest that LoRA learns less and forgets less under a
+similar training setting, we note that the results are actually compatible. The major reason for the
+varying conclusions is that we consider different learning rates when modeling the learning-forgetting
+tradeoff, while Biderman et al. [2024] considers only one optimal learning rate. The importance of
+learning rate choice for forgetting in SFT is also discussed in a concurrent paper [Rofin et al., 2026].
+As shown in Figure 8, we can also reproduce the observations of Biderman et al. [2024] if we only
+consider one learning rate optimal in learning for each training setting. However, when the learning
+rate choice is appropriately taken into account, full finetuning can also learn less and forget less simply
+by lowering the learning rate, leading to that we can always find a checkpoint trained with full finetuning
+that surpasses LoRA in both learning and forgetting.
+3.0
+3.5
+4.0
+4.5
+5.0
+5.5
+6.0
+General Capability: OWT Val Loss
+0.4
+0.6
+0.8
+1.0
+1.2
+1.4
+Task Capability: MetaMathQA Val Loss
+Dataset: MetaMathQA; Base Model: AdamW
+Full FT (AdamW)
+LoRA (r=128)
+LoRA (r=32)
+LoRA (r=8)
+LoRA (r=4)
+3.0
+3.5
+4.0
+4.5
+5.0
+5.5
+6.0
+General Capability: OWT Val Loss
+0.4
+0.6
+0.8
+1.0
+1.2
+1.4
+Task Capability: MetaMathQA Val Loss
+Dataset: MetaMathQA; Base Model: Muon
+Full FT (Muon)
+LoRA (r=128)
+LoRA (r=32)
+LoRA (r=8)
+LoRA (r=4)
+Figure 3: Pareto frontiers of full finetuning and LoRA on GPT-2 with the same optimizer as pretraining
+employed for both. Full finetuning generally achieves a better learning-forgetting tradeoff.
+Why Optimizer-Model Consistency Happens
+The optimizer-model consistency phenomenon may seem surprising at first glance if we consider op-
+timizers or training algorithms only as processes towards some fixed solutions. However, optimizers
+actually have a much larger effect on the trained model than this common impression. In LLM training
+or other deep learning tasks, the losses are generally nonconvex, and different optimizers can lead to
+very different trajectories and convergence points. In LLM training or other deep learning tasks, the
+losses are generally nonconvex, and different optimizers can consistently lead to significantly different
+trajectories and convergence checkpoints. The difference in checkpoints is more than random noise, but
+consistent properties in the weights and activations of the model, which we will discuss in Section 3.1.
+Then, with these properties, we have the basis to better understand why optimizer-model consistency
+happens in Section 3.2.
+3.1
+Optimizers Shape Models
+Table 2: Singular spectrum comparison after pre-
+training. For a singular spectrum σ1 ≥· · · ≥σn,
+the stable rank is Pn
+i=1 σ2
+i /σ2
+1 and singular spar-
+sity is Pn
+i=1 σi/
+p
+n Pn
+i=1 σ2
+i . We take the average
+of the values over all linear layers in GPT-2.
+Optimizer
+Stable Rank
+Singular Sparsity
+AdamW
+65.75
+0.837
+Muon
+114.72
+0.875
+Optimizers shape weights. We start with the
+observations on the difference in model weights
+trained by different optimizers through pretrain-
+ing.
+As presented in Table 2, we can observe
+that the model trained by Muon shows a denser
+weight spectrum distribution (higher stable rank
+and singular sparsity value), which is consistent
+with the observations in Liu et al. [2025], Wang
+et al. [2025]. A straightforward intuition for this
+spectrum difference is that Muon updates are al-
+ways approximately full-rank because of its for-
+mula, resulting in the final weights, an accumulation of all the updates, being closer to full-rank
+compared to AdamW.
+Optimizers regularize activations. In addition to explicit weight properties, optimizers also affect
+the activations of trained models on the pretraining dataset, which is closely related to how the models
+store pretraining knowledge. As presented in Figure 4, we can observe that the activations, especially
+input activations, of models trained by AdamW are much sparser compared to those by Muon.
+To understand how this difference in activations originates, we start from the following framework for
+optimizer derivation [Pethick et al., 2025]: with Gt as the gradient of weight Wt ∈Rm×n, we update
+the weight by
+Wt+1 = argmin
+∥W −Wt∥≤R
+⟨Gt, W −Wt⟩,
+(1)
+where we consider a specific norm ∥·∥.
+Since the weights of neural nets generally have a matrix
+0
+1000
+2000
+3000
+4000
+Training Iterations
+0.45
+0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+0.80
+Activation Sparsity
+All Modules Average Input Sparsity
+AdamW
+Muon
+500
+1500
+2500
+3500
+Training Iterations
+0.45
+0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+0.80
+Activation Sparsity
+All Modules Average Output Sparsity
+AdamW
+Muon
+Figure 4: Activation sparsity of AdamW and Muon. We adopt basically the same pretraining settings
+as Section 2, but for 4k iterations. The y-axis represents the sparsity of activations, which is computed
+by ∥x∥1 /(
+√
+d ∥x∥2) for an activation vector x (lower means sparser). We take an average of the input
+and output sparsity over all the linear layers.
+structure and the activation computation is by matrix-vector multiplication, we focus on the matrix
+induced norms under the framework: for α, β ∈[1, ∞], we denote ∥A∥α,β ≜maxx̸=0
+∥Ax∥β
+∥x∥α
+and the
+optimizer derived from ∥·∥α,β as Aα,β. Note that Muon is basically A2,2 from its derivation [Jordan
+et al., 2024, Bernstein and Newhouse, 2024] and SignSGD [Bernstein et al., 2018] is A1,∞by noticing
+that the vector infinite norm is equivalent to ∥·∥1,∞. Following Balles and Hennig [2018], Balles et al.
+[2020], Kunstner et al. [2023], we consider Adam as a powerful variant of SignSGD, thus it also falls in
+the family of A1,∞. Pethick et al. [2025], Xu et al. [2026] discuss additional optimizers derived from
+this framework with matrix induced norms, demonstrating its generality.
+For an optimizer Aα,β, the weight W is updated with ∥·∥α,β bounded. Besides a direct constraint on
+the weights, this can also be considered as some forms of regularization for the activations: regularizing
+the ∥·∥α input activation x and ∥·∥β for the output activation y, since we have y = Wx and the matrix
+induced norm definition ∥y∥β ≤∥W∥α,β ∥x∥α. Specifically, we have:
+• Muon is A2,2, thus regularizes input x by ∥·∥2 and output y by ∥·∥2.
+• Adam is A1,∞, thus regularizes input x by ∥·∥1 and output y by ∥·∥∞.
+Different regularizations lead to different properties of activations. For example, ∥·∥1 regularization
+corresponds to Lasso, which is widely known to result in a sparse solution. As presented in Figure 5,
+empirical observations verify our intuition about activation properties. In addition to SignSGD (A1,∞),
+AdamW(A1,∞), and Muon (A2,2), we also consider algorithms A1,1 and A∞,∞for a more compre-
+hensive view of the regularization effect. Their details can be found in Appendix A. We can observe
+that for an algorithm Aα,β, the input activation is consistently sparser when α is taken to be 1, which
+holds for A1,∞and A1,1. The same argument also holds for the output activations when β = 1, which
+verifies the regularization effect of activations and its relation to the optimizer choice.
+3.2
+The SFT Optimizer should Fit the Activation Regularization
+Based on the observations that optimizers can shape models, we provide a theoretical explanation of the
+optimizer-model consistency phenomenon under a simplified setting. The intuition is straightforward:
+since different optimizers lead to pretrained checkpoints with different properties, forgetting gets less
+when the SFT update better matches the curvature around the checkpoints, which can be achieved
+with full finetuning using the same optimizer. We start with approximations of the forgetting and SFT
+loss, based on the fact that only a small weight change is applied in the SFT stage.
+Approximating forgetting. We have the following Taylor expansion approximation of the pretrain-
+ing loss increase after SFT:
+0
+1000
+2000
+3000
+4000
+Training Iterations
+0.55
+0.60
+0.65
+0.70
+0.75
+0.80
+Activation Sparsity
+Attention Average Input Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.40
+0.45
+0.50
+0.55
+0.60
+0.65
+0.70
+Activation Sparsity
+FFN Average Input Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+Activation Sparsity
+All Modules Average Input Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+0.80
+Activation Sparsity
+Attention Average Output Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.45
+0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+0.80
+Activation Sparsity
+FFN Average Output Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+0.80
+Activation Sparsity
+All Modules Average Output Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+Figure 5: Activation sparsity of different optimizers Aα,β derived from (1) with the same settings as
+Figure 4. The columns present the average sparsity of different modules, and the columns present
+input and output activations of the modules. We only consider the linear layers for doing this average.
+Lpre(θ0 + ∆θ) ≈Lpre(θ0) + ⟨∇θLpre(θ0), ∆θ⟩+ 1
+2∆θ⊤∇2
+θLpre(θ0)∆θ
+≈Lpre(θ0) + 1
+2∆θ⊤∇2
+θLpre(θ0)∆θ,
+where we denote Lpre as the pretraining loss, θ0 as the model weight after pretraining, and ∆θ as the
+weight change after SFT, whose scale should be small. The second line holds since the model should
+approximately arrive at a local minima after pretraining, which yields that ∇θLpre(θ0) ≈0.
+Based on the observations that the Hessians of neural networks are typically block-wise diagonal with
+respect to layers [Martens and Grosse, 2015, Singh et al., 2021, Nayak et al., 2025], we then consider
+the forgetting loss in a layer-wise manner without loss of generality, since the total loss can be obtained
+by summing up all the layers. For a linear layer W ∈Rm×n of the model θ, we define
+ˆLforget(∆W) ≜1
+2vec (∆W)⊤∇2
+W Lpre(θ0)vec (∆W) ,
+where ∆W is the update of the layer W after SFT and the vec (W) operation means vectorizing W
+by stacking the rows, i.e., vec (W) ≜[w1, . . . , wm] ∈Rmn×1 for W = [w⊤
+1 ; . . . ; w⊤
+m] ∈Rm×n. We have
+the input and output activations of the layer W to be x, y such that y = Wx when the pretraining
+data is fed to the model. We further consider the Fisher Information matrix E[gg⊤] as an effective
+approximation of the Hessian ∇2
+W Lpre(θ0) [Martens and Grosse, 2015], where g = vec (∇W Lpre(θ0))
+is the vectorized gradient of layer W at θ0. Based on the chain rule, it holds that ∇W Lpre(θ0) = δx⊤
+with δ ≜∇yLpre(θ0). Then, by substituting this gradient form, we have
+∇2
+W Lpre(θ0) ≈E[gg⊤] = E[vec
+ δx⊤
+vec
+ δx⊤⊤] = E[(δ ⊗x)(x ⊗δ)⊤]
+=E[(δδ⊤) ⊗(xx⊤)] ≈E[δδ⊤] ⊗E[xx⊤],
+where ⊗denotes the Kronecker product, and the expectation is taken over the input x. The second
+approximation applies the assumption in Martens and Grosse [2015] that we can split the expectation
+for input activations and output gradients. Based on the observations that the Hessians are commonly
+block-wise diagonal with respect to rows of MLPs [Collobert, 2004, Zhang et al., 2024a,b], we further
+simplify the Hessian approximation to be mostly relevant to the input activation expectation, i.e.,
+∇2
+W Lpre(θ0) ∝E[xx⊤]. Then, we can approximate the forgetting loss by
+ˆLforget(∆W) ≜1
+2vec (∆W)⊤∇2
+W Lpre(θ0)vec (∆W)
+∝1
+2tr
+ ∆WE[xx⊤]∆W ⊤
+= 1
+2E
+h
+∥∆Wx∥2
+i
+,
+where the last equality is based on the property of trace. Therefore, we take Assumption 1.
+Assumption 1 (Approximation of forgetting loss increase). Consider the SFT update ∆W ∈Rm×n.
+The increase in loss caused by SFT can be approximated by
+Lforget(∆W) ≜1
+2E
+h
+∥∆Wx∥2
+i
+,
+(2)
+where x denotes the input activation of pretraining data at θ0 and the expectation is taken over x.
+Moreover, to better quantify the multiplication of weights and activations, we consider their alignment
+and propose Assumption 2.
+Note that this alignment condition with α = β = 2 between weight
+and the corresponding activations in the pretraining stage has been employed and examined in Yang
+et al. [2023]. We here consider a more general version with α, β, and since we always have ∥Wx∥β ≤
+∥W∥α,β ∥x∥α based on the definition of ∥·∥α,β, Assumption 2 generally implies that the best pair α, β
+can achieve this lower bound. Throughout the paper, we use Θ(·) and O(·) notation to omit absolute
+constants not related to dimensionality and the variable scales.
+Assumption 2 (Weight activation alignment). Consider the SFT update ∆W ∈Rm×n and the input
+activation of pretraining data x ∈Rn at θ0. Fixing β∗∈[1, ∞], there exist α∗∈[1, ∞] such that
+E
+h
+∥∆Wx∥2
+β∗
+i
+= Θ
+
+∥∆W∥2
+α∗,β∗E
+h
+∥x∥2
+α∗
+i
+.
+Approximating SFT loss. Since the model moves only a small distance during SFT, we consider
+the following first-order Taylor expansion as an approximation of the SFT loss.
+Assumption 3 (SFT loss approximation). We approximate the SFT loss by
+LSFT(∆W) ≜H0 + ⟨∆W, G⟩,
+where G ∈Rm×n is the gradient of the SFT loss at θ0 and H0 is the SFT loss at θ0.
+Optimizer class. We consider the optimizer class following framework (1) with ∥·∥α,β, including
+Adam and Muon. We formalize the observations on the activation regularization effects of optimizers
+observed in Figures 4 and 5 as in Assumption 4. While this assumption may be slightly strong for the
+activations, it provides a straightforward alignment with the intuition that, when a vector is regularized
+by ∥·∥p, it will be shaped to minimize ∥·∥p while other norms can be larger.
+Assumption 4 (Optimizers regularize activations). We assume the pretraining and SFT optimizers
+are chosen based on the framework (1). For pretraining optimizer Aα1,β1 and SFT optimizer Aα2,β2
+and the SFT update ∆W derived by Aα2,β2 and y ≜∆Wx, it holds that for all α, β ∈[1, ∞],
+E
+h
+∥x∥2
+α1
+i
+=
+(
+Θ
+ E
+
+∥x∥2
+α
+
+,
+α ≥α1,
+Θ
+
+n
+α1 −1
+α E
+
+∥x∥2
+α
+
+,
+α < α1, and E
+h
+∥y∥2
+β2
+i
+=
+
+
+
+Θ
+
+E
+h
+∥y∥2
+β
+i
+,
+β ≥β2,
+Θ
+
+m
+β2 −1
+β E
+h
+∥y∥2
+β
+i
+,
+β < β2.
+Under these assumptions, we show that full finetuning with the same family of optimizer outperforms
+other optimizer choices in Theorem 1 for this simplified problem scenario.
+Theorem 1 (Same (family of) optimizer forgets less). Under Assumption 1-4, we can achieve (near)
+optimal learning-forgetting tradeoff when taking α2 = α1 and β2 ∈[2, ∞] for the SFT optimizer Aα2,β2,
+i.e., the least forgetting while achieving the same SFT performance. Formally, for any constant C and
+∆W(Aα,β) such that LSFT(∆W(Aα,β)) ≤C, we have
+Lforget (∆W(Aα2,β2)) = O
+
+inf
+α∈[1,∞],β∈[1,2] Lforget (∆W(Aα,β))
+
+with α2 = α1 and β2 ≥2, where ∆W(Aα,β) denotes the SFT update produced by Aα,β.
+Remark 2 (A suggestion for the training choice of SFT). We show that full finetuning with optimizers
+in the same family as the pretraining optimizer (or more concretely, with the same α and β ≥2) obtains
+the best learning-forgetting tradeoff. For instance, we may consider Adam, SignSGD [Bernstein et al.,
+2018], or Lion [Chen et al., 2023] and their variants for finetuning AdamW checkpoints. Also note
+that LoRA generally fails to achieve the best tradeoff under the settings, since its adapter structure
+cannot fit the optimal choice for activations regularized by any norm, as long as we pretrain the model
+with an optimizer derived from (1), which includes Adam, Muon, and their variants.
+A Case Study on Muon Applied to Pretrain and SFT
+Given that we should employ the same (family of) optimizer in SFT as in pretraining to obtain the
+best performance because of optimizer-model consistency, the learning-forgetting tradeoff when an
+optimizer is employed throughout the pretrain and SFT stages is a valid and comprehensive metric
+for the optimizer in training LLMs, since finetuning is usually needed to improve the model. In this
+section, we provide a case study to compare Muon with AdamW in this way to examine its potential
+in LLM training. We employ the same settings as presented in Section 2 for GPT-2.
+4.1
+Muon Performs Potentially Worse for Reasoning
+When Muon and AdamW are employed throughout the pretraining and SFT stages, the learning-
+forgetting tradeoff is presented in Figure 6.
+3.00
+3.05
+3.10
+3.15
+3.20
+3.25
+3.30
+3.35
+3.40
+General Capability: OWT Val Loss
+2.000
+2.025
+2.050
+2.075
+2.100
+2.125
+2.150
+2.175
+2.200
+Task Capability: Alpaca Val Loss
+Dataset: Alpaca; Pretrain + SFT
+AdamW
+Muon
+3.0
+3.5
+4.0
+4.5
+5.0
+5.5
+6.0
+General Capability: OWT Val Loss
+0.4
+0.6
+0.8
+1.0
+1.2
+Task Capability: MetaMathQA Val Loss
+Dataset: MetaMathQA; Pretrain + SFT
+AdamW
+Muon
+3.0
+3.2
+3.4
+3.6
+3.8
+4.0
+4.2
+General Capability: OWT Val Loss
+1.4
+1.5
+1.6
+1.7
+1.8
+Task Capability: Magicoder Val Loss
+Dataset: Magicoder; Pretrain + SFT
+AdamW
+Muon
+Figure 6: The comparison between Muon and AdamW when they are employed throughout the pre-
+training and SFT stages in Alpaca, MetaMathQA, and Magicoder tasks.
+We can clearly observe that Muon achieves a significantly better learning-forgetting tradeoff when
+finetuned on Alpaca than AdamW. On math and code tasks, however, Muon is generally comparable
+to AdamW: slightly better in Magicoder, and slightly worse in MetaMathQA. As demonstrated in
+Table 1, Muon performs exceptionally better compared to AdamW before SFT in all three SFT tasks
+and the pretraining task.
+Therefore, the results in Figure 6 generally imply a degradation in the
+performance of Muon after finetuning on code and math tasks, showing a potentially worse capability
+of learning reasoning ability in SFT with Muon.
+4.2
+Muon Memorizes More, but May Learn Less
+We hypothesize that Muon’s worse performance on finetuning reasoning tasks is because Muon tends to
+memorize before patterns in the data have been fully acquired, which can hurt learning when only a small
+amount of data is available, as in the SFT stage. This is consistent with Muon’s performance variation
+in SFT, since reasoning tasks generally require learning new abilities, while instruction following tasks
+are more related to memorization. Our hypothesis originates from the fact that each update of Muon
+is full-rank, being able to memorize more knowledge compared to the low-rank updates of AdamW and
+SGD [Yang et al., 2023], implying that rote memorizing data is easier for Muon. When memorizing
+is easier, models can tend to do rote memorization instead of learning patterns to lower loss faster,
+leading to worse generalization and undesirable performance.
+To verify our hypothesis, we conduct a synthetic experiment on a corrupted language corpus, in which
+we split the data into clean and corrupted sequences. The corrupted sequences are generated from
+the original clean sequences by randomly shuffling the order of tokens, e.g., for a complete sentence
+0
+10000
+20000
+30000
+Training Iterations
+0.0
+0.2
+0.4
+0.6
+0.8
+Clean Memorization Accuracy
+Clean Memorization Acc (Ctx 128, Gen 1)
+AdamW
+Muon
+SGD
+5000
+15000
+25000
+Training Iterations
+0.0
+0.1
+0.2
+0.3
+0.4
+Clean Memorization Accuracy
+Clean Memorization Acc (Ctx 128, Gen 8)
+AdamW
+Muon
+SGD
+5000
+15000
+25000
+Training Iterations
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+Clean Memorization Accuracy
+Clean Memorization Acc (Ctx 128, Gen 16)
+AdamW
+Muon
+SGD
+5000
+15000
+25000
+Training Iterations
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+Corrupted Memorization Accuracy
+Corrupted Memorization Acc (Ctx 128, Gen 1)
+AdamW
+Muon
+SGD
+5000
+15000
+25000
+Training Iterations
+0.00
+0.02
+0.04
+0.06
+0.08
+0.10
+0.12
+Corrupted Memorization Accuracy
+Corrupted Memorization Acc (Ctx 128, Gen 8)
+AdamW
+Muon
+SGD
+5000
+15000
+25000
+Training Iterations
+0.00
+0.01
+0.02
+0.03
+0.04
+0.05
+Corrupted Memorization Accuracy
+Corrupted Memorization Acc (Ctx 128, Gen 16)
+AdamW
+Muon
+SGD
+Figure 7: The memorization accuracy of clean and corrupted data under different generation lengths.
+"attention is all you need", a random shuffle can be "is need you all attention".
+In this way, we
+destroy the internal patterns of language in corrupted sequences, so that only rote memorization is
+possible, similar to the randomization test [Edgington and Onghena, 2007] applied in Zhang et al.
+[2016]. By mixing clean and corrupted sequences, we can assess the optimizers’ tendency to memorize
+and learn patterns by checking how well they learn on clean and corrupted data separately.
+The
+detailed experiment settings and the evaluation metric of exact match are in Appendix A.2.
+Models learn patterns first. The memorization accuracy vs iteration plot is presented in Figure 7.
+We can observe that with all three optimizers, models memorize the clean data much faster than the
+corrupted random data, which generally implies the existence of patterns in natural language, making
+it easier to learn. Also, the models start to learn corrupted data (by rote memorization) only after
+having some level of capacity for the clean data, which is consistent with the observation that models
+learn simple patterns before memorization in computer vision tasks [Arpit et al., 2017].
+Muon tends to memorize before fully acquiring the patterns. As we can observe from Table 3
+and Figure 7, Muon achieves higher memorization accuracy for the corrupted data, but lower for clean
+data, compared to AdamW and SGD. Also, the corrupted data memorization accuracy of Muon starts
+to increase much earlier than the other two optimizers, showing a tendency to start rote memorization
+earlier. Also note that the train loss of Muon is still the lowest, showing the fastest speed in lowering
+loss, which, however, leads to rote memorization rather than learning patterns. The results generally
+support our hypothesis and partially explain the SFT performance of Muon.
+Table 3: The memorization accuracy and final train loss of models trained by different optimizers. We
+employ different input context lengths and completion lengths to test the exact match accuracy, e.g.,
+(128, 8) means input context length 128 and generation length 8.
+Optimizer
+Memorization Accuracy Clean
+Memorization Accuracy Corrupted
+Train Loss
+(128, 1)
+(128, 8)
+(128, 16)
+(128, 1)
+(128, 8)
+(128, 16)
+Muon
+88.9%
+44.8%
+25.4%
+65.0%
+12.2%
+5.2%
+1.143
+AdamW
+90.1%
+49.8%
+29.7%
+55.8%
+7.0%
+2.3%
+1.440
+SGD
+93.4%
+60.3%
+40.8%
+32.9%
+1.3%
+0.0%
+2.310
+Remark 3 (A better finetuning approach for Muon would be helpful). For Muon pretrained models,
+we should apply full finetuning with Muon in order to obtain the best learning-forgetting tradeoff based
+on optimizer-model consistency, while Muon in SFT may potentially hurt the overall performance,
+which creates a dilemma. Therefore, a better finetuning approach for Muon that can give a better
+tradeoff for both sides would be helpful for improving the method in LLM training.
+5
+Related Work
+Optimizers for Deep Learning. The current workhorse of optimizers for training deep learning
+models, or more specifically, transformers [Vaswani et al., 2017], is undoubtedly adaptive gradient
+methods, including AdamW [Kingma and Ba, 2014, Loshchilov and Hutter, 2017] and many vari-
+ants [Duchi et al., 2011, Streeter and McMahan, 2010, Tieleman, 2012, Zeiler, 2012, Shazeer and
+Stern, 2018, Reddi et al., 2019, You et al., 2019, Zhang et al., 2024b, Defazio et al., 2024, Yuan et al.,
+2024, Defazio, 2025, Bernstein et al., 2018, Crawshaw et al., 2022, Chen et al., 2023, Yu et al., 2026],
+to mention a few. Recently, optimizers aware of the matrix structure of the weights have emerged as
+a strong opponent to the adaptive gradient methods, showing great potential in training transformers.
+KFAC [Martens and Grosse, 2015] and Shampoo [Gupta et al., 2018] are two pioneering works utilizing
+the neural network structure in optimizer design, which is further explored in more recent works [Ren
+and Goldfarb, 2021, Zhao et al., 2024, Jordan et al., 2024, Vyas et al., 2024, Liu et al., 2025, An et al.,
+2025, Xie et al., 2025, Pan et al., 2025, Xie et al., 2026, Wen et al., 2025a], to mention a few, in
+either saving memory footprint or improving training performance. The idea has become particularly
+popular after Muon [Jordan et al., 2024, Liu et al., 2025] has been applied to training real frontier
+models [Kimi et al., 2026, Zeng et al., 2025, DeepSeek-AI, 2026]. To compare and understand the
+performance of optimizers, research on empirically benchmarking and tracking the performance [Wen
+et al., 2025b, Semenov et al., 2025, Wang et al., 2025] or theoretically analyzing the convergence prop-
+erties [Duchi et al., 2011, Liu et al., 2024, Jiang et al., 2024, Su, 2025] has emerged, but mainly focused
+on pretraining or one training setting rather than throughout the pretrain-SFT paradigm.
+Learning-Forgetting Tradeoff. Models tend to lose the information learned from a previous task
+when training on a new task. This phenomenon, termed catastrophic forgetting [McCloskey and Cohen,
+1989, McClelland et al., 1995, Kirkpatrick et al., 2017], is a central problem in continual learning and
+multitask learning. Researchers have proposed numerous methods to find a better tradeoff between
+learning the new task and forgetting the old task, including introducing regularization [Kirkpatrick
+et al., 2017, Zenke et al., 2017, Li and Hoiem, 2017] and replaying samples in previous tasks [Lopez-Paz
+and Ranzato, 2017, Rebuffi et al., 2017, Rolnick et al., 2019]. Studies have been conducted to examine
+LoRA [Hu et al., 2022] for finding a better learning-forgetting tradeoff. Biderman et al. [2024] claims
+that LoRA forgets less than full finetuning, although it also learns less, focusing on continual pretraining
+and SFT. However, on sequential continual learning settings, there is simultaneously evidence showing
+that LoRA can resist forgetting [Wistuba et al., 2023, Qiao and Mahdavi, 2024] and LoRA may not
+forget less [Shuttleworth et al., 2024] in varying settings and viewpoints. Springer et al. [2025], Rofin
+et al. [2026] also discuss the forgetting in SFT and draw a link to the pretraining length and SFT
+learning rate choice.
+Memorization and Generalization. Memorization and generalization of the model, and their rela-
+tions, are one of the fundamental problems of machine learning. Traditional statistical learning theory
+provides viewpoints from VC dimension [Vapnik, 1998], Rademacher complexity [Bartlett and Mendel-
+son, 2002], and uniform stability [Bousquet and Elisseeff, 2002]. Zhang et al. [2016] provides evidence
+that deep learning models can easily memorize data while generalizing well with the randomization
+test methodology applied to image classification tasks, showing that such learning tasks may go beyond
+the scope of the traditional theory. Building upon the methodology, Arpit et al. [2017] further shows
+that simple patterns are learned first by the neural networks compared to noise, implying that model
+learning and generalization is something more than rote memorization. Recent work also extends the
+study to modern large foundation models [Carlini et al., 2021, 2022, Tirumala et al., 2022, Jagielski
+et al., 2022, Schwarzschild et al., 2024, Panwar et al., 2025], revealing an interesting but complex
+mechanism of the memorization and generalization of the models.
+Conclusions
+In this paper, we present and analyze the optimizer-model consistency phenomenon. Based on the
+understanding of it, we suggest that full finetuning with the same (family of) optimizer as pretraining
+should be employed in SFT to achieve the best learning-forgetting tradeoff and also conduct a case
+study on the performance of Muon throughout the pretrain-SFT paradigm. The major limitation of
+the work is that the experiments are mainly conducted on small models due to the requirement of
+pretraining and limited computational resources, and the theory is obtained under approximations.
+We will be interested in scaling up our experiments and exploring more optimizers for future work.
+References
+Kwangjun Ahn, Noah Amsel, and John Langford. Dion2: A simple method to shrink matrix in muon.
+arXiv preprint 2512.16928, 2025a.
+Kwangjun Ahn, Byron Xu, Natalie Abreu, and John Langford. Dion: Distributed orthonormalized
+updates. arXiv preprint: 2504.05295, 2025b.
+Kang An, Yuxing Liu, Rui Pan, Yi Ren, Shiqian Ma, Donald Goldfarb, and Tong Zhang.
+Asgo:
+Adaptive structured gradient optimization. arXiv preprint arXiv:2503.20762, 2025.
+Devansh Arpit, Stanisław Jastrzębski, Nicolas Ballas, David Krueger, Emmanuel Bengio, Maxinder S
+Kanwal, Tegan Maharaj, Asja Fischer, Aaron Courville, Yoshua Bengio, et al. A closer look at
+memorization in deep networks. In International conference on machine learning, pages 233-242.
+PMLR, 2017.
+Lukas Balles and Philipp Hennig. Dissecting adam: The sign, magnitude and variance of stochastic
+gradients. In International Conference on Machine Learning, pages 404-413. PMLR, 2018.
+Lukas Balles, Fabian Pedregosa, and Nicolas Le Roux. The geometry of sign gradient descent. arXiv
+preprint arXiv:2002.08056, 2020.
+Peter L Bartlett and Shahar Mendelson. Rademacher and gaussian complexities: Risk bounds and
+structural results. Journal of machine learning research, 3(Nov):463-482, 2002.
+Jeremy Bernstein and Laker Newhouse. Old optimizer, new norm: An anthology. arXiv preprint
+arXiv:2409.20325, 2024.
+Jeremy Bernstein, Yu-Xiang Wang, Kamyar Azizzadenesheli, and Animashree Anandkumar. signsgd:
+Compressed optimisation for non-convex problems. In International conference on machine learning,
+pages 560-569. PMLR, 2018.
+Dan Biderman, Jacob Portes, Jose Javier Gonzalez Ortiz, Mansheej Paul, Philip Greengard, Connor
+Jennings, Daniel King, Sam Havens, Vitaliy Chiley, Jonathan Frankle, et al. Lora learns less and
+forgets less. arXiv preprint arXiv:2405.09673, 2024.
+Olivier Bousquet and André Elisseeff.
+Stability and generalization.
+Journal of machine learning
+research, 2(Mar):499-526, 2002.
+Nicholas Carlini, Florian Tramer, Eric Wallace, Matthew Jagielski, Ariel Herbert-Voss, Katherine Lee,
+Adam Roberts, Tom Brown, Dawn Song, Ulfar Erlingsson, et al. Extracting training data from large
+language models. In 30th USENIX security symposium (USENIX Security 21), pages 2633-2650,
+2021.
+Nicholas Carlini, Daphne Ippolito, Matthew Jagielski, Katherine Lee, Florian Tramer, and Chiyuan
+Zhang. Quantifying memorization across neural language models. In The Eleventh International
+Conference on Learning Representations, 2022.
+Xiangning Chen, Chen Liang, Da Huang, Esteban Real, Kaiyuan Wang, Hieu Pham, Xuanyi Dong,
+Thang Luong, Cho-Jui Hsieh, Yifeng Lu, et al.
+Symbolic discovery of optimization algorithms.
+Advances in neural information processing systems, 36:49205-49233, 2023.
+Ronan Collobert. Large scale machine learning. Technical report, Université de Paris VI, 2004.
+Michael Crawshaw, Mingrui Liu, Francesco Orabona, Wei Zhang, and Zhenxun Zhuang. Robustness to
+unbounded smoothness of generalized signsgd. Advances in neural information processing systems,
+35:9955-9968, 2022.
+DeepSeek-AI. Deepseek-v4: Towards highly efficient million-token context intelligence, 2026.
+Aaron Defazio.
+Why gradients rapidly increase near the end of training.
+arXiv preprint
+arXiv:2506.02285, 2025.
+Aaron Defazio, Xingyu Yang, Harsh Mehta, Konstantin Mishchenko, Ahmed Khaled, and Ashok
+Cutkosky. The road less scheduled. Advances in Neural Information Processing Systems, 37:9974-
+10007, 2024.
+John Duchi, Elad Hazan, and Yoram Singer. Adaptive subgradient methods for online learning and
+stochastic optimization. Journal of machine learning research, 12(7), 2011.
+E. Edgington and P. Onghena. Randomization Tests. Statistics: A Series of Textbooks and Mono-
+graphs. Taylor & Francis, 2007. ISBN 9781584885894.
+Aaron Gokaslan and Vanya Cohen.
+Openwebtext corpus.
+
+OpenWebTextCorpus, 2019.
+Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad
+Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al. The llama 3 herd of
+models. arXiv preprint arXiv:2407.21783, 2024.
+Vineet Gupta, Tomer Koren, and Yoram Singer. Shampoo: Preconditioned stochastic tensor optimiza-
+tion. In International Conference on Machine Learning, pages 1842-1850. PMLR, 2018.
+Dan Hendrycks and Kevin Gimpel.
+Gaussian error linear units (gelus).
+arXiv preprint
+arXiv:1606.08415, 2016.
+Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Liang Wang,
+Weizhu Chen, et al. Lora: Low-rank adaptation of large language models. Iclr, 1(2):3, 2022.
+Matthew Jagielski, Om Thakkar, Florian Tramer, Daphne Ippolito, Katherine Lee, Nicholas Carlini,
+Eric Wallace, Shuang Song, Abhradeep Thakurta, Nicolas Papernot, et al. Measuring forgetting of
+memorized training examples. arXiv preprint arXiv:2207.00099, 2022.
+Ruichen Jiang, Devyani Maladkar, and Aryan Mokhtari. Provable complexity improvement of ada-
+grad over sgd: Upper and lower bounds in stochastic non-convex optimization.
+arXiv preprint
+arXiv:2406.04592, 2024.
+Keller Jordan, Yuchen Jin, Vlado Boza, Jiacheng You, Franz Cesista, Laker Newhouse, and Jeremy
+Bernstein.
+Muon:
+An optimizer for hidden layers in neural networks, 2024.
+URL https:
+//kellerjordan.github.io/posts/muon/.
+Andrej Karpathy. nanoGPT.  2022.
+Team Kimi, Tongtong Bai, Yifan Bai, Yiping Bao, SH Cai, Yuan Cao, Y Charles, HS Che, Cheng Chen,
+Guanduo Chen, et al. Kimi k2. 5: Visual agentic intelligence. arXiv preprint arXiv:2602.02276, 2026.
+Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. arXiv preprint
+arXiv:1412.6980, 2014.
+James Kirkpatrick, Razvan Pascanu, Neil Rabinowitz, Joel Veness, Guillaume Desjardins, Andrei A
+Rusu, Kieran Milan, John Quan, Tiago Ramalho, Agnieszka Grabska-Barwinska, et al. Overcoming
+catastrophic forgetting in neural networks. Proceedings of the national academy of sciences, 114(13):
+3521-3526, 2017.
+Frederik Kunstner, Jacques Chen, Jonathan Wilder Lavington, and Mark Schmidt. Noise is not the
+main factor behind the gap between sgd and adam on transformers, but sign descent might be. arXiv
+preprint arXiv:2304.13960, 2023.
+Zhizhong Li and Derek Hoiem. Learning without forgetting. IEEE transactions on pattern analysis
+and machine intelligence, 40(12):2935-2947, 2017.
+Jingyuan Liu, Jianlin Su, Xingcheng Yao, Zhejun Jiang, Guokun Lai, Yulun Du, Yidao Qin, Weixin
+Xu, Enzhe Lu, Junjie Yan, et al. Muon is scalable for llm training. arXiv preprint arXiv:2502.16982,
+2025.
+Yuxing Liu, Rui Pan, and Tong Zhang.
+Adagrad under anisotropic smoothness.
+arXiv preprint
+arXiv:2406.15244, 2024.
+David Lopez-Paz and Marc’Aurelio Ranzato. Gradient episodic memory for continual learning. Ad-
+vances in neural information processing systems, 30, 2017.
+Ilya Loshchilov and Frank Hutter. Sgdr: Stochastic gradient descent with warm restarts. arXiv preprint
+arXiv:1608.03983, 2016.
+Ilya Loshchilov and Frank Hutter.
+Decoupled weight decay regularization.
+arXiv preprint
+arXiv:1711.05101, 2017.
+James Martens and Roger Grosse. Optimizing neural networks with kronecker-factored approximate
+curvature. In International conference on machine learning, pages 2408-2417. PMLR, 2015.
+James L McClelland, Bruce L McNaughton, and Randall C O’Reilly. Why there are complementary
+learning systems in the hippocampus and neocortex: insights from the successes and failures of
+connectionist models of learning and memory. Psychological review, 102(3):419, 1995.
+Michael McCloskey and Neal J Cohen.
+Catastrophic interference in connectionist networks: The
+sequential learning problem. In Psychology of learning and motivation, volume 24, pages 109-165.
+Elsevier, 1989.
+Nikhil Shivakumar Nayak, Krishnateja Killamsetty, Ligong Han, Abhishek Bhandwaldar, Prateek
+Chanda, Kai Xu, Hao Wang, Aldo Pareja, Oleg Silkin, Mustafa Eyceoz, et al. Sculpting subspaces:
+Constrained full fine-tuning in llms for continual learning. arXiv preprint arXiv:2504.07097, 2025.
+Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong
+Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al. Training language models to follow
+instructions with human feedback. Advances in Neural Information Processing Systems, 35:27730-
+27744, 2022.
+Rui Pan, Yang Luo, Yuxing Liu, Yang You, and Tong Zhang. Unbiased gradient low-rank projection.
+arXiv preprint arXiv:2510.17802, 2025.
+Madhur Panwar, Gail Weiss, Navin Goyal, and Antoine Bosselut. For better or for worse, transformers
+seek patterns for memorization. In The Thirty-ninth Annual Conference on Neural Information
+Processing Systems, 2025.
+Thomas Pethick, Wanyun Xie, Kimon Antonakopoulos, Zhenyu Zhu, Antonio Silveti-Falls, and
+Volkan Cevher.
+Training deep learning models with norm-constrained lmos.
+arXiv preprint
+arXiv:2502.07529, 2025.
+Fuli Qiao and Mehrdad Mahdavi. Learn more, but bother less: parameter efficient continual learning.
+Advances in Neural Information Processing Systems, 37:97476-97498, 2024.
+Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, Ilya Sutskever, et al. Language
+models are unsupervised multitask learners. OpenAI blog, 1(8):9, 2019.
+Sylvestre-Alvise Rebuffi, Alexander Kolesnikov, Georg Sperl, and Christoph H Lampert. icarl: Incre-
+mental classifier and representation learning. In Proceedings of the IEEE conference on Computer
+Vision and Pattern Recognition, pages 2001-2010, 2017.
+Sashank J Reddi, Satyen Kale, and Sanjiv Kumar. On the convergence of adam and beyond. arXiv
+preprint arXiv:1904.09237, 2019.
+Yi Ren and Donald Goldfarb. Tensor normal training for deep learning models. Advances in Neural
+Information Processing Systems, 34:26040-26052, 2021.
+Mark Rofin, Aditya Varre, and Nicolas Flammarion. (how) learning rates regulate catastrophic over-
+training. arXiv preprint arXiv:2604.13627, 2026.
+David Rolnick, Arun Ahuja, Jonathan Schwarz, Timothy Lillicrap, and Gregory Wayne. Experience
+replay for continual learning. Advances in neural information processing systems, 32, 2019.
+Avi Schwarzschild, Zhili Feng, Pratyush Maini, Zachary Lipton, and J Zico Kolter. Rethinking llm
+memorization through the lens of adversarial compression. Advances in Neural Information Process-
+ing Systems, 37:56244-56267, 2024.
+Andrei Semenov, Matteo Pagliardini, and Martin Jaggi. Benchmarking optimizers for large language
+model pretraining. arXiv preprint arXiv:2509.01440, 2025.
+Noam Shazeer. Glu variants improve transformer. arXiv preprint arXiv:2002.05202, 2020.
+Noam Shazeer and Mitchell Stern. Adafactor: Adaptive learning rates with sublinear memory cost. In
+International conference on machine learning, pages 4596-4604. PMLR, 2018.
+Reece Shuttleworth, Jacob Andreas, Antonio Torralba, and Pratyusha Sharma. Lora vs full fine-tuning:
+An illusion of equivalence. arXiv preprint arXiv:2410.21228, 2024.
+Sidak Pal Singh, Gregor Bachmann, and Thomas Hofmann. Analytic insights into structure and rank of
+neural network hessian maps. Advances in Neural Information Processing Systems, 34:23914-23927,
+2021.
+Jacob Mitchell Springer, Sachin Goyal, Kaiyue Wen, Tanishq Kumar, Xiang Yue, Sadhika Malladi,
+Graham Neubig, and Aditi Raghunathan. Overtrained language models are harder to fine-tune.
+arXiv preprint arXiv:2503.19206, 2025.
+Matthew Streeter and H Brendan McMahan.
+Less regret via online conditioning.
+arXiv preprint
+arXiv:1002.4862, 2010.
+Weijie Su. Isotropic curvature model for understanding deep learning optimization: Is gradient or-
+thogonalization optimal? arXiv preprint arXiv:2511.00674, 2025.
+Rohan Taori, Ishaan Gulrajani, Tianyi Zhang, Yann Dubois, Xuechen Li, Carlos Guestrin, Percy
+Liang, and Tatsunori B. Hashimoto. Stanford alpaca: An instruction-following llama model. https:
+//github.com/tatsu-lab/stanford_alpaca, 2023.
+Tijmen Tieleman. Lecture 6.5-rmsprop: Divide the gradient by a running average of its recent magni-
+tude. COURSERA: Neural networks for machine learning, 4(2):26, 2012.
+Kushal Tirumala, Aram Markosyan, Luke Zettlemoyer, and Armen Aghajanyan. Memorization with-
+out overfitting: Analyzing the training dynamics of large language models. Advances in Neural
+Information Processing Systems, 35:38274-38290, 2022.
+Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei, Nikolay
+Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, et al. Llama 2: Open foundation and
+fine-tuned chat models. arXiv preprint arXiv:2307.09288, 2023.
+Vladimir Naumovich Vapnik. Adaptive and learning systems for signal processing communications,
+and control. Statistical learning theory, 1998.
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz
+Kaiser, and Illia Polosukhin. Attention is all you need. Advances in neural information processing
+systems, 30, 2017.
+Nikhil Vyas, Depen Morwani, Rosie Zhao, Mujin Kwun, Itai Shapira, David Brandfonbrener, Lucas
+Janson, and Sham Kakade. Soap: Improving and stabilizing shampoo using adam. arXiv preprint
+arXiv:2409.11321, 2024.
+Shuche Wang, Fengzhuo Zhang, Jiaxiang Li, Cunxiao Du, Chao Du, Tianyu Pang, Zhuoran Yang,
+Mingyi Hong, and Vincent YF Tan. Muon outperforms adam in tail-end associative memory learning.
+arXiv preprint arXiv:2509.26030, 2025.
+Yuxiang Wei, Zhe Wang, Jiawei Liu, Yifeng Ding, and Lingming Zhang. Magicoder: Empowering code
+generation with oss-instruct. arXiv preprint arXiv:2312.02120, 2023.
+Kaiyue Wen, Xingyu Dang, Kaifeng Lyu, Tengyu Ma, and Percy Liang. Fantastic pretraining opti-
+mizers and where to find them 2.1: Hyperball optimization, 12 2025a. URL 
+muonh.
+Kaiyue Wen, David Hall, Tengyu Ma, and Percy Liang. Fantastic pretraining optimizers and where
+to find them. arXiv preprint arXiv:2509.02046, 2025b.
+Martin Wistuba, Prabhu Teja Sivaprasad, Lukas Balles, and Giovanni Zappella. Continual learning
+with low rank adaptation. arXiv preprint arXiv:2311.17601, 2023.
+Shuo Xie, Tianhao Wang, Sashank Reddi, Sanjiv Kumar, and Zhiyuan Li. Structured preconditioners
+in adaptive optimization: A unified analysis. arXiv preprint arXiv:2503.10537, 2025.
+Tian Xie, Haoming Luo, Haoyu Tang, Yiwen Hu, Jason Klein Liu, Qingnan Ren, Yang Wang,
+Wayne Xin Zhao, Rui Yan, Bing Su, et al.
+Controlled llm training on spectral sphere.
+arXiv
+preprint arXiv:2601.08393, 2026.
+Ruihan Xu, Jiajin Li, and Yiping Lu. On the width scaling of neural optimizers under matrix operator
+norms i: Row/column normalization and hyperparameter transfer. arXiv preprint arXiv:2603.09952,
+2026.
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao,
+Chengen Huang, Chenxu Lv, et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388, 2025.
+Greg Yang, James B Simon, and Jeremy Bernstein. A spectral condition for feature learning. arXiv
+preprint arXiv:2310.17813, 2023.
+Yang You, Jing Li, Sashank Reddi, Jonathan Hseu, Sanjiv Kumar, Srinadh Bhojanapalli, Xiaodan
+Song, James Demmel, Kurt Keutzer, and Cho-Jui Hsieh. Large batch optimization for deep learning:
+Training bert in 76 minutes. arXiv preprint arXiv:1904.00962, 2019.
+Dingzhi Yu, Rui Pan, Yuxing Liu, and Tong Zhang. Stosignsgd: Unbiased structural stochasticity
+fixes signsgd for training large language models. arXiv preprint arXiv:2604.15416, 2026.
+Longhui Yu, Weisen Jiang, Han Shi, Jincheng Yu, Zhengying Liu, Yu Zhang, James T Kwok, Zhenguo
+Li, Adrian Weller, and Weiyang Liu. Metamath: Bootstrap your own mathematical questions for
+large language models. arXiv preprint arXiv:2309.12284, 2023.
+Huizhuo Yuan, Yifeng Liu, Shuang Wu, Xun Zhou, and Quanquan Gu. Mars: Unleashing the power
+of variance reduction for training large models. arXiv preprint arXiv:2411.10438, 2024.
+Matthew D Zeiler. Adadelta: an adaptive learning rate method. arXiv preprint arXiv:1212.5701, 2012.
+Aohan Zeng, Xin Lv, Qinkai Zheng, Zhenyu Hou, Bin Chen, Chengxing Xie, Cunxiang Wang, Da Yin,
+Hao Zeng, Jiajie Zhang, et al. Glm-4.5: Agentic, reasoning, and coding (arc) foundation models.
+arXiv preprint arXiv:2508.06471, 2025.
+Friedemann Zenke, Ben Poole, and Surya Ganguli. Continual learning through synaptic intelligence.
+In International conference on machine learning, pages 3987-3995. Pmlr, 2017.
+Chiyuan Zhang, Samy Bengio, Moritz Hardt, Benjamin Recht, and Oriol Vinyals. Understanding deep
+learning requires rethinking generalization. arXiv preprint arXiv:1611.03530, 2016.
+Yushun Zhang, Congliang Chen, Tian Ding, Ziniu Li, Ruoyu Sun, and Zhi-Quan Luo. Why transform-
+ers need adam: A hessian perspective. arXiv preprint arXiv:2402.16788, 2024a.
+Yushun Zhang, Congliang Chen, Ziniu Li, Tian Ding, Chenwei Wu, Diederik P Kingma, Yinyu Ye,
+Zhi-Quan Luo, and Ruoyu Sun. Adam-mini: Use fewer learning rates to gain more. arXiv preprint
+arXiv:2406.16793, 2024b.
+Jiawei Zhao, Zhenyu Zhang, Beidi Chen, Zhangyang Wang, Anima Anandkumar, and Yuandong
+Tian.
+Galore:
+Memory-efficient llm training by gradient low-rank projection.
+arXiv preprint
+arXiv:2403.03507, 2024.
+Yaowei Zheng, Richong Zhang, Junhao Zhang, Yanhan Ye, Zheyan Luo, Zhangchi Feng, and Yongqiang
+Ma.
+Llamafactory:
+Unified efficient fine-tuning of 100+ language models.
+In Proceedings of
+the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 3: System
+Demonstrations), Bangkok, Thailand, 2024. Association for Computational Linguistics.
+URL
+
+A
+Experiment Settings
+A.1
+Experiment Settings in Section 2
+The GPT-2 pretraining experiments are done with 4 NVIDIA RTX A6000 GPUs with 48 GB of
+memory, GPT-2 SFT experiments with 1 A6000 GPU, and Llama-2-7B finetuning experiments with
+4 A6000 GPUs. All experiments are conducted on bf16 precision.
+For GPT-2 experiments, we adopt a training codebase modified from the nanoGPT codebase [Karpa-
+thy, 2022]. For Llama-2-7B experiments, we employ the LlamaFactory [Zheng et al., 2024] codebase
+and Muon fsdp2 implementation from the Dion codebase [Ahn et al., 2025b,a].
+Training Algorithms. In this paper, we typically consider three optimizers: AdamW, Muon, and
+SGD. For the SFT stage, we consider both full finetuning with the three optimizers and LoRA [Hu
+et al., 2022] with AdamW. Specifically, we use the RMSNorm-aligned version of Muon as suggested
+in [Liu et al., 2025]. We also apply a similar update RMSNorm alignment to SGD in this paper, i.e.,
+the update of SGD for a layer W ∈Rm×n is W ←W −η · 0.2 · √mng/ ∥g∥, where g is the momentum.
+Model & Pretraining. For the model, we adopt the same architecture and parameter number as
+the GPT-2-small model [Ouyang et al., 2022] (approximately 123M), changing only the activation
+function from GELU [Hendrycks and Gimpel, 2016] to SwiGLU [Shazeer, 2020]. We train the models
+from scratch with 8B tokens on the OpenWebText dataset [Gokaslan and Cohen, 2019]. For pretraining,
+we adopt AdamW and Muon with learning rate 3e-3.
+SFT. We consider three different types of tasks for SFT: MetaMathQA [Yu et al., 2023] for math,
+Alpaca [Taori et al., 2023] for instruction following, Magicoder-Evol-Instruct-110K [Wei et al., 2023]
+for coding.
+We employ full finetuning and LoRA with r = 4, 8, 32, 128 and α = 2r following the
+suggesion in Biderman et al. [2024]. For each training algorithm, we apply a grid search for learning
+rates, with other hyperparameters fixed. The grid always contains the learning rate that achieves the
+best validation loss in the SFT task, and is listed in Appendix A.1.1.
+Evaluation. We care about two major metrics for evaluation: the OpenWebText validation loss as
+a measure for forgetting, i.e., how much the models preserve the pretraining knowledge, and the loss
+on the new task validation loss as a measure for learning, i.e., how much the models learn the new
+ability (lower is better). For a comprehensive and fair comparison between the training algorithms, we
+plot the Pareto frontier of the learning-forgetting tradeoff, with x-axis denoting the forgetting metric
+and y-axis denoting the learning metric. For each training algorithm, we consider all the runs in the
+learning rate grid search, and for a single run, we evaluate intermediate checkpoints. Then, we gather
+all the data points for each training algorithm to present the Pareto frontier to find the limit of this
+training algorithm in learning the most and forgetting the least. When plotting the Pareto frontier
+figures, we use a robust frontier selection strategy for clarity of the figures. For figures with loss as
+measurements, for each point (xi, yi) in the Pareto frontier of a specific algorithm, we plot it as the
+frontier only when {xi ≤xj −c or yi ≤yj −c} holds for all other (xj, yj) in this specific algorithm,
+where c = 0.001, meaning that we only include the points with a significant improvement compared
+to others. We apply this plotting strategy to figures with accuracy as measurements similarly with
+c = 0.001.
+Llama-2-7B Settings.
+We also verify the results in finetuning Llama-2-7B with MetaMathQA,
+following the MATH IFT scheme in Biderman et al. [2024]. We follow the same logic as the GPT-2
+experiment to do learning rate grid search and plot the Pareto frontier of different training algorithms,
+changing only the measures of forgetting and learning from loss to (benchmark-averaged) accuracy
+(higher is better).
+A.1.1
+Detailed Experiment Settings
+GPT-2 Pretraining. GPT-2 models pretrained on OpenWebText dataset.
+• sequence length: 1024
+• effective batch size: 240 (4 GPUs × 5 gradient accumulation × 12 batch size)
+• token: 8B
+• scheduler: cosine [Loshchilov and Hutter, 2016], with 10% warmup
+• gradient clipping: norm (threshold=1)
+• weight decay: 0.1
+• learning rate: 3e-3 for both AdamW and Muon
+GPT-2 Alpaca. GPT-2 models (pretrained by AdamW and Muon) finetuned on Alpaca.
+• sequence length: 1024
+• effective batch size: 128 (1 GPU × 4 gradient accumulation × 32 batch size)
+• iterations: 800 (approximately 2 epochs)
+• evaluation interval: every 200 iterations
+• scheduler: cosine [Loshchilov and Hutter, 2016], with 10% warmup
+• gradient clipping: norm (threshold=1)
+• full finetuning weight decay: 0
+• full finetuning dropout: 0.1
+• full finetuning learning rate grid: {3e-5, 5e-5, 1e-4, 3e-4, 5e-4} for both AdamW and
+Muon
+GPT-2 MetaMathQA. GPT-2 models (pretrained by AdamW and Muon) finetuned on Meta-
+MathQA.
+• sequence length: 1024
+• effective batch size: 128 (1 GPU × 4 gradient accumulation × 32 batch size)
+• iterations: 6100 (approximately 2 epochs)
+• evaluation interval: every 300 iterations
+• scheduler: cosine [Loshchilov and Hutter, 2016], with 10% warmup
+• gradient clipping: norm (threshold=1)
+• full finetuning weight decay: 0
+• full finetuning dropout: 0.1
+• full finetuning learning rate grid: {5e-5, 1e-4, 3e-4, 5e-4} for both AdamW and Muon
+• LoRA dropout: 0.1
+• LoRA alpha: 2r for each r = 4, 8, 32, 128
+• LoRA learning rate grid: {5e-4,1e-3,3e-3,5e-3,1e-2} for both AdamW and Muon
+GPT-2 Magicoder. GPT-2 models (pretrained by AdamW and Muon) finetuned on Magicoder.
+• sequence length: 1024
+• effective batch size: 128 (1 GPU × 4 gradient accumulation × 32 batch size)
+• iterations: 1800 (approximately 2 epochs)
+• evaluation interval: every 200 iterations
+• scheduler: cosine [Loshchilov and Hutter, 2016], with 10% warmup
+• gradient clipping: norm (threshold=1)
+• full finetuning weight decay: 0
+• full finetuning dropout: 0.1
+• full finetuning learning rate grid: {5e-5, 1e-4, 3e-4, 5e-4, 1e-3} for both AdamW and
+Muon
+Llama-2 MetaMathQA. Llama-2-7B-hf1 finetuned on MetaMathQA.
+• sequence length: 1024
+• effective batch size: 128 (4 GPU × 8 gradient accumulation × 4 batch size)
+• iterations: 3055 (approximately 1 epoch)
+• evaluation interval: every 500 iterations
+• scheduler: cosine [Loshchilov and Hutter, 2016], with 10% warmup
+• gradient clipping: norm (threshold=1)
+• full finetuning weight decay: 0
+• full finetuning dropout: 0
+• full finetuning learning rate grid: {1e-5,2e-5,5e-5,1e-4} for both AdamW and Muon
+• LoRA dropout: 0
+• LoRA alpha: 2r for each r = 16, 64, 256
+• LoRA learning rate grid: {5e-5,1e-4,2e-4,5e-4}
+Additional hyperparameter settings of optimizers. The following hyperparameters are fixed in
+the experiments.
+• AdamW:
+- (β1, β2): (0.9,0.95)
+- ϵ: 1e-8
+• Muon:
+- momentum: 0.9
+- AdamW (β1, β2): (0.9,0.95)
+- AdamW ϵ: 1e-8
+• SGD and other optimizers (Algorithm 1,2):
+- momentum: 0.9
+A.2
+Experiment Settings in Section 4.2
+Dataset & Training. We use corrupted datasets constructed from the OpenWebText dataset [Gokaslan
+and Cohen, 2019], tokenized by the standard GPT-2 tokenizer. To obtain the target dataset, we first
+retrieve a subset of 40M tokens from the original dataset. Then we split the tokens into blocks of
+length 1024. For each block, we do a random permutation, i.e., randomly reorder the tokens, with
+probability α = 0.5. We call a block corrupted if it is randomly permuted. In this way, we keep the
+vocabulary frequency the same, but destroy the patterns in the corrupted blocks, ensuring that models
+can complete these blocks only by memorization. We use the same model configuration and optimizers
+as Section 2 for GPT-2, and set the sequence length to 512, with an effective batch size of 256. We
+conduct a learning rate grid search in {3e-4, 5e-4, 1e-3, 3e-3} and select the run with the best accuracy
+on clean data.
+Evaluation. To evaluate the memorization accuracy of models, we test the exact match accuracy of
+the model generation compared to the original text. Specifically, we randomly sample a subset from
+the original training dataset to form the evaluation set. By fixing an input length and generation
+1
+length pair (a, b), we test whether the model can generate exactly the same sequence as the original
+context of length b with the input of length a using greedy decoding and compute the accuracy.
+A.3
+Additional Optimizers Implementation
+In Figure 5, we involve two additional optimizers A1,1 and A∞,∞, which are derived from the frame-
+work (1) with norm ∥·∥1,1 and ∥·∥∞,∞. For an arbitrary matrix Z ∈Rm×n, it holds that
+∥Z∥1,1 = max
+i∈[m]
+n
+X
+j=1
+|Zi,j|
+and
+∥Z∥∞,∞= max
+j∈[n]
+m
+X
+i=1
+|Zi,j| .
+We then solve (1) for ∥·∥1,1. Notice that
+⟨Z, G⟩=
+m
+X
+i=1
+n
+X
+j=1
+Zi,jGi,j ≤
+m
+X
+i=1
+n
+X
+j=1
+|Zi,j| · max
+j∈[n] |Gi,j| ≤
+
+max
+i∈[m]
+n
+X
+j=1
+|Zi,j|
+
+
+ m
+X
+i=1
+max
+j∈[n] |Gi,j|
+!
+= ∥Z∥1,1 ·
+ m
+X
+i=1
+max
+j∈[n] |Gi,j|
+!
+,
+where Z ≜Wt+1 −Wt. We note that the inequality holds as an equality when for each i ∈[m], j ∈[n]
+A1,1 Update:
+Zi,j =
+(
+R
+ki ,
+if |Gi,j| = maxl∈[n] |Gi,l| ,
+0,
+else,
+where ki denotes the number of entries Gi,j such that |Gi,j| = maxl∈[n] |Gi,l| for a fixed i ∈[m] and R
+is the update scale. Similarly, we can also derive the algorithm under ∥·∥∞,∞.
+A∞,∞Update:
+Zi,j =
+(
+R
+kj ,
+if |Gi,j| = maxl∈[m] |Gl,j| ,
+0,
+else,
+where kj denotes the number of entries Gi,j such that |Gi,j| = maxl∈[m] |Gl,j| for a fixed j ∈[n] and
+R is the update scale. Intuitively, the update formula means that we only update the entries with the
+largest gradient scale in every row for A1,1 and every column for A∞,∞in each iteration. Then, by
+incorporating momentum and the update RMS norm alignment [Liu et al., 2025], we formally write
+the two algorithms in Algorithm 1 and 2. We also include our version of SGD in Algorithm 3.
+Algorithm 1 Row Max Descent (A1,1)
+1: Input: W0 ∈Rm×n, the number of iterations T, schedule {ηt}T −1
+t=0 , momentum β
+2: Initialize M−1 = 0 ∈Rm×n
+3: for t = 0 to T −1 do
+4:
+Obtain gradient Gt at Wt
+5:
+Mt = βMt−1 + (1 −β)Gt
+6:
+Compute Ut by [Ut]i,j =
+(
+R
+ki ,
+if |[Mt]i,j| = maxl∈[n] |[Mt]i,l| ,
+0,
+else.
+, where ki denotes the number of
+Mt entries such that |[Mt]i,j| = maxl∈[m] |[Mt]i,l| for a fixed j
+7:
+Wt+1 = Wt −ηt · 0.2 ·
+Ut
+∥Ut∥RMS
+8: end for
+B
+Additional Experiment Results
+B.1
+More Results for LoRA Comparing to Full Finetuning
+In this section, we provide some additional experiment results specifically on LoRA under the same
+settings as Section 2.
+Algorithm 2 Column Max Descent (A∞,∞)
+1: Input: W0 ∈Rm×n, the number of iterations T, schedule {ηt}T −1
+t=0 , momentum β
+2: Initialize M−1 = 0 ∈Rm×n
+3: for t = 0 to T −1 do
+4:
+Obtain gradient Gt at Wt
+5:
+Mt = βMt−1 + (1 −β)Gt
+6:
+Compute Ut by [Ut]i,j =
+(
+R
+kj ,
+if |[Mt]i,j| = maxl∈[m] |[Mt]l,j| ,
+0,
+else.
+, where kj denotes the number
+of Mt entries such that |[Mt]i,j| = maxl∈[m] |[Mt]l,j| for a fixed j
+7:
+Wt+1 = Wt −ηt · 0.2 ·
+Ut
+∥Ut∥RMS
+8: end for
+Algorithm 3 SGD (with update RMS norm alignment)
+1: Input: W0 ∈Rm×n, the number of iterations T, schedule {ηt}T −1
+t=0 , momentum β
+2: Initialize M−1 = 0 ∈Rm×n
+3: for t = 0 to T −1 do
+4:
+Obtain gradient Gt at Wt
+5:
+Mt = βMt−1 + (1 −β)Gt
+6:
+Ut = Mt
+7:
+Wt+1 = Wt −ηt · 0.2 ·
+Ut
+∥Ut∥RMS
+8: end for
+Reproduction of the Observations in Biderman et al. [2024].
+We can reproduce the observa-
+tions in Biderman et al. [2024] with our Llama results, as presented in Figure 8, where we can observe
+in the left figure that LoRA learns less (lower math score) and forgets less (higher general score) if
+we all choose the learning rates leading to the best math performance. Here, LoRA rank 64 shows a
+greater forgetting compared to rank 256, mainly because rank 256 diverges for lr=5e-4, and a smaller
+learning rate leads to less forgetting. In the right figure of Figure 8, we choose a smaller learning rate
+instead, and can find that the conclusions are different. With a smaller learning rate, full finetuning
+tends to learn more and forget less compared to LoRA.
+0.56
+0.58
+0.60
+0.62
+0.64
+General Capability: Avg Acc (Hellaswag, ARC-C, Winogrande)
+0.35
+0.40
+0.45
+0.50
+0.55
+0.60
+Task Capability: GSM8K (Exact Match)
+Recovering LoRA forgest less: General vs Task Capability
+Full FT (AdamW) lr=5e-5
+LoRA (r=256) lr=2e-4
+LoRA (r=64) lr=5e-4
+LoRA (r=16) lr=5e-4
+0.630
+0.632
+0.634
+0.636
+0.638
+0.640
+0.642
+General Capability: Avg Acc (Hellaswag, ARC-C, Winogrande)
+0.30
+0.35
+0.40
+0.45
+0.50
+0.55
+0.60
+Task Capability: GSM8K (Exact Match)
+Conflicting LoRA forgest less: General vs Task Capability
+Full FT (AdamW) lr=1e-5
+LoRA (r=256) lr=5e-5
+LoRA (r=64) lr=5e-5
+LoRA (r=16) lr=5e-5
+Figure 8: Reproduction of the results in Biderman et al. [2024]. In the left figure, we choose only the
+learning rate leading to the best math performance for each training algorithm instead of presenting
+a Pareto frontier. In the right figure, we choose some smaller learning rates for comparison.
+Learning Rate is Important in Learning-Forgetting Tradeoff.
+In Figure 9, we show how
+learning rate affects the learning-forgetting tradeoff. Generally, a larger learning rate achieves a rela-
+tively higher learning score while leading to much more significant forgetting, which also aligns with
+the observations in Rofin et al. [2026], a concurrent work to us. Therefore, it is important to choose
+an appropriate learning rate in SFT based on the requirements of the final model.
+0.475
+0.500
+0.525
+0.550
+0.575
+0.600
+0.625
+0.650
+General Capability: Avg Acc (Hellaswag, ARC-C, Winogrande)
+0.30
+0.35
+0.40
+0.45
+0.50
+0.55
+0.60
+Task Capability: GSM8K (Exact Match)
+Learning Rate Ablation: Full FT (AdamW)
+Learning Rate
+lr=1e-4
+lr=5e-5
+lr=2e-5
+lr=1e-5
+0.620
+0.625
+0.630
+0.635
+0.640
+General Capability: Avg Acc (Hellaswag, ARC-C, Winogrande)
+0.30
+0.35
+0.40
+0.45
+0.50
+0.55
+Task Capability: GSM8K (Exact Match)
+Learning Rate Ablation: LoRA (r=16)
+Learning Rate
+lr=5e-4
+lr=2e-4
+lr=1e-4
+lr=5e-5
+0.60
+0.61
+0.62
+0.63
+0.64
+General Capability: Avg Acc (Hellaswag, ARC-C, Winogrande)
+0.30
+0.35
+0.40
+0.45
+0.50
+0.55
+Task Capability: GSM8K (Exact Match)
+Learning Rate Ablation: LoRA (r=64)
+Learning Rate
+lr=5e-4
+lr=2e-4
+lr=1e-4
+lr=5e-5
+0.615
+0.620
+0.625
+0.630
+0.635
+General Capability: Avg Acc (Hellaswag, ARC-C, Winogrande)
+0.40
+0.45
+0.50
+0.55
+0.60
+Task Capability: GSM8K (Exact Match)
+Learning Rate Ablation: LoRA (r=256)
+Learning Rate
+lr=2e-4
+lr=1e-4
+lr=5e-5
+Figure 9: Learning rate affects forgetting.
+Note that learning rate lr=5e-4 failed for LoRA with
+r = 256.
+500
+1500
+2500
+3500
+Training Iterations
+0.40
+0.45
+0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+0.80
+Activation Sparsity
+attn.qkv Average Input Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.60
+0.65
+0.70
+0.75
+0.80
+Activation Sparsity
+attn.proj Average Input Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+0.80
+Activation Sparsity
+mlp.fc_1 Average Input Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.25
+0.30
+0.35
+0.40
+0.45
+0.50
+0.55
+0.60
+Activation Sparsity
+mlp.fc_2 Average Input Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.4
+0.5
+0.6
+0.7
+0.8
+Activation Sparsity
+attn.qkv Average Output Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.55
+0.60
+0.65
+0.70
+0.75
+0.80
+Activation Sparsity
+attn.proj Average Output Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+Activation Sparsity
+mlp.fc_1 Average Output Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.60
+0.65
+0.70
+0.75
+0.80
+Activation Sparsity
+mlp.fc_2 Average Output Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+Figure 10: The average activation sparsity of each linear layer under the same settings of Figure 5. We
+consider 2 linear layers for attention modules: the QKV projection (attn.qkv) and attention output
+projection (attn.proj); 2 linear layers for FFN modules: the up projection (mlp.fc_1) and down
+projection (mlp.fc_2).
+B.2
+More Detailed Activation Plots
+In Figures 10 and 11, we present the average activation sparsity of detailed modules and specific ac-
+tivation splits. We can observe that the detailed sparsity plots also generally follow our observations
+that optimizers regularize the activations based on the corresponding matrix-induced norm α, β. Inter-
+estingly, in terms of sparsity for A1,∞(including AdamW and SignSGD), the input activations of the
+next layer can be quite different from the output activations of the last layer, which should connect.
+This can be related to the effect of the activation function (inside FFN), attention logits computation
+(inside attention modules), and layernorms and residual connections (between modules and layers). It
+would be an interesting future work to further explore the mechanism behind this phenomenon and
+how the activations change during training.
+C
+Proof of Section 3
+C.1
+Comparison between Norms
+We begin with some auxiliary lemmas for comparing different norms. Lemma 1 is a standard result
+for vector norms, and Lemma 2 is a simple extension of it.
+Lemma 1. For an arbitrary vector z ∈Rd and α1, α2 ∈[1, ∞] such that α1 ≤α2, it holds that
+∥z∥α2 ≤∥z∥α1 ≤d
+α1 −1
+α2 ∥z∥α2 .
+Lemma 2. For an arbitrary matrix A ∈Rm×n and α1, α2 ∈[1, ∞] such that α1 ≤α2 and β1, β2 ∈
+[1, ∞] such that β1 ≤β2, it holds that
+∥A∥α1,β ≤∥A∥α2,β ≤n
+α1 −1
+α2 ∥A∥α1,β
+and
+∥A∥α,β2 ≤∥A∥α,β1 ≤m
+β1 −1
+β2 ∥A∥α,β2
+0
+1000
+2000
+3000
+4000
+Training Iterations
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+Activation Sparsity
+mlp.gate Average Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.55
+0.60
+0.65
+0.70
+0.75
+0.80
+Activation Sparsity
+mlp.value Average Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+0.80
+Activation Sparsity
+attn.q Average Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+Activation Sparsity
+attn.k Average Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+500
+1500
+2500
+3500
+Training Iterations
+0.68
+0.70
+0.72
+0.74
+0.76
+0.78
+0.80
+Activation Sparsity
+attn.v Average Sparsity
+1, (AdamW)
+1, (SignSGD)
+2, 2
+,
+1, 1
+Figure 11: The average activation sparsity of some split activations under the same settings of Figure 5
+and 10, including q,k,v in attention modules and gate,value in FFN modules introduced by the SwiGLU
+activation function.
+Proof. Let us denote
+z1 ∈argmax
+z̸=0
+∥Az∥β
+∥z∥α1
+and
+z1 ∈argmax
+z̸=0
+∥Az∥β
+∥z∥α2
+,
+which implies that
+∥Az1∥β = ∥A∥α1,β ∥z1∥α1
+and
+∥Az2∥β = ∥A∥α2,β ∥z2∥α2 .
+Combining with Lemma 1, we therefore have
+∥A∥α1,β =
+∥Az1∥β
+∥z1∥α1
+≤
+∥Az1∥β
+∥z1∥α2
+≤
+∥Az2∥β
+∥z2∥α2
+= ∥A∥α2,β
+and
+∥A∥α2,β =
+∥Az2∥β
+∥z2∥α2
+≤n
+α1 −1
+α2 ∥Az2∥β
+∥z2∥α1
+≤n
+α1 −1
+α2 ∥Az1∥β
+∥z1∥α1
+= n
+α1 −1
+α2 ∥A∥α1,β ,
+which concludes the proof for the first inequality. We can prove the second inequality similarly.
+C.2
+Proof of Theorem 1
+Proof. Consider an arbitrary SFT optimizer choice Aα2,β2 with α2, β2 ∈[1, ∞) and ∆W is the cor-
+responding SFT update. From Assumption 2, for a fixed β∗∈[1, ∞), there exists α∗∈[1, ∞) such
+that
+E
+h
+∥∆Wx∥2
+β∗
+i
+= Θ
+
+∥∆W∥2
+α∗,β∗E
+h
+∥x∥2
+α∗
+i
+.
+Since for all α, β ∈[1, ∞], it always holds that
+∥∆Wx∥β ≤∥∆W∥α,β ∥x∥α
+based on the definition of matrix induced norms, α∗, β∗should correspond to the tightest upper bound
+to yield Assumption 2. We then discuss the best value of α, i.e., α∗, in this case.
+• If α ∈(α1, ∞], based on Lemma 2 and Assumption 4, it holds that
+∥∆W∥α1,β∗≤∥∆W∥α,β∗
+and
+E
+h
+∥x∥2
+α1
+i
+= Θ
+
+E
+h
+∥x∥2
+α
+i
+.
+Thus, we have
+∥∆W∥2
+α1,β∗E
+h
+∥x∥2
+α1
+i
+= O
+
+∥∆W∥2
+α,β∗E
+h
+∥x∥2
+α
+i
+• If α ∈[1, α1), based on Lemma 2 and Assumption 4, it holds that
+∥∆W∥α1,β∗≤n
+α −1
+α1 ∥∆W∥α,β∗
+and
+E
+h
+∥x∥2
+α1
+i
+= Θ
+
+n
+α1 −2
+α E
+h
+∥x∥2
+α
+i
+.
+Thus, we have
+∥∆W∥2
+α1,β∗E
+h
+∥x∥2
+α1
+i
+= O
+
+∥∆W∥2
+α,β∗E
+h
+∥x∥2
+α
+i
+From the two cases, we conclude that we should have α∗= α1 to yield the tightest upper bound since
+it holds that ∥∆W∥2
+α1,β∗E
+h
+∥x∥2
+α1
+i
+= O
+
+∥∆W∥2
+α,β∗E
+h
+∥x∥2
+α
+i
+for all α ∈[1, ∞].
+Moreover, based on Assumption 4 on ∆Wx, we have
+E
+h
+∥∆Wx∥2
+i
+= Θ
+
+m−max{ 2
+β2 −1,0}E
+h
+∥∆Wx∥2
+β2
+i
+= Θ
+
+m−max{ 2
+β2 −1,0}+max{ 2
+β2 −2
+β∗,0}E
+h
+∥∆Wx∥2
+β∗
+i
+.
+This implies that by choosing β∗= β2 and substituting α∗= α1, we have
+Lforget(∆W) ≜E
+h
+∥∆Wx∥2
+i
+= Θ
+
+mmax{ 1
+β2 −1
+2 ,0} ∥∆W∥2
+α1,β2 E
+h
+∥x∥2
+α1
+i
+(3)
+for ∆W derived with any choice of α2, β2 ∈[1, ∞].
+Then we consider the SFT update ∆W. Based on (1) and Assumption 3, the ∆W derived by SFT
+optimizer Aα2,β2 holds
+∆W(Aα2,β2) =
+argmin
+∥Z∥α2,β2≤η
+⟨Z, G⟩,
+where η denotes the update scale. Taking C ≜H0 + min∥Z∥α2,β2≤η ⟨Z, G⟩, this is equivalent to
+∆W(Aα2,β2) =
+argmin
+⟨Z,G⟩≤C−H0
+∥Z∥α2,β2 =
+argmin
+LSFT(Z)≤C
+∥Z∥α2,β2 ,
+(4)
+which can be straightforwardly verified by the KKT condition.
+With (3) and (4) in hand, we are ready to prove the theorem. For brevity, we define the following
+function as the bound derived in (3) for any α, β ∈[1, ∞]:
+g(α, β) ≜mmax{ 1
+β −1
+2 ,0} ∥∆W(Aα,β)∥2
+α1,β E
+h
+∥x∥2
+α1
+i
+,
+where ∆W(Aα,β) denotes the SFT update if Aα,β is employed as the SFT optimizer. Thus, it holds
+that Lforget(∆W(Aα,β)) = Θ (g(α, β)). Then we have that for any α, β ∈[1, ∞] pair yielding β < 2, it
+holds that g(α1, β2) = O (g(α, β)) with β2 ≥2, since we have
+∥∆W(Aα,β)∥α1,β ≥∥∆W(Aα,β)∥α1,β2 ≥
+min
+⟨∆W,G⟩≤C−H0 ∥∆W∥α1,β2 = ∥∆W(Aα1,β2)∥α1,β2
+based on Lemma 2 and (4).
+When taking α2 = α1 and β2 ≥2, we simultaneously have
+g(α1, β2) = O (g(α, β))
+and
+Lforget(∆W(Aα,β)) = Θ (g(α, β))
+for all α, β pair such that α ∈[1, ∞] and β ∈[1, 2]. Therefore, it holds that
+Lforget(∆W(Aα1,β2)) = O
+
+inf
+α∈[1,∞],β∈[1,2] Lforget(∆W(Aα,β))
+
+,
+which concludes the proof.
+D
+Licenses
+The Alpaca dataset [Taori et al., 2023] ( is
+released under the cc-by-nc-4.0 license. The MetaMathQA [Yu et al., 2023] (
+co/datasets/meta-math/MetaMathQA) and Magicoder [Wei et al., 2023] (
+datasets/ise-uiuc/Magicoder-OSS-Instruct-75K) datasets and the NanoGPT [Karpathy, 2022]
+( and Dion [Ahn et al., 2025b,a] (
+microsoft/dion) codebases are under the MIT license. The LlamaFactory codebase [Zheng et al.,
+2024] ( is under the Apache-2.0 license. The Llama-2-
+7b-hf model [Touvron et al., 2023] ( is under
+the llama2 license.

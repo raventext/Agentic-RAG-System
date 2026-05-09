@@ -1,0 +1,2038 @@
+PACZero: PAC-Private Fine-Tuning of Language
+Models via Sign Quantization
+Murat Bilgehan Ertan∗
+CWI Amsterdam
+Amsterdam, Netherlands
+bilgehan@cwi.nl
+Xiaochen Zhu
+MIT
+Cambridge, MA, USA
+xczhu@mit.edu
+Phuong Ha Nguyen
+eBay
+San Jose, CA, USA
+phuongha.ntu@gmail.com
+Marten van Dijk∗
+CWI Amsterdam
+Amsterdam, Netherlands
+mevd@cwi.nl
+Srinivas Devadas
+MIT
+Cambridge, MA, USA
+devadas@mit.edu
+Abstract
+We introduce PACZERO, a family of PAC-private zeroth-order mechanisms for
+fine-tuning large language models that delivers usable utility at I(S∗; Y1:T ) = 0.
+This privacy regime bounds the membership-inference attack (MIA) posterior
+success rate at the prior, an MIA-resistance level the DP framework matches only
+at ε=0 and infinite noise. All DP-ZO comparisons below are matched at the MIA
+posterior level. The key insight is that PAC Privacy charges mutual information
+only when the release depends on which candidate subset is the secret. Sign-
+quantizing subset-aggregated zeroth-order gradients creates frequent unanimity,
+steps at which every candidate subset agrees on the update direction; at these
+steps the released sign costs zero conditional mutual information. We propose two
+variants that span the privacy-utility trade-off: PACZERO-MI (budgeted MI via
+exact calibration on the binary release) and PACZERO-ZPL (I =0 via a uniform
+coin flip on disagreement steps). We evaluate on SST-2 and SQuAD with OPT-1.3B
+and OPT-6.7B in both LoRA and full-parameter tracks. On SST-2 OPT-1.3B full
+fine-tuning at I =0, PACZERO-ZPL reaches 88.99±0.91%, within 2.1pp of the
+non-private MeZO baseline (91.1 FT). No prior method produces usable utility
+in the high-privacy regime ε<1, and PACZERO-ZPL obtains competitive SST-2
+accuracy and nontrivial SQuAD F1 across OPT-1.3B and OPT-6.7B at I =0.
+Introduction
+Zeroth-order (ZO) optimization has emerged as a memory-tractable alternative to first-order LLM fine-
+tuning, replacing backpropagation with two forward passes per step [24]. When the training corpus is
+sensitive, trained weights are known to leak individual records through membership inference attacks
+(MIA) and verbatim extraction [33, 12, 11, 27, 25]. The dominant defense is differential privacy
+(DP), a quantitative guarantee that the influence of any single training record on the released model
+∗Affiliated with Vrije Universiteit Amsterdam.
+Preprint.
+arXiv:2605.06505v1 [cs.LG] 7 May 2026
+
+is provably bounded, parameterized by a parameter ε. The workhorse instantiation, DP-SGD [1],
+clips per-record gradients to a fixed sensitivity budget and adds Gaussian noise tracked across steps
+via the Rényi accountant [26, 18]. This methodology extends to LLM fine-tuning [44, 23] with
+mature production tooling now in use [43, 4, 30]. Plugging it into ZO yields DP-ZO [46, 36, 5],
+which clips and noises the per-step zeroth-order scalar instead of the full gradient. Because the
+scalar is one-dimensional and the perturbation direction is data-independent, DP-ZO removes the
+explicit dimension dependence from the per-step noise. It does not, however, remove the impact
+on utility. Every published DP-ZO method inherits DP’s harsh utility-privacy trade-off: usable
+accuracy requires a loose privacy budget, and utility collapses as ε tightens, because the underlying
+mechanism (worst-case per-record sensitivity composed sequentially over T steps) is unchanged.
+This trade-off is a long-observed property of DP-SGD in iterative deep-learning training, where
+tight ε produces steep utility loss and disparate-impact effects [2, 38, 14, 13, 21, 8, 32]; reaching a
+meaningful high-privacy regime in LLM fine-tuning therefore requires a fundamentally different
+privacy accounting mechanism.
+PAC Privacy [40] replaces DP’s worst-case sensitivity with a noise calibration based on the empirical
+covariance of the release, and bounds the mutual information (MI) between the secret and the release.
+The key advantage of PAC Privacy is that it exploits the inherent stability of the output and calibrates
+minimal noise for stable outputs. Recent work extends the framework to adaptive composition over
+inference-time response streams [49]. What remains open is the case relevant to private iterative
+fine-tuning, the same setting in which DP-SGD operates, where a per-step update is released to
+the adversary at every optimization step. At LLM scale (d ∼109, T ∼103), however, optimal
+instance-based noise calibration derived from the output covariance is prohibitively expensive to
+achieve at this dimensionality, leaving iterative training out of reach of canonical PAC algorithms.
+The proposed PACZERO family closes both gaps at once, the high-privacy collapse of DP-SGD and
+the open problem of iterative-training PAC, by combining a zeroth-order substrate [24] with a per-step
+release that is sign-quantized. Concretely, PACZERO aggregates per-sample two-point zeroth-order
+loss differences over M =128 random subsets, sign-quantizes each subset mean to sm ∈{−1, +1},
+and releases one bit identifying the sign of the secret subset (Figure 1). When all M = 128 bits
+agree, this is unanimous and does not spend privacy budget under PAC privacy. The mechanism
+then instantiates as one of two variants depending on how the disagreement branch handles the
+released bit. The per-step release is now a Bernoulli with entropy ≤log 2 regardless of d, so the
+secret-to-release mutual information becomes a one-dimensional Gaussian integral that we evaluate
+exactly to calibrate the noise, replacing the variance-based Gaussian upper bound used in canonical
+PAC algorithms [40, 35, 49]. Two structural consequences follow from the quantized release. First,
+posterior-weighted unanimity becomes combinatorially detectable, when the posterior over the secret
+index puts all mass on subsets that agree on the sign, the released bit is a deterministic function of the
+public history and contributes zero conditional MI; this branch fires on ∼34-45% of training steps
+in our SST-2 cells. The base variant PACZERO-MI calibrates the disagreement-branch Gaussian
+to a per-step MI budget βt. Second, the privacy budget can be driven exactly to zero by replacing
+the disagreement-branch Gaussian release with a uniform U({−1, +1}) coin flip, and the resulting
+PACZERO-ZPL variant satisfies I(S∗; Y1:T )=0 for every T, an MIA-resistance level matched in
+the DP framework only at ε=0 (infinite per-step noise; see §2). Contributions are as follows:
+• The PACZERO family of PAC-private ZO mechanisms. We introduce PACZERO2,
+a family of mechanisms unified by sign quantization of subset-aggregated zeroth-order
+updates, with two concrete variants (PACZERO-MI, PACZERO-ZPL) that differ in how the
+disagreement branch is handled and span two points in the privacy-utility design space (§3).
+We evaluate both on SST-2 and SQuAD across OPT-1.3B and OPT-6.7B in both LoRA and
+full-parameter tracks (Table 1).
+• Exact binary-input Gaussian MI calibration We replace the variance-based Gaussian
+upper bound used by canonical PAC algorithms with the exact mutual information of the
+noised binary release, removing a calibration gap that grows unboundedly as the noise scale
+tightens (§3.1). PACZERO-MI accuracy is flat across four decades of MI budget on SST-2
+OPT-1.3B FT, reaching 89.51±1.12% at MI = 0.33 nats (matched-MIA DP ε≈2), +2.9pp
+above the matched DPZero K=1 FT baseline [46] (Table 2).
+2Code: 
+Per-sample ZO
+ˆgi, i=1:N
+M =128 subset means
+¯gm
+sm =sign(¯gm)
+Posterior agreement
+q+
+t =P
+m pt[m] 1[sm =+1]
+Unanimity q+
+t ∈{0, 1}
+Yt ←sS∗,
+βused
+t
+=0
+pt+1 ←pt
+Disagreement branch
+σt =BinaryMI−1(q+
+t , βt)
+˜Yt =sS∗+N(0, σ2
+t ), Yt =sign( ˜Yt)
+pt+1[m]∝pt[m] N( ˜Yt; sm, σ2
+t )
+Update: θt+1 ←(1−ηtλ)θt−ηtYtzt
+split
+agree
+Figure 1: The PACZERO per-step mechanism. Per-sample ZO scalars are aggregated over M =128
+random subsets, sign-quantized to sm ∈{−1, +1}, and released as a single bit identifying the sign of
+the secret subset. On unanimity (q+
+t ∈{0, 1}) the released bit is constant on supp pt and contributes
+zero conditional MI. On disagreement, PACZERO-MI releases sign(sj∗+N(0, σ2
+t )) with σt calibrated
+to a per-step MI budget βt (§3.1); PACZERO-ZPL replaces this with a uniform U({−1, +1}) coin
+flip, consuming zero MI and yielding I(S∗; Y1:T )=0 for every T.
+• An MIA-resistance level no DP-ZO can match. The PACZERO-ZPL variant guarantees
+I(S∗; Y1:T )=0 for every T (MIA posterior at the prior), the first such guarantee for iterative
+LLM fine-tuning to our knowledge; matching it in DP requires ε = 0, to which every
+DP-SGD accountant assigns infinite noise (§2, §3.2).
+Scope of the I = 0 guarantee.
+PACZERO-ZPL protects the identity of the secret subset S∗∈
+{S1, . . . , SM} sampled from D=Unif{S1, . . . , SM} over a public candidate universe U (§2); under
+D the prior MIA success rate per record is 1/2, and I(S∗; Y1:T )=0 collapses the posterior to this
+prior. It is not a DP guarantee. DP at ε=0 requires identical output distributions across all neighbors
+(and forces infinite per-step noise), which PACZERO-ZPL does not satisfy. The matched-MIA-prior
+DP-ε annotations in our tables (e.g., "DP ε=0") denote the DP value that yields the same MIA upper
+bound at prior 1/2, not a claim that PACZERO satisfies (ε, δ)-DP (§6).
+Background
+Two-point zeroth-order gradient estimation.
+For a model with parameters θ ∈Rd and a
+per-sample loss ℓi(θ), the two-point zeroth-order estimator [28, 24] samples a single direction
+z ∼N(0, Id) and computes the per-sample finite-difference scalar
+ˆgi = ℓi(θ + µz) −ℓi(θ −µz)
+2µ
+= ⟨∇ℓi(θ), z⟩+ O(µ2),
+(1)
+where µ > 0 is the perturbation scale [24]. The parameter update is θ ←θ −η · ˆg · z, where ˆg is
+obtained by clipping and averaging the ˆgi over the batch [46, 5]. The crucial structural property,
+exploited by all DP-ZO methods [46, 36, 5], is that z is sampled independently of the data and
+is therefore public. The only data-dependent quantity per step is the scalar ˆg. Privatizing the
+update therefore reduces to privatizing a scalar (not a d-vector), making the per-step noise scale
+dimension-independent.
+Definition 1 (PAC Privacy [40]). Given a data generating distribution D over possible datasets in X,
+and a binary-valued attack success criterion ρ : X × X →{0, 1}, we say a mechanism M : X →Y
+is (δ, ρ, D)-PAC private if for every adversary A : Y →X, who knows D and M, the attack success
+rate, as measured by ρ, is at most 1 −δ when the secret dataset X is drawn from D and the adversary
+observes Y = M(X): 1 −δA := PrX∼D,Y ←M(X)[ρ(X, A(Y )) = 1] ≤1 −δ.
+PAC Privacy [40] provides an instance-based framework for measuring and bounding information
+leakage about a secret dataset from a mechanism’s output. We note that in Definition 1, privacy
+is established under the strong model of an informed adversary who knows D, and its protection
+over X ∼D naturally extends to weaker adversaries without such knowledge. Given D and ρ,
+an informed adversary has a prior success rate even before observing any outputs, denoted as
+1 −δ0 := maxQ PrX∼D, ˆ
+X∼Q[ρ( ˆX, X) = 1]. A fundamental result of PAC Privacy [40] bounds the
+posterior advantage via mutual information (MI):
+KL(1 −δA ∥1 −δ0) ≤I(X; M(X)),
+(2)
+where KL(p∥q) := p ln(p/q) + (1 −p) ln((1 −p)/(1 −q)) is the binary KL divergence. We note
+that Inequality (2) holds simultaneously for every adversary and every attack criterion. Hence, one
+can specify and enforce a total MI budget, and derive concrete posterior success rate guarantees given
+the prior success rate of an informed adversary under ρ.
+When the mechanism interacts with a persistent secret over T rounds, releasing outputs
+Y1, Y2, . . . , YT , the chain rule of mutual information gives
+I(X; Y1:T ) =
+T
+X
+t=1
+I(X; Yt | Y1:t−1).
+(3)
+To bound each conditional term, [49] proposes to maintain a posterior distribution PS|Y1:t−1=y1:t−1
+over the secret space, which represents the strongest adversary’s optimal belief given the observed
+transcript so far. At step t, the mechanism calibrates its randomness to ensure I(X; Yt | Y1:t−1 =
+y1:t−1) ≤βt for every realization y1:t−1. This framework reduces privacy accounting to per-step MI
+control, which we exploit in § 3.
+Instantiation and MIA guarantees.
+Following standard PAC Privacy instantiation [35, 49, 41, 6],
+given a universe of N training examples U = {x1, . . . , xN}, we construct M subsets S1, . . . , SM ⊂
+U such that each example in U appears in exactly M/2 subsets.
+We then instantiate D =
+Unif{S1, . . . , SM}; equivalently, drawing a secret dataset from D amounts to sampling a secret
+index j∗∼Unif[M] and setting the secret training set S∗= Sj∗. This finite-support structure
+makes adaptive composition tractable: the posterior P(S∗= Sm | Y1:t−1 = y1:t−1) is a discrete
+distribution over [M], maintained exactly in O(M) operations per step via Bayesian updates.
+For membership inference attacks (MIA) targeting a record xi ∈U, the adversary guesses whether
+xi ∈S∗. Since each xi appears in exactly M/2 subsets and j∗is uniform, the prior MIA success
+rate is 1 −δ0 = 1/2. Therefore, enforcing a total MI budget B, numerically solving Eq. (2) yields a
+concrete upper bound on the posterior MIA success rate. For example, B = 1/4 nats limits MIA
+success to ≈84% and lowering B to 1/128 tightens the guarantee to around 56%.
+For comparison, (ε, δ)-differential privacy bounds MIA success at eε/(1 + eε) + δ [35]; concretely,
+(1, 10−5)-DP limits MIA success to 73.11%, while (0.1, 10−5)-DP reduces it to 52.50%. PAC
+Privacy and DP have fundamentally different semantics, and we do not claim equivalence between
+them. Throughout this paper we report PACZERO’s privacy parameter in its native units (MI in
+nats), and where useful for context we annotate "the comparable DP ε that yields the same MIA
+upper bound at the prior 1/2". This DP-ε annotation is a numerical reference point only and does not
+transfer the DP guarantee to PACZERO.
+Finally, the bound (2) is attack-agnostic: for any attack criterion ρ, one can evaluate the informed
+adversary’s prior success rate 1 −δ0 under the subset construction, and derive concrete posterior
+success bounds by inverting the binary KL inequality at the enforced MI budget.
+The PACZero Mechanism
+The per-step procedure of PACZERO is summarized in Algorithm 1. At step t we compute per-sample
+ZO scalars ˆgi as in (1), aggregate to subset means ¯gm over the M subsets of §2, sign-quantize to
+sm ∈{−1, +1}, and release a single bit Yt that updates parameters via θt+1 = θt −ηtYtzt. The
+release is deterministic on the unanimity branch (when the posterior pt ∈∆M−1 over the secret index
+j∗places all mass on subsets that agree on sm) and noised on the disagreement branch otherwise.
+The mechanism instantiates as one of two variants (PACZERO-MI, PACZERO-ZPL) depending on
+how the disagreement branch is handled; §3.1-§3.2 treat each in turn.
+3.1
+PACZERO-MI: adaptive MI allocation
+Per-step MI of the noised binary release.
+The building block of PACZERO-MI is to privatize a
+binary-valued release given constrained mutual information. Let ξ ∈{−1, +1} with P(ξ =+1) = q+
+Algorithm 1 PACZERO per-step update at step t.
+Require: parameters θt; posterior pt ∈∆M−1 over the secret index j∗; per-step budget βt
+1: sample zt ∼N(0, Id)
+▷public ZO direction
+2: for i = 1, . . . , N do
+3:
+ˆgi ←[ℓi(θt + µzt) −ℓi(θt −µzt)]/(2µ)
+▷per-sample finite difference
+4:
+ˆgi ←sign(ˆgi) · min(|ˆgi|, c)
+▷stability clip; not privacy-relevant (see Appendix § C)
+5: end for
+6: ¯gm ←
+|Sm|
+P
+i∈Sm ˆgi,
+sm ←sign(¯gm)
+for m = 1, . . . , M
+7: q+
+t ←P
+m pt[m] · 1[sm = +1]
+▷posterior-weighted agreement probability
+8: if q+
+t ∈{0, 1} then
+▷unanimity branch
+9:
+Yt ←sj∗,
+σt ←0,
+βused
+t
+←0,
+pt+1 ←pt
+10: else
+▷disagreement branch: Gaussian-noised release
+11:
+σt ←BinaryMI−1(q+
+t , βt)
+▷Gauss-Hermite + bisection, §3.1
+12:
+˜Yt ←sj∗+ N(0, σ2
+t ),
+Yt ←sign( ˜Yt),
+βused
+t
+←βt
+13:
+pt+1[m] ∝pt[m] · N( ˜Yt; sm, σ2
+t )
+▷posterior on real-valued release
+14: end if
+15: θt+1 ←(1 −ηtλ)θt −ηt · Yt · zt
+▷λ=0 in all experiments.
+and ˜Y = ξ + N, N ∼N(0, σ2). The mutual information of ξ given ˜Y is
+I(ξ; ˜Y ) =
+X
+s∈{−1,+1}
+P(ξ=s)
+Z
+ϕσ(y −s) log
+ϕσ(y −s)
+q+ϕσ(y −1) + (1 −q+)ϕσ(y + 1) dy,
+(4)
+where ϕσ is the Gaussian density with standard deviation σ. Given (q+
+t , βt), σt solving I(ξ; ˜Y ) = βt
+is recovered by quadrature plus bisection. We denote this process as BinaryMI−1(q+
+t , βt) (Ap-
+pendix C). This evaluates the MI exactly for the binary-Gaussian channel, replacing the variance-based
+Gaussian upper bound used by canonical PAC-Privacy implementations [40, 35, 49].
+Given the posterior pt over the M candidate subsets and the M sign-quantized bits s1, . . . , sM, we
+calibrate noise via BinaryMI−1 to control the per-step MI. Here, two cases arise:
+• Unanimity: when all sm in the support of pt agree, the secret subset’s bit sj∗is identical to every
+other candidate’s bit, so releasing it reveals nothing about which candidate is active-the MI is zero
+even without noise (σt =0). In this branch, the posterior need not be updated and the consumed
+budget is βused
+t
+= 0. This is a direct consequence of PAC Privacy’s stability-based calibration:
+when the output is stable across all plausible secrets, no noise is required.
+• Disagreement: when the support of pt contains both signs (i.e., q+ ∈(0, 1)), we set σt =
+BinaryMI−1(q+
+t , βt) and release the noised signal ˜Yt = sj∗+ N(0, σ2
+t ). The posterior is then
+updated via the likelihood of ˜Yt. To avoid gradient explosion caused by the noise, we post-process
+the noisy release to Yt = sign( ˜Yt) ∈{−1, +1}. The MI between the secret index and the pre-
+quantized noisy release is exactly βused
+t
+= βt by construction; the MI between the secret index and
+the post-processed bit Yt can only be smaller by the data-processing inequality.
+This is formalized in the following lemma (proof in Appendix B.1).
+Lemma 2 (Per-step MI of Algorithm 1). Let pt be the posterior distribution over j∗at step t, let
+s1, . . . , sM ∈{−1, +1} be the subset signs, and let q+
+t
+= P
+m pt[m] · 1[sm = +1]. The mutual
+information between the secret index j∗(sampled from pt) and the mechanism’s output ˜Yt satisfies
+Ij∗∼pt(j∗; ˜Yt) = βused
+t
+,
+where
+βused
+t
+:=
+0
+if q+
+t ∈{0, 1}
+(unanimity),
+βt
+if q+
+t ∈(0, 1)
+(disagreement).
+(5)
+Moreover, since Yt = sign( ˜Yt) is a deterministic post-processing of ˜Yt, the data-processing inequality
+gives Ij∗∼pt(j∗; Yt) ≤βused
+t
+.
+Adaptive MI allocation.
+Given a total MI budget MItot and total step count T, a uniform allocation
+sets βt = MItot/T [49]. This is suboptimal: when the unanimity branch fires at step t, the per-step
+budget βt is unspent, and uniform allocation cannot recover it later, resulting in a loose overall mutual
+information bound. PACZERO-MI uses the adaptive allocation
+βt = max
+
+0, MItot −MI(t−1)
+used
+ 
+(T −t + 1),
+(6)
+where MI(t−1)
+used
+= P
+τ<t βused
+τ
+is the cumulative MI consumed strictly before step t, with an ad-
+ditional feasibility cap βt ←min(βt, 0.999 h(q+
+t )) to ensure the bisection targets a realizable MI
+(Appendix C). The denominator ensures the remaining budget is divided over the remaining steps, so
+the run consumes at most MItot over its entirety. Crucially, βt depends only on the public transcript
+(MI(t−1)
+used is a function of past ˜Y<t and σ<t, not S∗) and the public step index. By the adaptive
+composition framework of [49] applied to the chain rule (3) together with the per-step bound from
+§3.1, a complete PACZERO-MI run satisfies I(S∗; Y1:T ) ≤PT
+t=1 βused
+t
+≤MItot.
+Privacy guarantee.
+With the tight per-step accounting of conditional mutual information (cf.
+Lemma 2) and adaptive budget allocation, the end-to-end fine-tuning algorithm that iteratively
+applies Algorithm 1 satisfies the following mutual information guarantee (full proof is deferred to
+Appendix B.2.):
+Theorem 3 (PACZERO-MI privacy). Iteratively applying Algorithm 1 for T rounds with a total
+mutual information budget of MItot under adaptive budget allocation (6) satisfies
+I(S∗; Y1:T ) ≤MItot.
+(7)
+Corollary 4 (MIA guarantee). For membership inference attacks targeting any record xi ∈U, the
+informed adversary’s prior success is 1−δ0 =1/2 under the subset construction of §2. Applying the
+PAC Privacy bound (2) yeilds KL
+ 1 −δA
+ 1/2
+
+≤MItot.
+3.2
+PACZERO-ZPL: zero privacy loss variant
+We motivate PACZERO-ZPL as the limit of Algorithm 1 as the per-step budget βt →0. On unanimity
+nothing changes: the per-step MI is identically zero regardless of βt (Lemma 2), and the unnoised
+sign sj∗is released deterministically. On disagreement the calibration σt = BinaryMI−1(q+
+t , βt)
+sends σt →∞, and sign(sj∗+ N(0, σ2
+t )) converges in distribution to U({−1, +1}), independent of
+sj∗. PACZERO-ZPL formalizes this limit by bypassing the calibration entirely and releasing the coin
+flip directly,
+Yt ∼U({−1, +1}),
+independent of S∗and zt,
+(8)
+on every disagreement step. The posterior is left unchanged (pt+1 =pt), since Yt carries no signal
+about j∗, and remains at the uniform prior p0 throughout. On unanimity the release is sj∗as in
+PACZERO-MI. The result is a one-line modification of Algorithm 1 (lines 11-13). Convergence
+depends on the unanimity rate not collapsing during training, an empirical property verified in § 4.
+Theorem 5 (PACZERO-ZPL zero mutual information). Under PACZERO-ZPL, I(S∗; Yt | Y<t)=0
+on both branches, hence I(S∗; Y1:T )=0 for every T by the chain rule (3).
+Proof. On unanimity the claim is the unanimity case of Lemma 2. On disagreement Yt is sampled
+independently of S∗, so I(S∗; Yt | Y<t) = 0. The total bound follows from the chain rule (3).
+Corollary 6 (MIA guarantee for PACZERO-ZPL). For membership inference attacks targeting any
+record xi ∈U, applying the PAC Privacy bound (2) with I(S∗; Y1:T ) = 0 from Theorem 5 yields
+KL
+ 1 −δA
+ 1/2
+
+≤0, hence 1 −δA =1/2. PACZERO-ZPL achieves perfect MIA resistance.
+Remark 7 (Comparison with DP ε=0). Differential privacy at ε=0, δ=0 requires identical output
+distributions across all neighboring datasets, which forces infinite noise at any positive sensitivity.
+PACZERO-ZPL sidesteps this because the PAC Privacy guarantee is taken over the candidate-set
+distribution D =Unif{S1, . . . , SM} rather than worst-case adjacency: on unanimity, releasing the
+agreed sign is uninformative about which candidate is the secret yet still drives optimization; on
+disagreement, the coin flip is independent of S∗and contributes no progress. Useful progress thus
+comes from unanimity steps alone.
+4
+Experiments
+We evaluate PACZERO on the two LLM tasks reported by the strongest DP zeroth-order baseline,
+DP-AggZO [5]: SST-2 (binary sentiment classification) [34] and SQuAD (extractive QA, F1) [31].
+Each task is run on OPT-1.3B and OPT-6.7B [47] across two parameter tracks, LoRA r=8 [17]
+and full-parameter fine-tuning (FT). The section is structured around three claims: (i) PACZERO-
+MI matches DP-ZO at the matched-MIA comparison points used by prior DP-ZO work, while
+PACZERO-ZPL reaches I(S∗; Y1:T )=0, with the strongest PACZERO-ZPL cell on SST-2 6.7B FT
+at 90.52±1.43% (Table 1, §4.2); (ii) PACZERO-MI test accuracy is flat across four decades of MI
+budget on the same recipe (Table 2); (iii) prior DP-ZO methods collapse below ε=1 at a per-step DP
+noise floor that no step budget can overcome (Table 3).
+4.1
+Setup
+Protocol.
+We follow the DP-AggZO protocol [5], using |Ntrain|=1000, |Ndev|=500, |Neval|=
+1000, δ = 10−5, and weight decay λ = 0 [24]. Each run trains for up to T steps with dev-best
+checkpoint selection treated as post-processing under (3), so reported MI accounts for the full T-step
+run. Headline budgets are total MI ∈{0.33, 0.68} nats, matching the MIA upper bound of DP
+ε∈{2, 6} at δ=10−5 under the conversion of [49, 5] (numerical reference only; §2). For PACZERO-
+MI we use M =128 subsets; PACZERO-ZPL uses M =126 throughout for implementation reasons
+(Appendix L). Both tracks share the standard LoRA-r=8/α=16 configuration [17, 46]. FT step
+budgets follow DP-AggZO (T = 1000); LoRA step budgets are dev-tuned per cell (T = 2000 for
+PACZERO-MI, T =1000 for PACZERO-ZPL). All learning rates and clip values are dev-tuned per
+cell; LR sweeps (Appendix G), clip ablations (Appendix H), the LoRA rank ablation (Appendix I),
+the canonical PACZERO-ZPL configuration with T-ladders (Appendix L), and per-seed values
+(Appendix E) are in the appendix.
+Baselines.
+Our primary comparators are DPZero [46] and DP-AggZO [5] at matched perturbation
+count K = 1, both directly aligned with PACZERO’s K = 1 design. As a reference for parallel
+directional probing (K > 1), we additionally report DP-AggZO at K = 16. Headline DP cells in
+Table 1 are taken from [5] Table 2 (parity check in Appendix D); since Bao et al. [5] excludes
+DP-LoRA on OPT, all cross-method DP comparisons live in the FT block, and the LoRA block of
+Table 1 functions as a within-method ablation (track-robustness for PACZERO-MI, track-robustness
+for PACZERO-ZPL at I =0). Bao’s non-private MeZO cells are run to convergence over substantially
+more steps [5, §6.1], we use the results reported as-is. We additionally reproduce the high-privacy
+regime in-house at K ∈{1, 64} and ε ∈{0.2, 0.3, 0.5, 1.0, 2.0} (Table 3). A K ∈{4, 16} ablation
+(Appendix M) confirms the K = 1 design is not a special case missing scale, and a non-private
+mechanism decomposition isolating sign quantization is in Appendix K.
+4.2
+Headline results
+Reading Table 1.
+At the matched-MIA comparators MI∈{0.33, 0.68}, PACZERO-MI on SST-2
+1.3B FT exceeds the matched DPZero K = 1 comparator by +2.9pp at MI = 0.33 and +1.0pp at
+MI=0.68, and at 6.7B FT sits within 1.6pp of the non-private MeZO baseline of Bao et al. [5] (93.8
+FT). PACZERO-ZPL satisfies I(S∗; Y1:T ) = 0 for every T by construction (§3.2), and on SST-2
+FT the PACZERO-ZPL cells in Table 1 sit within 2.1-3.3pp of the non-private FT ceilings (91.1 at
+1.3B, 93.8 at 6.7B). On SQuAD, a generative QA stress test for the one-bit release, PACZERO-MI
+trails DPZero K =1 by 6-13 F1 across the FT cells. These cells are not optimization-matched, since
+DPZero K =1 runs at T =20,000 [46] while ours follow the DP-AggZO protocol at T =1000 [5], a
+20× step gap that with the coarser binary release likely explains part of the deficit. PACZERO-ZPL
+still obtains nontrivial F1 at zero MI. FT is the headline track in Table 1; the LoRA-SQuAD cells
+trail their FT counterparts across both scales. This tracks the unanimity rate driving PACZERO-ZPL,
+which falls from ∼34-45% on SST-2 to ∼25-33% on SQuAD-FT and ∼8-11% on SQuAD-LoRA
+(Appendix F).
+Tight-MI plateau.
+Holding the lr/clip/T recipe fixed and sweeping the per-step MI budget across
+four decades on SST-2 FT OPT-1.3B (Table 2), PACZERO-MI test accuracy spans 86.47-89.56%
+(3.09pp) and dev accuracy spans 85.80-88.80% (3.00pp). The unanimity fraction f = nfree/T is
+stable at 37.6-40.7% across the entire range, indicating that the bulk of optimization signal originates
+from zero-cost unanimity steps regardless of how tight the MI budget is set on the disagreement
+Table 1: SST-2 and SQuAD headline numbers (%). PACZERO family: PACZERO-MI (adaptive
+βt, total MI ∈{0.33, 0.68} nats), and PACZERO-ZPL (I = 0). DP cells are taken from Bao et al.
+[5] Table 2 at native ε∈{2, 6}; matched PACZERO-MI budgets MI∈{0.33, 0.68} are MIA-prior
+reference points only (§2). LoRA carries no DP cells since Bao et al. [5] excludes DP-LoRA on
+OPT; I = 0 has no DP cells since no DP-ZO accountant assigns finite noise at ε = 0. Multi-seed:
+mean ± std over n seeds; per-seed values in Appendix E. Bold: PACZERO-ZPL cell statistically
+equivalent to or above the best PACZERO-MI cell in the same column.
+SST-2 (acc.)
+SQuAD (F1)
+Track
+Privacy
+Method
+1.3B
+6.7B
+1.3B
+6.7B
+FT
+DP ε=2
+MI=0.33
+DPZero K =1
+86.6
+92.7
+72.3
+78.5
+DP-AggZO K =16
+90.8
+93.8
+76.3
+82.9
+PACZERO-MI
+89.51±1.12 (n=4)
+92.20±0.45 (n=4)
+60.55 (n=1)
+72.41 (n=1)
+DP ε=6
+MI=0.68
+DPZero K =1
+88.2
+92.9
+74.2
+80.1
+DP-AggZO K =16
+91.3
+94.6
+77.7
+83.3
+PACZERO-MI
+89.19±1.03 (n=4)
+92.28±0.13 (n=3)
+61.53 (n=1)
+71.64 (n=1)
+I =0
+PACZERO-ZPL
+88.99±0.91 (n=3)
+90.52±1.43 (n=3)
+62.25±1.33 (n=3)
+72.12 (n=1)
+LoRA
+MI=0.33
+PACZERO-MI
+89.74±1.53 (n=4)
+90.21±0.43 (n=3)
+41.09 (n=1)
+56.96 (n=1)
+MI=0.68
+PACZERO-MI
+89.51±0.55 (n=4)
+91.17±1.13 (n=3)
+48.32 (n=1)
+55.61 (n=1)
+I =0
+PACZERO-ZPL
+88.69±1.00 (n=3)
+90.56±0.88 (n=3)
+42.36 (n=1)
+57.94 (n=1)
+Table 2: Tight-MI plateau on SST-2 FT OPT-1.3B. Adaptive βt, T = 1000, lr= 10−4, clip 1000,
+M =128, seed 0. Test accuracy spans 86.47-89.56% across four decades of nominal MI (3.09pp);
+dev accuracy spans 85.80-88.80% (3.00pp). Per-step cum_mi≤nominal MI across all 15 cells.
+MI (nats) 10−4 3·10−4 5·10−4 10−3 2·10−3 3·10−3 10−2 3·10−2 5·10−2
+0.07
+0.11
+0.20
+0.33
+0.50
+0.68
+dev %
+88.40
+88.40
+88.80 88.80
+88.80
+88.80 86.20
+86.20
+86.40 85.80 88.00 86.60 87.40 87.20 86.80
+test %
+87.96
+87.96
+87.84 87.84
+87.84
+87.84 86.47
+86.47
+86.47 87.50 89.56 87.73 88.99 89.22 88.76
+f %
+39.2
+39.2
+39.2
+39.2
+39.2
+39.2
+37.6
+37.8
+37.8
+38.0
+39.7
+38.8
+39.1
+38.7
+40.7
+branch (For full unanimity range, see Appendix F). The flat shape across four decades implies the
+PACZERO-MI headline cells are robust to MI budget choice within 10−4-0.68 nats, a robustness
+DP-ZO does not exhibit across its ε sweep (Table 3); the matching LoRA plateau is in Appendix J.
+The DP-ZO cliff: a privacy regime DP-ZO cannot enter.
+DPZero K =1 FT remains at chance
+accuracy (∼50%) for every ε <1 at T =20,000 (Table 3). DP-AggZO K =64 FT exhibits a sharp
+cliff in (0.3, 1.0], first lifting above chance only at ε=0.5 (65.94%) and reaching usable accuracy
+at ε=1.0 (86.24%). Doubling the step budget to T =2000 at ε=0.2 leaves DP-AggZO at chance
+(48.74%), confirming the cliff is set by per-step DP noise rather than undertraining. On the same
+FT track, PACZERO-ZPL at I = 0 matches the strongest in-house DP cell (88.42%) by +0.57pp
+(Table 1). PACZERO thus produces the only usable cells in a privacy regime where every published
+DP-ZO accountant [46, 36, 5] assigns infinite per-step noise.
+Related Works
+DP-SGD [1] clips per-record gradients to a sensitivity budget and adds Gaussian noise tracked by
+Rényi accounting [26, 18]. A mature line adapts this template to LLM fine-tuning, with refinements
+to clipping and adapter integration [44, 20, 16, 9, 10, 48, 23]. The zeroth-order branch privatizes
+the per-step finite-difference scalar instead of the full gradient and removes explicit dimension
+dependence from the per-step noise. Zhang et al. [46] (DPZero) prove nearly dimension-independent
+rates with a Gaussian scalar mechanism, the DP-ZO [36] adopts the same scalar-privatization insight
+empirically with Gaussian and Laplace mechanisms (the latter enabling pure ε-DP), and Bao et al.
+[5] (DP-AggZO) aggregate K finite-difference coefficients into a vector before clipping, reporting
+the strongest results among the DP-ZO baselines on OPT-1.3B/6.7B. All of these inherit a per-record
+(or per-aggregate) sensitivity bound, additive noise scaled to it, and sequential composition over T
+steps, which is the source of the well-documented utility collapse as ε→0 [2, 14, 13]. PACZERO
+retires per-record sensitivity: subset-aggregated sign quantization makes the per-step release a single
+bit, calibrated by the exact mutual information of the noised binary release rather than by a clipping
+Table 3: In-house DP baseline reproduction on SST-2 OPT-1.3B FT (test accuracy %, single-seed).
+The cells in this table are in-house reproductions and are distinct from the as-reported Bao et al. [5]
+Table 2 cells used in Table 1; DPZero K =1 follows [46] (T =20,000, lr=5·10−6, c=25, sample-rate
+0.064). DP-AggZO K =64 follows [5] (T =1000, lr=5·10−6, c=25, N =64, sample-rate 0.064).
+At ε=2, the strongest in-house DP cell is K =64 FT at 88.42%, and the matched PACZERO-ZPL
+FT cell at I =0 reaches 88.99±0.91% (Table 1).
+Method
+T
+ε=0.2
+ε=0.3
+ε=0.5
+ε=1.0
+ε=2.0
+DPZero K =1 FT
+20,000
+50.46
+51.49
+51.03
+50.92
+85.78
+DP-AggZO K =64 FT
+50.11
+52.87
+65.94
+86.24
+88.42
+norm, with per-sample clipping retained only as a utility stabilizer. The PACZERO-ZPL variant
+releases data-independent coins on disagreement steps to reach I =0, a regime whose matched-MIA
+DP equivalent (ε=0) would require unbounded per-step noise under any Gaussian or Laplace DP-ZO
+accountant. The single-bit release shares structure with signSGD [7, 22] but is calibrated for privacy
+rather than compression. Detailed discussion of DP and its relaxations is deferred to § 6.
+Discussion and Limitations
+Privacy semantics: PAC Privacy vs DP.
+PAC Privacy and DP answer different questions and
+we do not claim equivalence (§2). DP bounds the worst-case log-likelihood ratio between output
+distributions on neighboring datasets; PAC Privacy bounds the mutual information between the output
+and the secret drawn from a specified distribution. The core practical distinction is what noise is
+calibrated to: DP calibrates to worst-case per-record sensitivity, while PAC Privacy calibrates to the
+empirical stability of the output under the data-generating distribution D. After sign quantization and
+subset aggregation, this stability can be much smaller than sensitivity-and on unanimity steps it is
+exactly zero, allowing directed updates at no privacy cost.
+Our construction D = Unif{S1, . . . , SM} with balanced membership directly models the stan-
+dard MIA game [33, 42]: a universe of candidates is subsampled, and the adversary who knows
+all candidates determines whether a target record was included. In particular, PACZERO-ZPL’s
+I(S∗; Y1:T )=0 is a guarantee under our explicit candidate-set distribution D=Unif{S1, . . . , SM},
+not a worst-case-adjacency DP guarantee, and the matched-MIA-prior DP-ε annotations in our tables
+(e.g., "DP ε = 2") are numerical references calibrated to the same posterior MIA bound under D,
+not transfers of DP semantics to PACZERO. We also note that while we have focused on resistance
+against balanced MIA games, PAC Privacy provides concrete guarantees for any inference attack on
+the secret dataset, such as reconstruction, group MIA, and positive identification [41].
+Several DP relaxations such as smooth sensitivity [29], per-instance DP [39], individual privacy
+accounting [15, 45], Pufferfish [19], and Bayesian DP [37] reduce noise below the global-sensitivity
+worst case also by incorporating instance-specific or distributional information. However, all remain
+calibrated to some form of per-record divergence (local sensitivity, per-instance εi, or pairwise
+discriminative distributions), so they charge a positive cost whenever any single record’s inclusion
+changes the output distribution. PAC Privacy’s distributional MI formulation avoids this: it asks
+whether the output helps identify which subset is active, not whether it distinguishes specific record
+pairs. When the answer is collectively "no" (unanimity), the cost is zero even if individual records’
+pairwise sensitivities are positive. This structural difference is what enables useful signal at MI=0.
+Future work.
+The most immediate next step is a hybrid budget-then-ZPL schedule: spend the
+MI budget with PACZERO-MI so the posterior pt concentrates over S∗, then switch to PACZERO-
+ZPL and train to dev-best. Total MI stays capped because the zero-cost tail contributes no further
+conditional MI, and the inherited posterior should raise the unanimity rate above a from-scratch
+ZPL run. On the theory side, the unanimous-update-plus-random-jiggle dynamics call for a formal
+convergence analysis. The unanimity rate driving PACZERO-ZPL and the agreement statistics
+governing PACZERO-MI’s binary-channel MI are properties of the loss landscape rather than
+invariants of the mechanism, so whether our observed rates persist on architectures with sharper
+optimization geometry (Llama, Gemma, Mistral), at scales above OPT-6.7B, and on token-level
+generation tasks is an open question. Pre-training is a separate regime: the M-subset construction
+with |U|=1000 fits fine-tuning corpora and would need rethinking at billion-token scale.
+7
+Conclusion
+We introduced PACZERO, a family of PAC-private zeroth-order mechanisms for fine-tuning large
+language models, built around a single primitive: sign-quantize subset-aggregated ZO updates and
+release one bit identifying the sign of the secret subset. The binary release admits exact mutual-
+information calibration as a one-dimensional Gaussian integral, replacing the variance-based upper
+bound used by canonical PAC algorithms. It also exposes posterior-weighted unanimity, which
+contributes zero conditional MI on ∼34-45% of SST-2 training steps. The same primitive instantiates
+two variants that span the privacy-utility frontier: PACZERO-MI (budgeted MI) and PACZERO-ZPL
+(I(S∗; Y1:T )=0 via a uniform release on disagreement steps). On SST-2 OPT-1.3B full fine-tuning,
+PACZERO-ZPL reaches 88.99±0.91% at I = 0, within 2.1pp of the non-private FT baseline
+of Bao et al. [5]. Quantizing before calibrating noise opens an MIA-resistance level, I(S∗; Y1:T )=0
+(matched-MIA DP ε = 0), that no published DP-ZO accountant can reach at finite per-step noise;
+PACZERO attains it while maintaining competitive utility.
+Acknowledgments
+The contribution of Marten van Dijk and Murat Bilgehan Ertan to this publication is part of the project
+CiCS of the research program Gravitation which is (partly) financed by the Dutch Research Council
+(NWO) under the grant 024.006.037. We acknowledge the use of the DAS-6 High-Performance
+Computing cluster at Vrije Universiteit Amsterdam for GPU-based experiments [3].
+References
+[1] Martín Abadi, Andy Chu, Ian J. Goodfellow, H. Brendan McMahan, Ilya Mironov, Kunal
+Talwar, and Li Zhang. Deep learning with differential privacy. In Edgar R. Weippl, Stefan
+Katzenbeisser, Christopher Kruegel, Andrew C. Myers, and Shai Halevi, editors, Proceedings
+of the 2016 ACM SIGSAC Conference on Computer and Communications Security, Vienna,
+Austria, October 24-28, 2016, pages 308-318. ACM, 2016. doi: 10.1145/2976749.2978318.
+URL 
+[2] Eugene Bagdasaryan, Omid Poursaeed, and Vitaly Shmatikov. Differential privacy has disparate
+impact on model accuracy. In Hanna M. Wallach, Hugo Larochelle, Alina Beygelzimer, Flo-
+rence d’Alché-Buc, Emily B. Fox, and Roman Garnett, editors, Advances in Neural Information
+Processing Systems 32: Annual Conference on Neural Information Processing Systems 2019,
+NeurIPS 2019, December 8-14, 2019, Vancouver, BC, Canada, pages 15453-15462, Vancou-
+ver, BC, Canada, 2019. NeurIPS. URL 
+hash/fc0de4e0396fff257ea362983c2dda5a-Abstract.html.
+[3] Henri E. Bal, Dick H. J. Epema, Cees de Laat, Rob van Nieuwpoort, John W. Romein, Frank J.
+Seinstra, Cees Snoek, and Harry A. G. Wijshoff. A medium-scale distributed system for
+computer science research: Infrastructure for the long term. Computer, 49(5):54-63, 2016. doi:
+10.1109/MC.2016.127. URL 
+[4] Borja Balle, Leonard Berrada, Zachary Charles, Christopher A Choquette-Choo, Soham
+De, Vadym Doroshenko, Dj Dvijotham, Andrew Galen, Arun Ganesh, Sahra Ghalebikesabi,
+Jamie Hayes, Peter Kairouz, Ryan McKenna, Brendan McMahan, Aneesh Pappu, Natalia
+Ponomareva, Mikhail Pravilov, Keith Rush, Samuel L Smith, and Robert Stanforth. JAX-
+Privacy: Algorithms for privacy-preserving machine learning in JAX, 2025. URL http:
+//github.com/google-deepmind/jax_privacy.
+[5] Ergute Bao, Yangfan Jiang, Fei Wei, Xiaokui Xiao, Zitao Li, Yaliang Li, and Bolin
+Ding. Unlocking the power of differentially private zeroth-order optimization for fine-tuning
+LLMs. In Lujo Bauer and Giancarlo Pellegrino, editors, 34th USENIX Security Symposium,
+USENIX Security 2025, Seattle, WA, USA, August 13-15, 2025, pages 1569-1588. USENIX
+Association, 2025. URL 
+presentation/bao-ergute.
+[6] Ilaria Battiston, Dandan Yuan, Xiaochen Zhu, and Peter Boncz.
+SIMD-PAC-DB: Pretty
+performant pac privacy. 2026. URL 
+[7] Jeremy Bernstein, Yu-Xiang Wang, Kamyar Azizzadenesheli, and Animashree Anandkumar.
+SIGNSGD: compressed optimisation for non-convex problems. In Jennifer G. Dy and Andreas
+Krause, editors, Proceedings of the 35th International Conference on Machine Learning, ICML
+2018, Stockholmsmässan, Stockholm, Sweden, July 10-15, 2018, Proceedings of Machine
+Learning Research, pages 559-568. PMLR, 2018. URL 
+v80/bernstein18a.html.
+[8] Franziska Boenisch, Philip Sperl, and Konstantin Böttinger. Gradient masking and the underes-
+timated robustness threats of differential privacy in deep learning. CoRR, abs/2105.07985:1-13,
+2021. URL 
+[9] Zhiqi Bu, Yu-Xiang Wang, Sheng Zha, and George Karypis. Differentially private optimization
+on large model at small cost. In Andreas Krause, Emma Brunskill, Kyunghyun Cho, Barbara
+Engelhardt, Sivan Sabato, and Jonathan Scarlett, editors, International Conference on Machine
+Learning, ICML 2023, 23-29 July 2023, Honolulu, Hawaii, USA, Proceedings of Machine
+Learning Research, pages 3192-3218. PMLR, 2023. URL 
+press/v202/bu23a.html.
+[10] Zhiqi Bu, Yu-Xiang Wang, Sheng Zha, and George Karypis.
+Automatic clipping: Dif-
+ferentially private deep learning made easier and stronger.
+In Alice Oh, Tristan Nau-
+mann, Amir Globerson, Kate Saenko, Moritz Hardt, and Sergey Levine, editors, Ad-
+vances in Neural Information Processing Systems 36: Annual Conference on Neural In-
+formation Processing Systems 2023, NeurIPS 2023, New Orleans, LA, USA, December
+10 - 16, 2023, 2023. URL 
+8249b30d877c91611fd8c7aa6ac2b5fe-Abstract-Conference.html.
+[11] Nicholas Carlini, Florian Tramèr, Eric Wallace, Matthew Jagielski, Ariel Herbert-Voss, Kather-
+ine Lee, Adam Roberts, Tom B. Brown, Dawn Song, Úlfar Erlingsson, Alina Oprea, and
+Colin Raffel. Extracting training data from large language models. In Michael D. Bailey and
+Rachel Greenstadt, editors, 30th USENIX Security Symposium, USENIX Security 2021, August
+11-13, 2021, pages 2633-2650. USENIX Association, 2021. URL 
+org/conference/usenixsecurity21/presentation/carlini-extracting.
+[12] Nicholas Carlini, Steve Chien, Milad Nasr, Shuang Song, Andreas Terzis, and Florian Tramèr.
+Membership inference attacks from first principles. In 43rd IEEE Symposium on Security and
+Privacy, SP 2022, San Francisco, CA, USA, May 22-26, 2022, pages 1897-1914. IEEE, 2022.
+doi: 10.1109/SP46214.2022.9833649. URL 
+9833649.
+[13] Soham De, Leonard Berrada, Jamie Hayes, Samuel L. Smith, and Borja Balle. Unlocking
+high-accuracy differentially private image classification through scale, 2022. URL https:
+//arxiv.org/abs/2204.13650.
+[14] Murat Bilgehan Ertan and Marten van Dijk. Fundamental limitations of favorable privacy-utility
+guarantees for DP-SGD. CoRR, abs/2601.10237, 2026. doi: 10.48550/ARXIV.2601.10237.
+URL  Accepted at ACM CCS 2026.
+[15] Vitaly Feldman and Tijana Zrnic.
+Individual privacy accounting via a rényi filter.
+In
+Marc’Aurelio Ranzato, Alina Beygelzimer, Yann N. Dauphin, Percy Liang, and Jennifer Wort-
+man Vaughan, editors, Advances in Neural Information Processing Systems 34: Annual Confer-
+ence on Neural Information Processing Systems 2021, NeurIPS 2021, December 6-14, 2021, vir-
+tual, pages 28080-28091, 2021. URL 
+hash/ec7f346604f518906d35ef0492709f78-Abstract.html.
+[16] Jiyan He, Xuechen Li, Da Yu, Huishuai Zhang, Janardhan Kulkarni, Yin Tat Lee, Arturs
+Backurs, Nenghai Yu, and Jiang Bian. Exploring the limits of differentially private deep
+learning with group-wise clipping. In The Eleventh International Conference on Learning
+Representations, ICLR 2023, Kigali, Rwanda, May 1-5, 2023. OpenReview.net, 2023. URL
+
+[17] Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang,
+Lu Wang, and Weizhu Chen. LoRA: Low-rank adaptation of large language models. In The Tenth
+International Conference on Learning Representations, ICLR 2022, Virtual Event, April 25-29,
+2022. OpenReview.net, 2022. URL 
+[18] Peter Kairouz, Sewoong Oh, and Pramod Viswanath. The composition theorem for differential
+privacy. In Francis R. Bach and David M. Blei, editors, Proceedings of the 32nd International
+Conference on Machine Learning, ICML 2015, Lille, France, 6-11 July 2015, volume 37 of
+JMLR Workshop and Conference Proceedings, pages 1376-1385. JMLR.org, 2015. URL
+
+[19] Daniel Kifer and Ashwin Machanavajjhala. Pufferfish: A framework for mathematical privacy
+definitions. ACM Trans. Database Syst., 39(1):3:1-3:36, 2014. doi: 10.1145/2514689. URL
+
+[20] Xuechen Li, Florian Tramèr, Percy Liang, and Tatsunori Hashimoto. Large language models
+can be strong differentially private learners. In The Tenth International Conference on Learning
+Representations, ICLR 2022, Virtual Event, April 25-29, 2022. OpenReview.net, 2022. URL
+
+[21] Hao Liang, Wanrong Zhang, Xinlei He, Kaishun Wu, and Hong Xing. An improved privacy and
+utility analysis of differentially private SGD with bounded domain and smooth losses. CoRR,
+abs/2502.17772:1-19, 2025. doi: 10.48550/ARXIV.2502.17772. URL 
+48550/arXiv.2502.17772.
+[22] Sijia Liu, Pin-Yu Chen, Xiangyi Chen, and Mingyi Hong. signsgd via zeroth-order oracle.
+In 7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA,
+USA, May 6-9, 2019. OpenReview.net, 2019. URL 
+BJe-DsC5Fm.
+[23] Xiao-Yang Liu, Rongyi Zhu, Daochen Zha, Jiechao Gao, Shan Zhong, Matt White, and
+Meikang Qiu. Differentially private low-rank adaptation of large language model using federated
+learning. ACM Trans. Manag. Inf. Syst., 16(2):1-24, 2025. doi: 10.1145/3682068. URL
+
+[24] Sadhika Malladi, Tianyu Gao, Eshaan Nichani, Alex Damian, Jason D. Lee, Danqi Chen,
+and Sanjeev Arora. Fine-tuning language models with just forward passes. In Alice Oh,
+Tristan Naumann, Amir Globerson, Kate Saenko, Moritz Hardt, and Sergey Levine, edi-
+tors, Advances in Neural Information Processing Systems 36: Annual Conference on Neu-
+ral Information Processing Systems 2023, NeurIPS 2023, New Orleans, LA, USA, December
+10 - 16, 2023, 2023. URL 
+a627810151be4d13f907ac898ff7e948-Abstract-Conference.html.
+[25] Fatemehsadat Mireshghallah, Kartik Goyal, Archit Uniyal, Taylor Berg-Kirkpatrick, and Reza
+Shokri. Quantifying privacy risks of masked language models using membership inference
+attacks. In Yoav Goldberg, Zornitsa Kozareva, and Yue Zhang, editors, Proceedings of the 2022
+Conference on Empirical Methods in Natural Language Processing, EMNLP 2022, Abu Dhabi,
+United Arab Emirates, December 7-11, 2022, pages 8332-8347. Association for Computational
+Linguistics, 2022. doi: 10.18653/V1/2022.EMNLP-MAIN.570. URL 
+18653/v1/2022.emnlp-main.570.
+[26] Ilya Mironov.
+Rényi differential privacy.
+In 30th IEEE Computer Security Foundations
+Symposium, CSF 2017, Santa Barbara, CA, USA, August 21-25, 2017, pages 263-275. IEEE
+Computer Society, 2017. doi: 10.1109/CSF.2017.11. URL 
+2017.11.
+[27] Milad Nasr, Javier Rando, Nicholas Carlini, Jonathan Hayase, Matthew Jagielski, A. Feder
+Cooper, Daphne Ippolito, Christopher A. Choquette-Choo, Florian Tramèr, and Katherine Lee.
+Scalable extraction of training data from aligned, production language models. In The Thirteenth
+International Conference on Learning Representations, ICLR 2025, Singapore, April 24-28,
+2025. OpenReview.net, 2025. URL 
+[28] Yurii E. Nesterov and Vladimir G. Spokoiny. Random gradient-free minimization of convex
+functions. Found. Comput. Math., 17(2):527-566, 2017. doi: 10.1007/S10208-015-9296-2.
+URL 
+[29] Kobbi Nissim, Sofya Raskhodnikova, and Adam Smith. Smooth sensitivity and sampling
+in private data analysis. In Proceedings of the Thirty-Ninth Annual ACM Symposium on
+Theory of Computing, STOC ’07, page 75-84, New York, NY, USA, 2007. Association for
+Computing Machinery. ISBN 9781595936318. doi: 10.1145/1250790.1250803. URL https:
+//doi.org/10.1145/1250790.1250803.
+[30] Natalia Ponomareva, Hussein Hazimeh, Alex Kurakin, Zheng Xu, Carson Denison, H. Brendan
+McMahan, Sergei Vassilvitskii, Steve Chien, and Abhradeep Guha Thakurta. How to dp-fy ML:
+A practical guide to machine learning with differential privacy. J. Artif. Intell. Res., 77:1113-
+1201, 2023. doi: 10.1613/JAIR.1.14649. URL 
+[31] Pranav Rajpurkar, Jian Zhang, Konstantin Lopyrev, and Percy Liang. SQuAD: 100, 000+
+questions for machine comprehension of text. In Jian Su, Xavier Carreras, and Kevin Duh,
+editors, Proceedings of the 2016 Conference on Empirical Methods in Natural Language
+Processing, EMNLP 2016, Austin, Texas, USA, November 1-4, 2016, pages 2383-2392. The
+Association for Computational Linguistics, 2016. doi: 10.18653/V1/D16-1264. URL https:
+//doi.org/10.18653/v1/d16-1264.
+[32] Yinchen Shen, Zhiguo Wang, Ruoyu Sun, and Xiaojing Shen. Towards understanding the
+impact of model size on differential private classification. CoRR, abs/2111.13895:1-14, 2021.
+URL 
+[33] Reza Shokri, Marco Stronati, Congzheng Song, and Vitaly Shmatikov. Membership inference
+attacks against machine learning models. In 2017 IEEE Symposium on Security and Privacy,
+SP 2017, San Jose, CA, USA, May 22-26, 2017, pages 3-18. IEEE Computer Society, 2017. doi:
+10.1109/SP.2017.41. URL 
+[34] Richard Socher, Alex Perelygin, Jean Wu, Jason Chuang, Christopher D. Manning, Andrew Y.
+Ng, and Christopher Potts. Recursive deep models for semantic compositionality over a sen-
+timent treebank. In Proceedings of the 2013 Conference on Empirical Methods in Natural
+Language Processing, EMNLP 2013, 18-21 October 2013, Grand Hyatt Seattle, Seattle, Wash-
+ington, USA, A meeting of SIGDAT, a Special Interest Group of the ACL, pages 1631-1642. ACL,
+2013. doi: 10.18653/V1/D13-1170. URL 
+[35] Mayuri Sridhar, Hanshen Xiao, and Srinivas Devadas. Pac-private algorithms. In Marina Blan-
+ton, William Enck, and Cristina Nita-Rotaru, editors, IEEE Symposium on Security and Privacy,
+SP 2025, San Francisco, CA, USA, May 12-15, 2025, pages 3839-3857. IEEE, 2025. doi:
+10.1109/SP61157.2025.00034. URL 
+[36] Xinyu Tang, Ashwinee Panda, Milad Nasr, Saeed Mahloujifar, and Prateek Mittal. Private
+fine-tuning of large language models with zeroth-order optimization. Trans. Mach. Learn. Res.,
+2025, 2025. URL 
+[37] Aleksei Triastcyn and Boi Faltings. Bayesian differential privacy for machine learning. In
+Proceedings of the 37th International Conference on Machine Learning, ICML 2020, 13-18
+July 2020, Virtual Event, Proceedings of Machine Learning Research, pages 9583-9592. PMLR,
+2020. URL 
+[38] Nurislam Tursynbek, Aleksandr Petiushko, and Ivan V. Oseledets. Robustness threats of
+differential privacy. CoRR, abs/2012.07828:1-16, 2020. URL 
+2012.07828.
+[39] Yu-Xiang Wang. Per-instance differential privacy. J. Priv. Confidentiality, 9(1), 2019. doi:
+10.29012/JPC.662. URL 
+[40] Hanshen Xiao and Srinivas Devadas. PAC Privacy: Automatic privacy measurement and
+control of data processing. In Helena Handschuh and Anna Lysyanskaya, editors, Advances
+in Cryptology - CRYPTO 2023 - 43rd Annual International Cryptology Conference, CRYPTO
+2023, Santa Barbara, CA, USA, August 20-24, 2023, Proceedings, Part II, Lecture Notes in
+Computer Science, pages 611-644. Springer, 2023. doi: 10.1007/978-3-031-38545-2\_20.
+URL 
+[41] Hanshen Xiao, G. Edward Suh, and Srinivas Devadas. Formal privacy proof of data encoding:
+The possibility and impossibility of learnable encryption. In Proceedings of the 2024 on ACM
+SIGSAC Conference on Computer and Communications Security, CCS ’24, page 1834-1848,
+New York, NY, USA, 2024. Association for Computing Machinery. ISBN 9798400706363. doi:
+10.1145/3658644.3670277. URL 
+[42] Samuel Yeom, Irene Giacomelli, Matt Fredrikson, and Somesh Jha. Privacy risk in machine
+learning: Analyzing the connection to overfitting. In 31st IEEE Computer Security Foundations
+Symposium, CSF 2018, Oxford, United Kingdom, July 9-12, 2018, pages 268-282. IEEE
+Computer Society, 2018. doi: 10.1109/CSF.2018.00027. URL 
+CSF.2018.00027.
+[43] Ashkan Yousefpour, Igor Shilov, Alexandre Sablayrolles, Davide Testuggine, Karthik Prasad,
+Mani Malek, John Nguyen, Sayan Ghosh, Akash Bharadwaj, Jessica Zhao, Graham Cormode,
+and Ilya Mironov.
+Opacus: User-friendly differential privacy library in pytorch.
+CoRR,
+abs/2109.12298, 2021. URL 
+[44] Da Yu, Saurabh Naik, Arturs Backurs, Sivakanth Gopi, Huseyin A. Inan, Gautam Kamath,
+Janardhan Kulkarni, Yin Tat Lee, Andre Manoel, Lukas Wutschitz, Sergey Yekhanin, and
+Huishuai Zhang. Differentially private fine-tuning of language models. In The Tenth Interna-
+tional Conference on Learning Representations, ICLR 2022, Virtual Event, April 25-29, 2022.
+OpenReview.net, 2022. URL 
+[45] Da Yu, Gautam Kamath, Janardhan Kulkarni, Tie-Yan Liu, Jian Yin, and Huishuai Zhang.
+Individual privacy accounting for differentially private stochastic gradient descent. Trans. Mach.
+Learn. Res., 2023, 2023. URL 
+[46] Liang Zhang, Bingcong Li, Kiran Koshy Thekumparampil, Sewoong Oh, and Niao He. DPZero:
+Private fine-tuning of language models without backpropagation. In Ruslan Salakhutdinov,
+Zico Kolter, Katherine A. Heller, Adrian Weller, Nuria Oliver, Jonathan Scarlett, and Felix
+Berkenkamp, editors, Forty-first International Conference on Machine Learning, ICML 2024,
+Vienna, Austria, July 21-27, 2024, Proceedings of Machine Learning Research, pages 59210-
+59246. PMLR / OpenReview.net, 2024. URL 
+zhang24af.html.
+[47] Susan Zhang, Stephen Roller, Naman Goyal, Mikel Artetxe, Moya Chen, Shuohui Chen,
+Christopher Dewan, Mona T. Diab, Xian Li, Xi Victoria Lin, Todor Mihaylov, Myle Ott, Sam
+Shleifer, Kurt Shuster, Daniel Simig, Punit Singh Koura, Anjali Sridhar, Tianlu Wang, and Luke
+Zettlemoyer. OPT: open pre-trained transformer language models. CoRR, abs/2205.01068,
+2022. doi: 10.48550/ARXIV.2205.01068. URL 
+01068.
+[48] Xinwei Zhang, Zhiqi Bu, Steven Wu, and Mingyi Hong. Differentially private SGD without
+clipping bias: An error-feedback approach. In The Twelfth International Conference on Learning
+Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024. OpenReview.net, 2024. URL
+
+[49] Xiaochen Zhu, Mayuri Sridhar, and Srinivas Devadas. Pac-private responses with adversarial
+composition. CoRR, abs/2601.14033, 2026. doi: 10.48550/ARXIV.2601.14033. URL https:
+//doi.org/10.48550/arXiv.2601.14033.
+A
+Appendix Organization
+Appendix is organized as follows.
+• Appendix B contains deferred full proofs of Lemma 2 (Appendix B.1) and Theorem 3
+(Appendix B.2).
+• Appendix C collects PACZERO implementation details: the role of the stability clip, numer-
+ical evaluation of the binary-channel MI integral, the sign convention at zero, the unanimity
+tolerance, and the entropy-ceiling cap on βt.
+• Appendix D reports the parity check between our in-house DP-AggZO implementation and
+the cells of [5] cited in Table 1.
+• Appendix E gives per-seed test values for every multi-seed cell of Table 1.
+• Appendix F reports the unanimity fraction f =nfree/T for every cell of Table 1.
+• Appendix G reports per-cell headline recipes (Table 7) and the PACZERO-ZPL learning-rate
+sweep that selects them (Table 8).
+• Appendix H reports the 6.7B LoRA clip-norm ablation.
+• Appendix I reports the 6.7B LoRA rank ablation.
+• Appendix J reports the LoRA analogue of the FT plateau in Table 2, spanning four decades
+of nominal MI.
+• Appendix K decomposes the PACZERO per-step release into deterministic surrogates and
+reports the random-sign negative control.
+• Appendix L characterises PACZERO-ZPL in the canonical M =128 dev-tuned configuration
+and reports three T-ladder studies on post-convergence drift, including a 6.7B FT multi-seed
+extension.
+• Appendix M extends the per-step release to K ∈{4, 16} following the DP-AggZO-style
+aggregation pattern at both 1.3B and 6.7B SST-2.
+• Appendix N reports per-cell GPU-hours and infrastructure (Tables 20-21).
+B
+Deferred full proofs
+B.1
+Proof to Lemma 2
+Proof. Unanimity (q+
+t ∈{0, 1}): If q+
+t = 1, then sm = +1 for all m in the support of pt, so sj∗= +1
+with probability 1 and ˜Yt = sj∗= +1 is a constant. Symmetrically if q+
+t = 0. A constant carries
+zero MI.
+Disagreement (q+
+t ∈(0, 1)): Define ξ := sj∗∈{−1, +1}, a deterministic function of j∗given the
+fixed signs. Since the Gaussian noise is independent of j∗, the channel j∗→ξ →˜Yt forms a Markov
+chain. By the chain rule:
+I(j∗; ˜Yt) = I(ξ; ˜Yt) + I(j∗; ˜Yt | ξ)
+|
+{z
+}
+= 0
+,
+where the second term vanishes because ˜Yt = ξ + N(0, σ2
+t ) is conditionally independent of j∗given
+ξ. Since P(ξ =+1) = q+
+t and σt = BinaryMI−1(q+
+t , βt), we have I(ξ; ˜Yt) = IBG(q+
+t , σt) = βt
+by construction of the inverse. By post-processing, we have Ij∗∼pt(j∗; Yt) ≤Ij∗∼pt(j∗; ˜Yt) =
+βused
+t
+.
+B.2
+Proof to Theorem 3
+Proof. The perturbation directions z1:T are sampled from a public-seed PRG independently of the
+secret S∗, so they carry no information about S∗. Conditioning on the realised directions (equivalently,
+treating them as fixed constants) does not increase the MI: I(S∗; Y1:T ) ≤I(S∗; Y1:T | z1:T ).
+On each step, the mechanism internally produces either ˜Yt = sj∗(unanimity) or ˜Yt = sj∗+N(0, σ2
+t )
+(disagreement), and releases Yt = sign( ˜Yt). Since Y1:T is a componentwise deterministic function of
+˜Y1:T , the data-processing inequality gives
+I(S∗; Y1:T | z1:T ) ≤I(S∗; ˜Y1:T | z1:T ).
+(9)
+Applying the chain rule:
+I(S∗; ˜Y1:T | z1:T ) =
+T
+X
+t=1
+I(S∗; ˜Yt | ˜Y1:t−1, z1:T ).
+(10)
+We now apply the per-step guarantee to each term. Given any realisation ˜y1:t−1 and the fixed
+directions z1:T , the mechanism state at step t is fully determined: the parameters θt (from θ0 and
+sign(˜y1:t−1) via the update rule), the posterior pt (from the Bayesian updates on ˜y1:t−1), all per-
+sample scalars ˆgi (from θt and zt), all subset signs s1:M, the agreement probability q+
+t , and the noise
+level σt. The only remaining randomness is in j∗(with conditional distribution pt) and the Gaussian
+noise. This is exactly the setting of Eq. 4 with p = pt and the determined signs s1:M, giving
+I(S∗; ˜Yt | ˜Y1:t−1 = ˜y1:t−1, z1:T ) = βused
+t
+(˜y1:t−1, z1:T )
+(zero on unanimity steps, βt on disagreement steps). Since this holds for every realisation, taking
+expectations:
+I(S∗; ˜Y1:T | z1:T ) = E
+" T
+X
+t=1
+βused
+t
+#
+≤MItot,
+(11)
+where the inequality holds because P
+t βused
+t
+≤MItot for every realisation (by the adaptive budget
+rule).
+C
+PACZero methodology: implementation details
+The role of the stability clip.
+Per-sample clipping at magnitude c before subset aggregation is a
+utility stabiliser, not a privacy device. It bounds any single sample’s leverage on the subset mean, so a
+hard example cannot single-handedly flip a subset’s sign. Because the released quantity is a single bit
+and the binary-channel MI accounts for all leakage of sj∗, the magnitude of ˆgi does not enter the
+privacy proof; clipping only affects the empirical sign distribution. § 4 confirms it is utility-relevant
+(∼2pp on LoRA) but no calibration to a record-level sensitivity is required.
+Numerical evaluation of the binary-channel MI integral.
+We evaluate (4) via 60-node Gauss-
+Hermite quadrature, with log-sum-exp stabilisation to handle the σ↓0 regime cleanly. Given (q+, βt),
+σt solving I(ξ; ˜Y ) = βt is recovered by bisection in log σ, since I(ξ; ˜Y ) is monotonically decreasing
+in σ by data-processing.
+Sign convention at zero.
+In Algorithm 1 we adopt the convention sign(0) := +1; i.e. exact zeros
+in either ¯gm or the noised disagreement-branch release ˜Yt are mapped to +1. This preserves the
+binary support {−1, +1} assumed by Eq. (4) and Lemma 2. The event ¯gm =0 exactly is not observed
+in any of our runs.
+Unanimity tolerance.
+Algorithm 1 writes the unanimity test as q+
+t ∈{0, 1}. Our implementation
+evaluates this with a small tolerance, q+
+t ≤τ or q+
+t ≥1−τ with τ =10−12, so floating-point roundoff
+in the posterior weights does not silently push a near-unanimity step onto the noised branch. Under
+this tolerance, the residual conditional MI on a tolerance-detected unanimity step is bounded above
+by the binary entropy at the tolerance, h(τ)≈τ log(1/τ), which at τ =10−12 is ∼2.8×10−11 nats
+per step. Summed over the headline T =2000 this is ≤5.5×10−8 nats, six orders of magnitude below
+the tightest reported budget; the chain-rule bound of Theorem 3 is preserved up to this tolerance term,
+which we treat as zero throughout.
+Entropy-ceiling cap.
+A single bit cannot leak more MI than the binary entropy of the secret
+distribution, h(q+
+t ) = −q+
+t log q+
+t −(1 −q+
+t ) log(1 −q+
+t ). When the posterior has concentrated,
+h(q+
+t ) shrinks below βt and the bisection in step 11 of Algorithm 1 would target an infeasible MI.
+Before invoking BinaryMI−1 we therefore cap βt ←min(βt, 0.999·h(q+
+t )). The cap is a function
+of pt only (not S∗), so admissibility under adaptive composition is preserved.
+D
+DP-AggZO parity check
+To verify that our in-house DP-AggZO implementation matches the published cells of [5], we reran a
+representative subset of the K =64 FT cells at single seed and compared against [5] Table 2. The
+mean absolute deviation across the parity-check subset is |∆| = 0.9pp, with the largest deviation
+2.4pp at ε = 2 (single-seed; the published cell is single-seed as well, so seed variance is the most
+likely source). This level of parity is consistent with the codebase being faithful to the published
+recipe; the residual gap is attributable to seed variance and minor accountant calibration rounding.
+This justifies treating the published FT K =1 and K =16 cells of [5] as direct comparators in Table 1.
+E
+Per-seed values for multi-seed cells
+For each multi-seed cell reported in the headline Table 1, we give the per-seed test values used to
+compute the mean ± std (sample standard deviation, n−1 denominator).
+SST-2 multi-seed cells (Table 1).
+Tables 4 and 5 report per-seed test accuracy % for the eight
+SST-2 multi-seed cells.
+Table 4: Per-seed test % for SST-2 PACZERO-MI cells in Table 1.
+Track / Model
+MI
+n
+per-seed test %
+mean ± std
+LoRA 1.3B
+0.33
+89.45, 87.73, 90.48, 91.28
+89.74±1.53
+LoRA 1.3B
+0.68
+88.99, 89.22, 89.56, 90.25
+89.51±0.55
+FT 1.3B
+0.33
+88.76, 88.42, 90.02, 90.83
+89.51±1.12
+FT 1.3B
+0.68
+88.76, 87.96, 89.79, 90.25
+89.19±1.03
+LoRA 6.7B
+0.33
+90.02, 89.91, 90.71
+90.21±0.43
+LoRA 6.7B
+0.68
+92.09, 89.91, 91.51
+91.17±1.13
+FT 6.7B
+0.33
+92.09, 92.66, 91.63, 92.43
+92.20±0.45
+FT 6.7B
+0.68
+92.43, 92.20, 92.20
+92.28±0.13
+Table 5: Per-seed test % for SST-2 PACZERO-ZPL cells in Table 1. All multi-seed PACZERO-
+ZPL pools are trained under the headline protocol (-pac_load_best_dev True) at the recipes of
+Table 7. Single-seed reference cells appearing elsewhere in the appendix-the LoRA dev-winner
+86.81 in Table 8 and the FT T =1000 entry 89.56 in Table 14-are seed 0 cells from different runs:
+the LoRA cell is a final-T result from the LR sweep of Table 8 (no -pac_load_best_dev); the FT
+cell is a post-hoc dev-best evaluation of a checkpoint from a longer-T trajectory at the canonical
+no-clip recipe (which differs from the M=126 c=1000 headline FT recipe). Neither is pooled into the
+multi-seed means below.
+Track / Model
+n
+per-seed test %
+mean ± std
+LoRA 1.3B
+89.79, 87.84, 88.42
+88.69±1.00
+FT 1.3B
+88.30, 88.65, 90.02
+88.99±0.91
+LoRA 6.7B
+89.79, 91.51, 90.37
+90.56±0.88
+FT 6.7B
+88.88, 91.51, 91.17
+90.52±1.43
+SQuAD multi-seed cell (Table 1).
+The 1.3B SQuAD FT PACZERO-ZPL cell in Table 1 pools
+three seeds at the locked recipe lr= 10−4, c = 1000, T = 1000, M = 126, polynomial scheduler,
+-pac_load_best_dev. Per-seed test F1: 62.36 (s0), 63.53 (s1), 60.87 (s2) ⇒n=3 mean 62.25±
+1.33 (test F1), dev F1 57.73±1.87. The remaining SQuAD cells in Table 1 are reported single-seed
+at the per-cell compute cost of one T-step trajectory at OPT-6.7B SQuAD scale.
+Canonical-configuration PACZERO-ZPL multi-seed values (Appendix L).
+6.7B LoRA
+canonical-configuration per-seed peak-rung test % (Table 15): 90.14 (seed 0, T = 500), 87.16
+(seed 1, T =500), 86.35 (seed 2, T =500); n=3 mean 87.88±2.00.
+F
+Unanimity rates per headline cell
+Table 6 reports the unanimity fraction f =nfree/T for every cell of Table 1, broken out by variant.
+SST-2 cells fire the unanimity branch on 34-45% of steps; SQuAD-FT drops to 25-33%; SQuAD-
+LoRA collapses to 8-11%. Within each (track, scale, task) cell the rate is broadly stable across
+PAC-MI at MI=0.33, PAC-MI at MI=0.68, and PACZERO-ZPL, consistent with unanimity being
+a property of the loss landscape rather than the variant. The SQuAD-LoRA collapse tracks the largest
+F1 gaps in Table 1: PACZERO-ZPL draws all signal from unanimity steps, and that rate falls fastest
+exactly where the F1 gap is widest.
+Table 6: Unanimity rate f =nfree/T per Table 1 cell, single representative seed. Canonical runs
+only (M =128 for PACZERO-MI / M =126 for PACZERO-ZPL). f% is the cumulative free-step
+fraction at end of training and is independent of dev-best vs. end-of-T checkpoint selection.
+Track / Model
+Privacy
+SST-2 f%
+SQuAD f%
+FT 1.3B
+PACZERO-MI MI=0.33
+39.1
+25.0
+FT 1.3B
+PACZERO-MI MI=0.68
+39.4
+25.1
+FT 1.3B
+PACZERO-ZPL
+41.2
+26.3
+FT 6.7B
+PACZERO-MI MI=0.33
+33.9
+32.2
+FT 6.7B
+PACZERO-MI MI=0.68
+37.1
+30.9
+FT 6.7B
+PACZERO-ZPL
+36.4
+32.8
+LoRA 1.3B
+PACZERO-MI MI=0.33
+41.4
+9.8
+LoRA 1.3B
+PACZERO-MI MI=0.68
+41.7
+10.1
+LoRA 1.3B
+PACZERO-ZPL
+40.6
+9.4
+LoRA 6.7B
+PACZERO-MI MI=0.33
+38.3
+11.3
+LoRA 6.7B
+PACZERO-MI MI=0.68
+38.4
+9.1
+LoRA 6.7B
+PACZERO-ZPL
+45.3
+8.1
+G
+Per-cell headline recipes and learning-rate sweeps
+Per-cell headline recipes.
+Table 7 consolidates the dev-tuned learning-rate, clip, T, and M values
+used for every cell of the headline Table 1. PACZERO-MI recipes are dev-best winners on a per-cell
+single-seed sweep; the PACZERO-ZPL recipes are dev-tuned per (track, scale). Sweeps that produced
+the chosen lr values are reported below (this section, Table 8); clip sweeps in Appendix H.
+Table 7: Per-cell headline recipes for SST-2 and SQuAD cells in Table 1. Subset count M =128
+for PACZERO-MI throughout; I = 0 PACZERO-ZPL cells use M = 126 throughout. Smoothing
+µ=10−3 and weight decay λ=0 throughout. SQuAD LoRA cells use T =1000 throughout (rather
+than T =2000 as on SST-2 LoRA) due to per-cell compute cost. We select one representative seed
+and report that.
+Variant
+Track / Model
+lr
+clip c
+T
+M
+SST-2
+PACZERO-MI
+LoRA 1.3B
+5·10−4
+2000
+PACZERO-MI
+LoRA 6.7B
+10−3
+2000
+PACZERO-MI
+FT (both)
+10−4
+1000
+PACZERO-ZPL
+LoRA 1.3B
+10−3
+1000
+PACZERO-ZPL
+LoRA 6.7B
+10−3
+1000
+PACZERO-ZPL
+FT 1.3B
+10−4
+1000
+PACZERO-ZPL
+FT 6.7B
+10−4
+1000
+SQuAD
+PACZERO-MI
+LoRA 1.3B
+10−3
+1000
+PACZERO-MI
+LoRA 6.7B
+10−3
+1000
+PACZERO-MI
+FT (both)
+10−4
+1000
+PACZERO-ZPL
+LoRA 1.3B
+10−3
+1000
+PACZERO-ZPL
+LoRA 6.7B
+10−3
+1000
+PACZERO-ZPL
+FT 1.3B
+10−4
+1000
+PACZERO-ZPL
+FT 6.7B
+10−4
+1000
+PACZERO-ZPL learning-rate sweep.
+Single-seed sweeps over the chosen LR ranges select the
+headline LRs used by the canonical PACZERO-ZPL configuration (Appendix L). The dev-winner
+selections are reported in Table 8. Note that the FT track has two dev-winner rows: at clip=1000,
+lr=10−4 wins (88.76% test, single seed); at no-clip, lr=10−4 wins (89.56% test, single seed). The
+PACZERO-ZPL headline FT recipe in Table 7 uses clip= 1000 (matching the PACZERO-MI FT
+recipe) because the M = 126 multi-seed extension was completed at clip= 1000; a corresponding
+M =126 no-clip multi-seed pool was not run within the compute budget. The canonical M =128
+no-clip multi-seed pool (87.96±0.80, Table 13) is reported as the dev-winner-recipe reference.
+Table 8: PACZERO-ZPL learning-rate sweeps on SST-2 OPT-1.3B (T =1000, M =128, single
+seed (seed 0)). Dev-winner per (track, clip) configuration in bold.
+Track
+clip c
+LR
+dev %
+test %
+note
+LoRA
+10−4
+60.40
+55.73
+underfits
+LoRA
+5·10−4
+79.80
+81.77
+LoRA
+10−3
+87.80
+86.81
+dev-winner
+LoRA
+2·10−3
+78.20
+72.71
+over-aggressive
+LoRA
+2·10−4
+64.00
+59.17
+undertrains; clip required
+LoRA
+5·10−4
+81.20
+81.31
+undertrains; clip required
+FT
+5·10−5
+83.00
+81.42
+underfits
+FT
+10−4
+87.00
+88.76
+dev-winner at clip=1000
+FT
+5·10−4
+54.80
+51.95
+diverges
+FT
+10−4
+88.40
+89.56
+no-clip dev-winner (canonical PACZERO-ZPL, Appendix L)
+H
+Clip ablations
+6.7B LoRA clip-norm ablation.
+Table 9 reports the clip ablation for SST-2 OPT-6.7B LoRA. The
+dev-winner is c=10, which is the clip used by the headline 6.7B LoRA cells in Table 1. Multi-seed
+entries are mean ± std over n=3 seeds; single-seed entries are seed 0. Unanimity values are sampled
+from one representative seed per cell. The clip-norm sweep at MI= 0.68 is reported only at the
+dev-winner c = 10. At c = 25 the MI= 0.33 and MI= 0.68 single-seed cells (seed 0) share the
+same public-PRG perturbation directions, both cells consume their full MI budget (per-trajectory
+cum_mi=0.3289 and 0.6800 respectively, matching the nominal budget to numerical precision), and
+both select checkpoint 600 as dev-best with eval_loss=0.3035 to four decimals-producing identical
+{dev, test}={88.20, 88.76}%. This is consistent with the tight-MI plateau (Table 2, Appendix J):
+in the MI=0.33-0.68 range, the same-cell test accuracy is approximately invariant in the MI budget.
+The MI=0.68 cell at c=25 is therefore not an independent MI=0.68 datapoint, and we omit it from
+the table.
+Table 9: Clip-norm ablation on SST-2 OPT-6.7B LoRA (r = 8, T = 1000, lr= 10−3, M = 128,
+adaptive βt). Selection is dev-best. Headline OPT-6.7B LoRA cells in Table 1 use c=10.
+clip c
+MI
+n
+dev % (selection)
+test % (post-selection)
+unanimity nfree/T
+0.33
+88.53 ± 0.95
+90.21 ± 0.43
+43.4%
+0.33
+88.20
+88.76
+38.3%
+0.33
+88.80
+88.42
+-
+0.68
+88.20 ± 2.11
+91.17 ± 1.13
+48.5%
+I
+LoRA rank ablation
+The dev-winner rank for 6.7B LoRA is r = 8, which is the rank used by the headline cells. The
+ablation runs at clip c=25 (the matched convention at the time the rank cells were produced); the
+headline 6.7B LoRA cells in Table 1 use clip c=10 at r=8.
+J
+LoRA plateau on SST-2 OPT-1.3B
+The LoRA analogue of the FT plateau in Table 2 is reported in Table 11. Test accuracy spans 89.45-
+90.37% across 4 decades of nominal MI (0.92pp), and dev accuracy spans 89.60-90.60% (1.00pp).
+Table 10: LoRA rank ablation on SST-2 OPT-6.7B (T = 1000, lr= 10−3, clip c = 25, M = 128,
+MI=0.33, adaptive βt, seed 0). The dev-winner is r=8.
+rank r
+dev %
+test %
+best eval-loss
+best ckpt step
+86.00
+87.84
+0.3091
+8
+88.20
+88.76
+0.3035
+16
+86.00
+91.28
+0.2993
+1000 (last step)
+Per-step cum_mi matches nominal MI to numerical precision across all 15 cells. The unanimity
+fraction f = nfree/T ranges from 40% at the tightest budget to 47% at MI ≈0.2-0.5, consistent
+with the binary-release argument: tighter MI raises σt, the posterior concentrates more slowly, and
+fewer steps reach the unanimity branch. The headline observation is the flat shape across 4 decades.
+Compared to the FT plateau in the main paper, the LoRA plateau spans a tighter test-accuracy range
+(0.92pp vs 3.09pp) at the cost of a higher step budget (T =2000 vs T =1000).
+Table 11: Adaptive-βt plateau on SST-2 LoRA OPT-1.3B (T =2000, lr=5·10−4, clip 25, M =128,
+seed 0).
+MI (nats) 10−4 3·10−4 5·10−4 10−3 2·10−3 3·10−3 10−2 3·10−2 5·10−2
+0.07
+0.11
+0.20
+0.33
+0.50
+0.68
+test %
+90.14
+90.14
+90.14 89.68
+89.68
+89.45 89.45
+89.45
+89.68 89.91 89.56 89.56 89.56 90.37 89.91
+dev %
+89.60
+89.60
+89.60 89.60
+89.60
+89.80 89.80
+89.80
+89.80 90.60 90.00 89.80 89.80 90.40 90.60
+f %
+40.4
+40.4
+40.4
+40.9
+40.9
+45.7
+45.4
+45.4
+46.2
+46.5
+45.6
+47.2
+47.5
+47.2
+45.2
+K
+Mechanism decomposition
+Table 12 decomposes the PACZERO per-step release into deterministic surrogates (run with
+-no_privacy). Each row replaces the full release with one surrogate, and random_sign is the
+negative control (uncorrelated ±1 at every step). Quantized variants are T-sensitive. At T =1000
+they lag, and at T =2000 they recover. The negative control collapses to chance (53.10%), confirming
+that the optimization signal is necessary. quant_full (sign of the full-batch mean) outperforms its
+raw counterpart by +2.3pp at T = 2000, locating the gain primarily in the sign-quantization step
+rather than in the subset-aggregation step.
+Table 12: Mechanism decomposition on SST-2 LoRA OPT-1.3B (seed 0, -no_privacy). Each
+row replaces the full release with one deterministic surrogate.
+Variant
+T
+Test %
+Role
+raw_full (full-batch mean, MeZO baseline)
+88.65
+matched-T non-private baseline
+quant_full (sign of full-batch mean)
+90.94
+sign quantization +2.3pp
+quant_full
+82.80
+quantization at half-T undertrains
+raw_half (secret subset mean, no quant)
+89.45
+secret-subset baseline at matched T
+raw_half
+89.91
+raw aggregation is T-insensitive
+quant_half (sign of secret subset mean)
+89.56
+quant+subset, recovered at T =2000
+quant_half
+82.22
+quant+subset at half-T undertrains
+random_sign (±1 uncorrelated)
+53.10
+negative control passes
+PACZERO, MI=0.001 (constant βt, n=1)
+91.40
+private; same T
+PACZERO, MI=0.33 (adaptive βt, n=4)
+89.74±1.53
+private; same T
+L
+Canonical PACZERO-ZPL configuration and T-ladders
+The PACZERO-ZPL cells in the headline Table 1 use M =126 throughout. This reflects an early-
+implementation choice for the PACZERO-ZPL sweep that was held fixed once multi-seed pools
+were under way, to keep the cells internally comparable across the PACZERO-ZPL row; the privacy
+and utility guarantees of §3.2 are not specific to a particular value of M, and Theorem 5 gives
+I(S∗; Y1:T ) = 0 for any M ≥2. To verify that the headline cells are not unfairly weak choices for
+the PACZERO-ZPL row, we additionally characterise PACZERO-ZPL in the canonical dev-tuned
+configuration with M =128 throughout, with FT no-clip as the dev-winner of Appendix G. We report
+the canonical PACZERO-ZPL cells in Table 13; these are the dev-tuned single-recipe cells used as
+a reference against the M =126 headline cells. The corresponding M =128 pool was statistically
+indistinguishable.
+Table 13: Canonical PACZERO-ZPL configuration on SST-2 (M =128 throughout; lr/clip = the
+per-cell dev-winners of Appendix G). The 6.7B LoRA canonical cell uses c = 25 and reports the
+per-seed peak-rung dev-best test accuracy from a T ∈{500, 1000, 1500} ladder (Table 15); the FT
+canonical cells use no-clip and are dev-best at T =1000 (Tables 14, 16). The 1.3B LoRA canonical
+cell is omitted: the M =126 headline cell (88.69±1.00, Table 1) is the multi-seed point used in the
+paper for that (track, scale).
+Track
+Model
+lr
+clip c
+test %
+note
+LoRA
+6.7B
+10−3
+87.88 ± 2.00 (n=3)
+per-seed peak rung from T ∈{500, 1000, 1500}
+FT
+1.3B
+10−4
+∞(no-clip)
+87.96 ± 0.80 (n=3)
+seeds {1, 2, 3}: 87.61, 88.88, 87.39; dev-best at T =1000
+FT
+6.7B
+10−4
+∞(no-clip)
+90.14 ± 0.76 (n=3)
+per-seed dev-best rung pool (Table 17)
+Post-convergence drift: T-ladder studies.
+PACZERO-ZPL releases a uniform coin flip on dis-
+agreement steps. Once the model has converged, additional coin-flip releases drive parameters off the
+dev-best minimum, producing post-convergence drift visible as T grows past the dev-best rung. We
+report three ladders for the canonical configuration: 1.3B FT (Table 14), 6.7B LoRA across three
+seeds (Table 15), and 6.7B FT single-seed (Table 16).
+Table 14: Canonical PACZERO-ZPL FT T-ladder on SST-2 OPT-1.3B (lr=10−4, no-clip, single
+seed (seed 0), single trajectory). The T = 1000 checkpoint is the dev-best; longer-T checkpoints
+reflect post-convergence drift from U({−1, +1}) releases.
+T
+dev %
+test %
+∆test vs T =1000
+88.40
+89.56
+0 (best)
+85.40
+84.75
+−4.81
+80.80
+80.39
+−9.17
+80.20
+77.87
+−11.69
+81.00
+74.89
+−14.67
+Table 15: Canonical PACZERO-ZPL LoRA T-ladder on SST-2 OPT-6.7B (lr= 10−3, clip 25,
+M =128; per-seed post-hoc rung evaluation). All three seeds peak at T =500. Per-seed peak-rung
+dev-best test %: 90.14 / 87.16 / 86.35 →n=3 mean 87.88 ± 2.00%. Per-rung mean across seeds
+shown below.
+T
+seed=0 dev/test
+seed=1 dev/test
+seed=2 dev/test
+n=3 mean test %
+∆vs peak
+88.20/90.14
+88.80/87.16
+87.00/86.35
+87.88 ± 2.00
+0 (peak)
+84.40/83.14
+86.20/83.49
+85.60/84.29
+83.64 ± 0.59
+−4.24
+84.00/81.88
+86.60/84.40
+86.80/85.78
+84.02 ± 1.98
+−3.86
+6.7B FT PACZERO-ZPL multi-seed extension at T = 1500.
+The single-seed ladder above
+documents the seed-0 trajectory; we additionally trained two new seeds (s1, s2) at the same canonical
+recipe (lr=10−4, no-clip, T =1500) to extend the cell to multi-seed at the final-T rung (Table 17).
+Both new seeds’ final-T checkpoints coincide with their per-trajectory dev-best (eval-loss decreases
+monotonically across the ladder for both seeds), so the final-T test accuracy is the per-seed dev-best
+test accuracy by construction. Pooling at the per-seed dev-best rung with the seed-0 trajectory’s
+dev-best rung (T =1000, test 89.33%), the n=3 test accuracy is 90.14±0.76%. Restricting to the new
+T =1500 pair only (s1, s2) gives 90.54±0.41% at n=2. The 6.7B LoRA canonical-configuration
+n=3 pool sits at 87.88±2.00% (Table 15), so the FT track exceeds the LoRA track by +2.26pp at
+n=3 on the canonical PACZERO-ZPL configuration at this scale.
+Table 16: Canonical PACZERO-ZPL FT T-ladder on SST-2 OPT-6.7B (lr=10−4, no-clip, single
+seed (seed 0), single trajectory; first 6.7B FT PACZERO-ZPL data). Peak test accuracy at T =500;
+dev-best rung at T =1000.
+T
+dev %
+test %
+note
+85.60
+90.37
+test peak
+88.80
+89.33
+dev-best, canonical headline cell
+88.40
+88.76
+final-T
+Table 17: Canonical PACZERO-ZPL FT multi-seed extension on SST-2 OPT-6.7B at T =1500
+(lr=10−4, no-clip, M =128). The two new seeds are trained at T =1500 without dev-best checkpoint
+loading; both have monotone-decreasing eval-loss trajectories across the ladder, so the final-T test
+accuracy reported in their checkpoint coincides with the per-seed dev-best rung by construction. The
+seed-0 trajectory’s per-trajectory dev-best is at T = 1000 (Table 16, dev-best loaded); pooling at
+the per-seed dev-best rung yields the n = 3 pool below. The n = 2 sub-pool restricted to s1, s2 at
+T =1500 is also reported.
+Seed
+dev %
+test %
+note
+s0
+88.80
+89.33
+per-trajectory dev-best at T =1000
+s1
+87.60
+90.83
+T =1500 final-T = per-seed dev-best
+s2
+88.40
+90.25
+T =1500 final-T = per-seed dev-best
+n=3 per-seed dev-best pool
+88.27 ± 0.61
+90.14 ± 0.76
+multi-seed extension
+n=2 sub-pool (s1, s2)
+88.00 ± 0.57
+90.54 ± 0.41
+matched T =1500 rung only
+M
+K-aggregation ablation (DP-AggZO-style)
+The DP-AggZO mechanism of [5] aggregates K independent zeroth-order direction estimates per
+training step before the privacy release; the cells we cite from [5] Table 2 in our Table 1 are at K =16,
+and we reproduce K =64 cells in-house in the high-privacy regime (Table 3). PACZERO as defined
+in §3 releases a single per-step bit (K = 1). To verify that this design choice does not artificially
+understate PACZERO’s achievable utility, we extend the per-step release to K ∈{4, 16} following
+the DP-AggZO-style aggregation pattern: K independent ZO directions are sampled per step, each
+consumes per_step_mi/K nats, the released K bits Yt,1, . . . , Yt,K ∈{−1, +1} are averaged, and
+the parameter update is θt+1 =θt −ηt(1/K)P
+k Yt,k·zk. The PAC-MI chain-rule bound is preserved
+per step (P
+k βper,t,k =per_step_mi), and the K =1 reduction is bit-exact equivalent to the original
+PACZERO trainer (verified empirically).
+Table 18 reports the K-ablation on SST-2 OPT-1.3B at MI = 0.33, single seed. Both tracks show
+K-aggregation producing deltas that are well within seed noise of the K =1 baseline. The ft track
+has ∆∈[−1.15, −0.80]pp at K ∈{4, 16} versus the K = 1 baseline, while the LoRA track has
+∆∈[−1.55, +0.97]pp (−1.55pp at K =4 and +0.97pp at K =16, both within the K =1 baseline’s
+±1.53pp std at n=4). The headline interpretation is that PAC-MI’s per-step release is robust across
+K, and the K = 1 design used throughout the paper is not a special case that misses scale. The
+small per-track magnitude of the deltas suggests that, at this MI budget, the per-release noise penalty
+from splitting the budget across K releases is approximately balanced by the K-averaging variance
+reduction on the parameter update; the sign of the residual is task- and recipe-dependent.
+Scale extension to OPT-6.7B SST-2.
+To verify that the K-agnostic finding at 1.3B is not specific
+to the smaller scale, we extended the same ablation to OPT-6.7B SST-2 at MI = 0.33, single seed
+(Table 19). The ft track is K-agnostic at 6.7B as well: K =4 reaches 92.66% and K =16 reaches
+92.89% versus the K = 1 multi-seed baseline of 92.20±0.45% (n = 4); both deltas (+0.46pp,
++0.69pp) sit inside the baseline’s ±0.45pp std band. The LoRA track shows a different pattern:
+K =4 and K =16 both reach 93.92% versus the K =1 multi-seed baseline of 90.21±0.43% (n=3),
+a saturated +3.71pp delta multiple standard deviations above the baseline. The two LoRA cells are
+distinct trajectories with different dev-best checkpoints (dev 91.0% at K =4 vs 90.0% at K =16)
+that coincidentally land on the same test count (819/872 = 93.92%). Two readings are consistent
+with this single-seed observation: (i) the LoRA-rank-8 subspace at 6.7B is small relative to the full
+FT space, so the per-release noise penalty from splitting the per-step MI budget across K releases
+Table 18: K-aggregation ablation on SST-2 OPT-1.3B, MI=0.33 (adaptive βt, M =128, single
+seed (seed 0)). ft uses T =1000, lr=10−4, clip 1000; LoRA uses T =2000, lr=5·10−4, clip 25. The
+K =1 ft baseline (88.99%) is the seed-0 cell of the FT plateau at MI=0.33 (Table 2, single seed); its
+numerical mean coincides with the headline PACZERO-ZPL FT 1.3B I =0 cell (88.99±0.91, n=3,
+M =126, c=1000; Table 1), but the two cells are unrelated runs at different recipes (PACZERO-MI
+vs PACZERO-ZPL, M =128 vs M =126, single seed vs n=3). The K =1 LoRA baseline is the
+multi-seed headline cell of Table 1 (n=4 mean ± std). K ≥2 cells are single-seed (seed 0) and are
+intended as a robustness check rather than a multi-seed comparison.
+Track
+K
+test %
+dev %
+∆test vs K =1
+ft
+88.99
+-
+0 (baseline)
+87.84
+87.6
+−1.15
+88.19
+88.2
+−0.80
+LoRA
+89.74 ± 1.53
+-
+0 (baseline, n=4)
+88.19
+87.6
+−1.55 (within seed noise)
+90.71
+89.6
++0.97 (within seed noise)
+is partially absorbed by the K-averaging variance reduction on a low-dimensional update direction,
+producing a net positive delta that saturates by K = 4; or (ii) the cell is sampling the high tail of
+the K =1 seed distribution, with the saturation across K ∈{4, 16} inheriting the same draw. We do
+not separate these readings at single-seed; the more robust statement is that scaling to 6.7B does not
+invert the K-agnostic ∆-direction on the ft track and produces a saturating positive ∆on the LoRA
+track, neither pattern undermining the K =1 design used throughout the paper.
+Table 19: K-aggregation ablation on SST-2 OPT-6.7B, MI=0.33 (adaptive βt, single seed (seed
+0)). LoRA uses T =1000, lr=10−3, clip 10, M =128, matching the headline 6.7B LoRA cells in
+Table 1. ft uses T =1000, lr=10−4, clip 1000, M =128, matching the headline 6.7B FT cells. The
+K =1 baselines are the multi-seed headline cells of Table 1 (LoRA n=3, ft n=4 at MI=0.33).
+Track
+K
+test %
+dev %
+∆test vs K =1
+LoRA
+90.21 ± 0.43
+-
+0 (baseline, n=3)
+93.92
+91.0
++3.71 (above baseline std band)
+93.92
+90.0
++3.71 (saturated at K =4)
+ft
+92.20 ± 0.45
+-
+0 (baseline, n=4)
+92.66
+89.0
++0.46 (within baseline std)
+92.89
+88.6
++0.69 (within baseline std)
+N
+Per-cell compute and infrastructure
+Hardware.
+All experiments run as single-GPU jobs (one process per GPU). OPT-1.3B cells use a
+mix of NVIDIA A4000 (16 GB), A5000 (24 GB), A6000 (48 GB), A100 (40 GB), and H100 (80 GB);
+OPT-6.7B cells use exclusively A100 (40 GB) and H100 (80 GB) for memory reasons.
+Totals.
+Summing across the rows of Tables 20-21 (every cell appearing in this paper’s main and
+appendix tables), the paper-cited compute is approximately 1,500 GPU-hours, dominated by the
+OPT-6.7B SQuAD cells of Table 1 (∼930 h). Including exploratory and discarded experiments not
+reported in this paper (additional learning-rate and clip sweeps, smoke tests, retries from preempted
+runs, mechanism variants outside Table 12, and undertrained runs at canonical learning rates that we
+then re-tuned), the project consumed approximately 3,500 GPU-hours.
+Table 20: Per-cell compute, main-paper cells (Tables 1, 2, 3). Cells are grouped by paper-table
+reference. "GPU class" denotes the GPU model used for the primary attempt of a cell; multi-seed
+pools split across two GPU classes report both, separated by "+". Appendix-only cells are reported
+separately in Table 21.
+Cell
+T
+n
+GPU class
+GPU-h
+Headline Table 1, SST-2
+PACZERO-MI 1.3B FT MI=0.33
+4
+A6000
+∼8.0
+PACZERO-MI 1.3B FT MI=0.68
+4
+A6000
+∼8.0
+PACZERO-MI 1.3B LoRA MI=0.33
+4
+A6000
+∼12.0
+PACZERO-MI 1.3B LoRA MI=0.68
+4
+A6000
+∼12.0
+PACZERO-MI 6.7B FT MI=0.33
+4
+A100+H100
+23.7
+PACZERO-MI 6.7B FT MI=0.68
+3
+A100
+20.6
+PACZERO-MI 6.7B LoRA MI=0.33
+3
+A100
+21.4
+PACZERO-MI 6.7B LoRA MI=0.68
+3
+A100
+21.5
+PACZERO-ZPL 1.3B FT
+3
+A6000
+∼6.0
+PACZERO-ZPL 1.3B LoRA
+3
+H100
+3.0
+PACZERO-ZPL 6.7B FT
+3
+A100+H100
+∼13
+PACZERO-ZPL 6.7B LoRA
+3
+A100+H100
+∼10
+Headline Table 1, SQuAD
+PACZERO-MI 1.3B FT MI=0.33
+1
+A100
+53.0
+PACZERO-MI 1.3B FT MI=0.68
+1
+A100
+52.3
+PACZERO-MI 1.3B LoRA MI=0.33
+1
+H100
+103.8
+PACZERO-MI 1.3B LoRA MI=0.68
+1
+H100
+98.0
+PACZERO-MI 6.7B FT MI=0.33
+1
+H100
+65.7
+PACZERO-MI 6.7B FT MI=0.68
+1
+H100
+64.2
+PACZERO-MI 6.7B LoRA MI=0.33
+1
+H100
+79.9
+PACZERO-MI 6.7B LoRA MI=0.68
+1
+H100
+∼88
+PACZERO-ZPL 1.3B FT
+3
+H100
+113.6
+PACZERO-ZPL 1.3B LoRA
+1
+H100
+∼62
+PACZERO-ZPL 6.7B FT
+1
+H100
+66.3
+PACZERO-ZPL 6.7B LoRA
+1
+H100
+∼83
+Tight-MI plateau, Table 2 (FT) and Appendix Table 11 (LoRA)
+FT plateau (15 cells, MI sweep, seed 0)
+15
+A100
+29.2
+LoRA plateau (15 cells, MI sweep, seed 0)
+15
+A100
+62.2
+In-house DP cliff reproduction, Table 3 (and Appendix D)
+DPZero K =1 FT, ε∈{0.2, 0.3, 0.5, 1.0, 2.0}
+20,000
+A100
+11.9
+DP-AggZO K =64 FT, ε∈{0.2, 0.3, 0.5, 1.0, 2.0}
+5
+A100
+24.4
+DP-AggZO K =64 FT, ε=0.2, T =2000 probe
+1
+H100
+5.3
+Subtotal (main-paper cells)
+∼1,222
+Table 21: Per-cell compute, appendix cells (Tables 8-19). Continuation of Table 20 for cells that
+appear only in the appendix. "+" between two GPU classes indicates a multi-seed pool whose seeds
+were run on different GPU classes.
+Cell
+T
+n
+GPU class
+GPU-h
+Appendix Table 8: PACZERO-ZPL learning-rate sweep, SST-2 1.3B
+LR sweep, LoRA + FT (10 cells, seed 0)
+10
+A100+H100
+∼20
+Appendix Table 10: LoRA rank ablation, 6.7B SST-2 (new cells only)
+6.7B LoRA, rank r=4
+1
+A100
+7.4
+6.7B LoRA, rank r=16
+1
+A100
+7.4
+Appendix Table 12: mechanism decomposition, 1.3B LoRA SST-2
+Mechanism surrogates (9 cells) + 2 PACZERO anchor cells
+1000/2000
+A6000
+∼25
+Appendix Tables 13-17: canonical PACZERO-ZPL configuration and T-ladders
+1.3B FT T-ladder (single trajectory)
+1
+A6000
+∼5
+6.7B LoRA T-ladder (3 seeds)
+3
+A100
+∼21
+6.7B FT T-ladder (single trajectory)
+1
+A100
+∼7
+6.7B FT multi-seed extension (s1, s2)
+2
+H100
+8.6
+Appendix Tables 18-19: K-aggregation ablation, SST-2
+1.3B LoRA K =4, MI=0.33
+1
+H100
+6.0
+1.3B LoRA K =16, MI=0.33
+1
+H100
+21.2
+1.3B FT K =4, MI=0.33
+1
+H100
+2.7
+1.3B FT K =16, MI=0.33
+1
+H100
+9.8
+6.7B LoRA K =4, MI=0.33
+1
+H100
+9.5
+6.7B LoRA K =16, MI=0.33
+1
+H100
+34.7
+6.7B FT K =4, MI=0.33
+1
+H100
+9.0
+6.7B FT K =16, MI=0.33
+1
+H100
+32.8
+Subtotal (appendix cells)
+∼250
+Total (paper-cited cells)
+∼1,500

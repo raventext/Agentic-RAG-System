@@ -1,0 +1,2393 @@
+Render, Don’t Decode: Weight-Space World Models
+with Latent Structural Disentanglement
+Roussel Desmond Nzoyem∗
+Department of Computer Science
+University of Manchester
+Manchester, M13 9PL
+roussel.nzoyem@manchester.ac.uk
+Mauro Comi
+Department of Computer Science
+University of Bristol
+Bristol, BS8 1QU
+mauro.comi@bristol.ac.uk
+Abstract
+Training world models on vast quantities of unlabelled videos is a critical step to-
+ward fully autonomous intelligence. However, the prevailing paradigm of encoding
+raw pixels into opaque latent spaces and relying on heavy decoders for recon-
+struction leaves these models computationally expensive and uninterpretable. We
+address this problem by introducing NOVA, a world modelling framework that rep-
+resents the system state as the weights and biases of an auxiliary coordinate-based
+implicit neural representation (INR). This structured representation is analytically
+rendered, which eliminates the decoder bottleneck while conferring compactness,
+portability, and zero-shot super-resolution. Furthermore, like most latent action
+models, NOVA can be distilled into a context-dependent video generator via an
+action-matching objective. Surprisingly, without resorting to auxiliary losses or
+adversarial objectives, NOVA can disentangle structural scene components such
+as background, foreground, and inter-frame motion, enabling users to edit either
+content or dynamics without compromising the other. We validate our framework
+on several challenging datasets, achieving strong controllable forecasting while
+operating on a single consumer GPU at ∼40M parameters. Ultimately, structured
+representations like INRs not only enhance our understanding of latent dynamics
+but also pave the way for immersive and customisable virtual experiences.
+Introduction
+The capacity to predict plausible future states within an environment is a cornerstone of physical
+intelligence. World models [Ha and Schmidhuber, 2018] achieve this by learning transition dynamics
+conditioned on actions, enabling embodied agents to plan and act through internal simulation (e.g.
+robotic manipulation and autonomous driving). Recently, the abundance of unlabelled, action-free
+online videos has driven the emergence of latent action (world) models [Garrido et al., 2026; Bruce
+et al., 2024; Schmidt and Jiang, 2023]. Devoid of ground-truth action signals during training, they
+must discover underlying control mechanisms purely from observation, bringing them closer to video
+generation models, which learn to produce coherent sequences of frames from noise or context.
+The predominant paradigm for training world models and video generation models involves projecting
+and reconstructing frame sequences through a latent space, for example, using a video tokeniser [Bruce
+et al., 2024]. A prominent class of autoregressive models encode individual frames into abstract
+latent vectors via a variational autoencoder [Kingma et al., 2013], then map resulting predictions
+back to pixels via a learned spatial decoder. This paradigm has been immensely productive [Hafner
+et al., 2020; Micheli et al., 2022; Bruce et al., 2024], but carries intrinsic limitations. First, the
+decoder consumes more storage, adding a number of hardly interpretable parameters that could limit
+∗Work partly done while an honorary research associate at the University of Bristol.
+Preprint.
+arXiv:2605.06298v1 [cs.CV] 7 May 2026
+
+usability in safety-critical scenarios [Rudin, 2019]. As a case in point, Bruce et al. [2024, pp. 6,
+23] find that as they scale, a much larger decoder is essential, accounting for up to 87% of their
+video tokeniser. Second, any change in output resolution requires expensive retraining or post-hoc
+upsampling workarounds [Chambon et al., 2025]. Third, the latents it consumes lack portability,
+as they are tethered to that specific decoder. Furthermore, they have no semantic or geometric
+interpretations. Current attempts to disentangle semantic components such as background, identity,
+and motion from an abstract latent space require auxiliary losses [Guen and Thome, 2020], adversarial
+objectives [Denton et al., 2017], or architectural decompositions [Hsieh et al., 2018], all of which add
+training complexity without structural guarantees.
+Coordinate-based implicit neural representations (INRs) [Sitzmann et al., 2020; Dupont et al.,
+2022] represent an image signal not as a pixel array but as the weights of a neural network, thus
+encoding a continuous function R2 →RC that maps any spatial coordinate to its RGB (C = 3)
+or greyscale (C = 1) pixel value. They gained prominence by powering novel view synthesis
+frameworks such as NeRF [Mildenhall et al., 2021], and have recently demonstrated compression
+capabilities that surpass JPEG at low bitrates [Mostajeran et al., 2025]. Crucially, further advantages
+arise from an analytical rendering process that circumvents the need for a spatial decoder. Despite
+inherent spectral aliasing challenges [Barron et al., 2021; Lindell et al., 2022], properly constrained
+parameter-free rendering intrinsically supports continuous, arbitrary-resolution querying at test time,
+a capability that is critical in domains such as extreme weather events forecasting, where a single
+pixel can encapsulate a vast area of the globe (e.g., over 784 km2 in state-of-the-art global AI models
+[Lam et al., 2023]); in such contexts, unlocking granular resolution can be the difference between
+life and death for massive populations. Furthermore, unlike abstract encodings, INRs are highly
+portable, as their analytical formulation makes them easily sharable across the scientific community.
+Given these fundamental strengths, structured representations like INRs and Gaussian splats [Kerbl
+et al., 2023] are increasingly recognised as the most promising technologies to power next-generation
+scientific modelling, visual perception, and computer graphics.
+In this paper, we argue that INRs are a potent representation upon which world models and video
+generation models can be built. To realise this, we leverage the paradigm of weight-space learning
+(WSL), which views the weights and biases of neural networks such as INRs as data points for a
+higher-level learning system [Schürholt et al., 2024]. This paradigm was recently utilised by Li
+et al. [2025a] and Nzoyem et al. [2026] to achieve remarkable performance on time series modelling
+benchmarks. These WSL approaches, however, remain untested on video modalities. Crucially, the
+latter proved unstable, requiring weight, gradient, and value clipping to prevent numerical explosion.
+Any viable weight-space world model must first address these acute stability issues.
+To bridge this gap, we introduce NOVA (Neural Ontology for Visual Abstraction), a stable and
+physically consistent world model framework that evolves dynamics entirely in the weight space
+of an implicit neural representation. Its straightforward architecture induces a three-level semantic
+ontology that mirrors human intuition about object-centric video structure: (i) the background
+(¯z) is captured by a single set of base weights shared across the entire dataset, learned to encode
+everything common to all videos; (ii) the foreground content (zt) is defined by per-frame weight
+offsets encoding what is present in the current video frame but not shared globally; and (iii) the
+motion (ut) is an inter-frame action signal that dictates how a latent state transitions to the next. To
+achieve such visual abstraction, our framework leverages an additive formulation that cleanly isolates
+these properties during both forward dynamics and base composition prior to rendering.
+Specifically, our key contributions are as follows:
+1. We build NOVA, the first world model defined by a weight-space representation. We demon-
+strate that the inclusion of a base representation ¯z addresses the characteristic instability
+of weight-space model training. Similar to recent literature [Schmidt and Jiang, 2023], we
+show that this framework can be tuned to produce actions autoregressively during inference,
+enabling seamless transition from world modelling to context-conditioned video generation.
+2. We show that the (¯z, zt, ut) parametrisation induces a semantically meaningful three-level
+decomposition, i.e. background, state, and motion, purely by construction with no auxiliary
+or adversarial losses. This in turn empowers users to "edit" the generation process, whereby
+importing frames or actions from an arbitrary sequence cleanly maps to new sequences,
+a process we call zero-shot content (or motion) retargeting (Figure 1). This hints that,
+Figure 1: Video editing facilitated by object-motion disentanglement. Conditioned on the same
+initial frame, all models must generate future states; at t = 6, this state is abruptly replaced with an
+alien frame’s encoding. (a) The standard world model (WM), trained in an abstract latent space with
+NOVA’s decomposition strategy, manages to separate content from motion. (b) LAPO [Schmidt and
+Jiang, 2023] generates clean frames, but allows the foreign frame to completely alter its dynamics;
+furthermore, its generation quality degrades over extended horizons (starting at t = 9). (c) NOVA
+generates visually striking digits over long horizons and swaps their identities without altering the
+underlying dynamics (e.g., a 5 seamlessly inherits the trajectory of a 1).
+contrary to expectations from recent work [Daniel et al., 2026], global action vectors can
+support local dynamics disentanglement when paired with a structured base representation.
+3. We highlight the numerous benefits of INRs as structured latent representations for video
+and world models (e.g., parameter-efficiency, compactness, portability, and resolution-
+independence). Remarkably, NOVA maintains zero-shot super-resolution capabilities even
+when querying coordinate grids that are significantly denser than those used during training.
+To facilitate this, we implement a simple but principled post-training Nyquist-Shannon
+frequency masking procedure that provably prevents aliasing at arbitrary scale factors.
+4. We provide a comprehensive set of benchmarks to showcase the practical usefulness of our
+method in sequential forecasting. We show this with experiments across three carefully se-
+lected video datasets (Moving MNIST, PhyWorld, and WeatherBench) covering continuous
+physics, rigid-body collisions, and geospatial dynamics, all trained on a single consumer
+GPU at roughly 40M parameters. Furthermore, these datasets serve as the basis for ablation
+studies that probe the NOVA architecture and reveal its inner workings.
+While our approach yields several practical benefits, we emphasise that our primary contribution
+lies in demonstrating that world models can be constructed entirely from structured weight-space
+representations rather than raw pixels. In doing so, we propose an effective disentanglement technique
+applicable to standard world models, as observed in Figure 1. To elucidate this contribution, Section 2
+outlines the experimental setup, followed by a detailed exposition of our method in Section 3. We
+present and analyse main results in Section 4, and conclude with a discussion of the method’s broader
+implications and limitations in Section 5.
+Experimental Setup
+Problem Setting.
+We consider an environment generating a sequence of 2D observations ot ∈
+RH×W ×C for t ∈{1, . . . , T}, with T ≥2. World modelling2 aims to discover transition dynamics
+zt+1 ≈T (zt, ut), where zt ∈Rdz denotes a (latent) representation of the underlying state, from
+which the observation ot can be reconstructed; ut ∈Rdu denotes actions typically known and part of
+the training data. When ground-truth actions are unavailable, the model is self-supervised and must
+infer ut from ot and ot+1; we refer to such models as latent action models (LAMs).
+2To eliminate confusion from inconsistent definitions, we adopt the term "world model" to refer solely to the transition
+model, excluding adjacent components that encode states or infer actions, similar to [Schmidt and Jiang, 2023].
+ot+1
+Encoder
+zt+1
+ot
+Encoder
+zt
+IDM
+ut
+FDM: A(zt) + B(ut)
+ˆzt+1
+¯z
++
+INR
+Renderer
+X, Y
+ˆot+1
+Figure 2: NOVA architecture. The shared Encoder (red) maps frames to weight-space offsets zt.
+During training, the IDM (green) infers latent action ut from consecutive encoded states. The FDM
+(blue) predicts the next weight offset via the additive mapping A(zt) + B(ut). Unlike conventional
+decoders, the Renderer (red) is not trained; it is an analytical function that maps a coordinate grid
+(X, Y) to pixel values via an implicit neural representation (INR). The sign // denotes a stop-gradient
+sg operator, included to reduce memory overheads during training.3
+Because both system states and actions may live in a "latent" space, throughout the paper, we prioritise
+the term weight space, as defined in [Zhou et al., 2023], for the space in which the dynamics evolve,
+i.e., Rdz, and action space for the actions themselves, i.e., Rdu.
+Datasets.
+We train and evaluate on three main datasets spanning diverse dynamics: (1) Moving
+MNIST [Srivastava et al., 2015] is a seminal multi-entity dataset showing two digits moving at
+constant velocity and bouncing on a grid. Velocity direction and magnitude are randomly selected,
+and the kinematics are deterministic; digits overlap without collision, and bouncing reflections
+are non-linear. (2) PhyWorld Collision 30K [Kang et al., 2025] comprises roughly 30 thousand
+simulated rigid-body collisions with varying ball radii and velocities. It tests OOD generalisation and
+strict physical consistency (momentum and kinetic energy conservation). (3) WeatherBench (2m
+temperature) [Rasp et al., 2020] is a processed version of the ERA5 archive [Hersbach et al., 2020],
+containing global atmospheric data recorded at hourly intervals from 1979 to 2018. Specifically,
+we utilise the 2-meter temperature subset at a 5.625° resolution, challenging models to predict
+atmospheric flows that exhibit highly complex and non-linear behaviour.
+Baselines.
+We benchmark our approach against two representative paradigms. First, a standard
+WM (see Figure 8 in Section A) is a LAM that utilises an encoder-decoder setup for fair comparison
+against NOVA. This baseline shares NOVA’s training configurations, and differs only in its use of
+an abstract latent space (of comparable size) rather than the weight space to progress its dynamics.
+Second, we compare against LAPO [Schmidt and Jiang, 2023], a framework that removes the
+encoder-decoder setup by operating directly in pixel space. LAPO infers discrete action codes using
+an inverse dynamics network with two VQ codebooks [Van Den Oord et al., 2017] optimised via
+EMA. Additionally, we include WARP [Nzoyem et al., 2026] as a baseline in Section D.5.
+Metrics.
+To quantify temporal consistency and structural preservation, we evaluate predictions
+against the empirical ground truth observations and their corresponding distribution of pixel intensities.
+We assess identity drift and distributional overlap using the Wasserstein-1 (W1) distance, Jensen-
+Shannon Divergence (JSD), and Bhattacharyya distance (B). Spatial and frequency-domain
+structural integrity are measured via the Structural Similarity Index Measure (SSIM) and FFT
+magnitude distance (dF), respectively. Furthermore, to avoid direct pixel-level comparisons, Mean
+Squared Error (MSE) is applied to evaluate the accuracy of object coordinates, masses, and velocities.
+Additional experimental datasets and formally defined metrics can be found in Section C.1.
+The NOVA Framework
+3.1
+Architecture Overview
+Figure 2 shows the NOVA architecture, comprising components we discuss in two categories.
+3We note that the omission of the sg operator does not lead to trivial representational collapse [Bardes et al., 2023].
+Encoding and Rendering.
+The Encoder is a strided convolutional backbone that maps each frame
+ot ∈RH×W ×C to a compact vector zt ∈Rdz, where dz is chosen to match the number of learnable
+parameters in the coordinate-based rendering network. We maintain a single set of base parameters ¯z
+learned across the entire training dataset, and pixels are rendered independently to reconstruct the
+future frame, in parallel:
+ˆot+1 = MLPθt+1(x, y), ∀(x, y) ∈X × Y,
+where
+θt+1 ≜unflat(¯z + zt+1).
+(1)
+Coordinates are normalised with X and Y regularly sampled in the range [−1, 1]. The unflat
+operation turns a flat vector into MLP [McCulloch and Pitts, 1943] weight and bias tensors to be used
+alongside non-linear activation functions and Fourier feature encoding [Tancik et al., 2020].
+Anchoring to ¯z provides two benefits: (i) it stabilises training by framing the prediction zt as a
+weight-space residual, enabling the model to output small-magnitude offsets, analogous to residual
+networks [He et al., 2016]; and (ii) it provides a dataset-level prior that absorbs static background,
+freeing zt to encode only dynamic content, akin to meta-learning initialisations [Finn et al., 2017].
+Inverse and Forward Dynamics.
+The Inverse Dynamics Model (IDM) is an MLP that receives
+two consecutive encoded states (zt, zt+1), and outputs the latent action ut explaining the transition.
+Rather than predicting zt+1 through a monolithic block, we employ an additive Forward Dynamics
+Model (FDM): zt+1 = A(zt)+B(ut), where A : Rdz →Rdz and B : Rdu →Rdz are independent
+MLPs. A operates on the current weight offset alone, while B maps the latent action into the weight
+space, encoding how the action modulates the INR.
+This forward decomposition is inspired by linear state-space models [Gu et al., 2021; Nzoyem
+et al., 2026] and extends them to nonlinear settings. Another key difference is that A does not
+prescribe autonomous dynamics, but acts as a dedicated object detector [Terver et al., 2026]. Our
+A/B decoupling is the mechanism through which the content/motion disentanglement emerges.
+3.2
+Training Procedure
+Training generally proceeds in three phases, each targeting a different component of the model.
+Phase 1.
+We pre-train the encoder and base latent ¯z by minimising the independent per-frame
+reconstruction loss L1 =
+T
+PT
+t=1 ∥ot −ˆot∥2
+2 + λ · SSIM(ot, ˆot), where ˆot is computed using
+Equation (1), and the λ-weighted SSIM term prevents excessive smoothing [Wang et al., 2004].
+While this phase is optional, it remains essential, as it exposes the encoder to not just the initial
+frames, but to all T time steps of each sequence, thereby encouraging more robust feature extraction.
+Phase 2.
+With the encoder and base latent ¯z frozen, we jointly train the FDM and IDM by
+minimising the latent transition objective:
+L2 =
+T −1
+T −1
+X
+t=1
+∥zt+1 −A(zt) −B(ut)∥2
+2,
+where
+ut = IDM(zt, zt+1).
+(2)
+IDM
+GCM
+
+\
+zt+1
+ut−1
+zt
+ut
+ˆut
+L3
+Figure 3: Action-matching
+training
+objective
+during
+phase 3. The GCM regresses
+onto the pseudo-action ut
+generated by the frozen IDM.
+This latent-space loss is highly efficient (dz ≪H × W × C) and
+prevents the model from wasting capacity on irrelevant pixel-level
+features, similar to [Assran et al., 2023]. That said, if phase 1 is
+skipped, pixel-space reconstruction terms can be used instead of L2.
+For instance, in our Moving MNIST experiments, jointly optimising
+phases 1 and 2 significantly accelerated convergence.
+To regularise the dynamics models, we augment the training data
+distribution. First, we inject temporally inverted trajectories, denoted
+by the slice notation oT :1:−1, to encourage action symmetry. Second,
+we crop the videos and pad the trajectory boundaries to construct
+augmented T−length sequences (o1, o1, o2, . . . , oP , oP ). By intro-
+ducing these static transitions where zt+1 = zt, we implicitly supervise the IDM to output a "do
+nothing" action, while constraining the FDM to act as the identity mapping under this null action.
+Phase 3.
+In most downstream applications, future frames are unavailable, in which case we rely on
+a Generative Control Model (GCM), a causal sequence model, to auto-regressively predict actions
+ut from zt and ut−1 (see Figure 3 and Algorithm 1). This allows the model to autonomously
+generate plausible future frames, thereby transforming it into a frame-conditioned video generator or
+(behaviour) clone that can imitate an agent only from videos [Pomerleau, 1988].
+The GCM is trained to match the IDM’s action sequence via the objective L3 =
+T −1
+PT −1
+t=1 ∥ut −
+GCM(zt, ut−1)∥2
+2.4 We consider both recurrent architectures like LSTM [Hochreiter and Schmid-
+huber, 1997] and GRU [Cho et al., 2014] that only observe zt and ut−1 at each time step, and
+Transformer-based architectures [Vaswani et al., 2017] that leverage all available z1:t, u1:t−1 pairs.
+3.3
+Implementation
+All models are implemented in JAX using Equinox [Kidger and Garcia, 2021], optimised with Adam
+[Kingma and Ba, 2014] with a variable learning rate optimally tuned for each dataset and phase.
+NOVA is trained with a single RTX 4080 GPU with 16 GB of VRAM. Across all datasets, we use
+the same deep and narrow INR (6 MLP layers of width 12) preceded by Fourier coordinate encoding
+[Tancik et al., 2020], which we empirically found to be expressive enough to faithfully capture a
+wide variety of textures. The resulting latent dimension is compact, requiring as few as dz = 961
+weights. To limit its information content, we constrain the action dimension to du = 4 across all
+experiments unless stated otherwise. By default, we prioritise recurrent architectures for the GCM
+to limit attention to previous action-states, since these might leak information during intervention.
+These choices result in a total NOVA parameter count of approximately 40M. All results are reported
+on the test sets, predominantly using the trained GCM to generate actions for our interventions.5
+Further architectural details, along with hyperparameters, are presented in Section B.2.
+Results and Discussion
+Experiments are designed to demonstrate the performance of weight-space world models and video
+generators on readily available, yet surprisingly well-suited, unlabelled video datasets. Accordingly,
+we structure our results by dataset, dedicating a specific subsection to each. Additional results,
+including evaluations on further datasets, are provided in Section D.
+4.1
+Generation, Analysis, and Editing of Moving Digits
+NOVA is a context-conditioned video generation model.
+How much context does a video genera-
+tion model need to capture true dynamics? Figure 4 stress-tests this dependency by progressively
+restricting the GCM-based generation from 13 context frames down to 1. Remarkably, NOVA mirrors
+the ground truth (GT) dynamics near-perfectly; we only observe a meaningful divergence once the
+context window drops to 4 frames. Even under the extreme constraint of a single context frame,
+NOVA relies on its learned dynamics priors to synthesise coherent, physically plausible trajectories
+without mode collapse. We observe similarly crisp, artefact-free context-conditioned generation on
+both PhyWorld and WeatherBench (see Figures 14, 17 and 20 in Section D.2).
+NOVA is resilient over long horizons.
+The true test of a world model, however, is its resilience
+over extended rollouts. In Section D.2, we push models trained on mere 20-step sequences to forecast
+1,000 steps into the future. Under such a long horizon, the pixel-space LAPO baseline rapidly
+fails as it converges to a permanent dark figure, while the standard WM fails to commit to distinct
+digit identities with its mean-seeking average. In contrast, NOVA’s formulation maintains structural
+integrity and object identity across the majority of its steps, suggesting that weight-space dynamics
+may be a necessary antidote to long-horizon mode collapse (see Figures 15 and 16 and Table 7).
+NOVA induces a hierarchy of representations.
+We aim to provide empirical evidence that NOVA
+learns the structural hierarchy of background, foreground, and motion (denoted by ¯z, zt, ut, respec-
+tively) without any supervision on the semantic meaning of these components. First, in all Moving
+MNIST sequences [Srivastava et al., 2015], the background is uniformly dark; our study finds that
+4The required input u0 is computed from zero memory, with additional details in Section B.3.
+5The performance of the GCM is indicative of that of its IDM teacher, which supplies pseudo-actions during phase 3.
+Figure 4: Robustness to minimal context. Top row: ground truth (GT); bottom row: L = 1 context
+frame. Even under this extreme constraint, NOVA produces coherent, near-perfect predictions.
+this background is absorbed into ¯z, as its direct rendering leads to black pixels (see Figure 11 in
+Section D). It therefore remains to be shown that zt encodes the identity of dynamic objects, and that
+ut dictates their motion rather than their appearance.
+To show this, we design an experiment demonstrating the possibility of editing the identity without
+impacting the dynamics. Starting at t = 11, we compute a convex combination of zt and 0 such that
+zt
+t→20
+−−→0, while leaving GCM-extracted actions ut free. As we observe in the top three rows on
+Figure 5, digit identities gradually morph towards a resting state (8s and 9s), all the while motion
+trajectories are preserved. We emphasise that this is achieved without any training supervision on
+digit identity. This finding is complemented by Figure 1, which showed that abruptly replacing zt
+with an alien state does not perturb the original dynamics. These experiments establish that the A
+network acts as an object detector that processes foreground necessarily encoded in its only input zt.
+Similarly, we interpolate ut
+t→20
+−−→0 while leaving zt free. As observed in the bottom three rows
+of Figure 5, digits decelerate and converge towards the canvas centre, while their visual identities
+are fully preserved throughout. This suggests that B is the component that processes instructions,
+necessarily encoded in its input ut. Together, these results underscore the capacity to intervene at
+arbitrary steps of the generation process.
+intervention
+intervention
+intervention
+10
+17
+20
+5
+13
+15
+19
+10
+17
+20
+GT
+Pred
+GT
+Pred
+GT
+Pred
+intervention
+Figure 5: Foreground and motion editing.
+The top three rows, with zt →0, gradually
+morph digits in all sequences into 8s and 9s.
+The bottom three rows, with ut →0, force the
+digits to converge to the centre of the canvas.
+Figure 6: Zero-shot motion retargeting via latent
+action substitution. By replacing the native action
+on several PhyWorld sequences with an alien action
+after 5 steps, the model forces the original objects
+to inherit alien, "unphysical" trajectories.
+Table 1: Comparison of additive and joint FDM performance on in-distribution (InD) and out-of-
+distribution (OOD) PhyWorld data. Samples are phase 3 videos generated from 3 context frames.
+Values are reported as mean ± standard deviation over the tested sequences.
+Distribution
+Model
+Image Metrics
+Physical Metrics
+MSE (×10−2) ↓
+PSNR ↑
+SSIM ↑
+Pos. (×10−2) ↓
+Mom. ↓
+KE ↓
+InD
+Additive
+0.98 ± 0.71
+23.12 ± 2.69
+0.9404 ± 0.0219
+2.61 ± 2.19
+0.0548 ± 0.0408
+0.0291 ± 0.1317
+Joint
+1.08 ± 0.69
+22.38 ± 2.04
+0.9358 ± 0.0208
+2.67 ± 2.53
+0.0582 ± 0.0714
+0.0456 ± 0.2112
+OOD
+Additive
+3.20 ± 2.85
+18.83 ± 4.81
+0.9015 ± 0.0583
+12.50 ± 8.99
+0.4025 ± 0.5581
+0.5351 ± 1.7191
+Joint
+2.99 ± 2.30
+17.83 ± 3.61
+0.9015 ± 0.0547
+9.67 ± 7.90
+0.2093 ± 0.2243
+0.0815 ± 0.2331
+4.2
+Zero-Shot Motion Retargeting and OOD Evaluation on PhyWorld
+To rigorously evaluate the limits of NOVA’s latent representation, we test it on the PhyWorld 30K
+collision validation set [Kang et al., 2025], which introduces ball radii and velocities far outside the
+training distribution. In this problem, the identity of a ball refers to its size, colour, and to some
+extent its y-position, which is constant throughout the video (see Section E). In Section D.2.2, we
+show that our model is robust to latent state interventions and can recalculate physically accurate
+post-collision velocities using the alien quantities. We ultimately show that latent actions are the
+central quantity for preserving physical consistency.
+While the model maintains accurate collision dynamics across both in- and out-of-distribution settings,
+our primary interest lies in its capacity for action-controllable generation.
+NOVA can abruptly retarget motion via action substitution.
+We test the orthogonality of our
+latent spaces by performing mid-sequence motion retargeting. We allow the system to evolve normally
+up to step t = 5, and then we abruptly substitute the native latent action ut with an alien action
+extracted from a different sequence. While this is similar to moving digits depicted in Figure 5, we
+note that this abrupt intervention on PhyWorld, which we term as zero-shot motion retargeting,
+involves rigorous physics, raising important questions about the conservation of physical quantities
+such as momentum (Mom.) and kinetic energy (KE) [Kang et al., 2025].
+Our results in Figure 6 indicate that our intervention forces the original balls to quickly adopt
+the motion trajectories of the alien sequence within less than two steps, deliberately violating the
+momentum conservation expected of their original masses. Crucially, the structural identity of the
+balls (radius and colour) remains perfectly preserved despite the unphysical motion. NOVA’s ability to
+strictly obey the injected action without leaking structural features from the source sequence suggests
+orthogonality between weight-space identity and dynamic intent. As it allows users to seamlessly and
+privately6 map arbitrary trajectories onto existing objects without corrupting visual identity, motion
+retargeting with unphysical dynamics is desirable, especially for applications involving digital content
+manipulation, stylistic or editorial control.
+Ablation: additive vs. joint forward dynamics.
+In Table 1, we quantify the trade-offs of our
+decomposed architecture by comparing our additive FDM against a standard monolithic MLP that
+processes the concatenated vector [zt, ut] jointly. While the joint architecture achieves lower physical
+errors on OOD configurations, it fundamentally destroys the content/dynamics decoupling required
+for the motion retargeting demonstrated above. Thus, our additive formulation accepts a meaningful
+but acceptable trade-off in exchange for disentanglement.
+4.3
+Zero-Shot Super-Resolution for Global Temperature Prediction
+High-quality visuals are crucial for immersive virtual experiences and for detailed scientific analysis.
+In this section, we ask: can we extract fine-grained meteorological insights from weather models
+simply by altering the rendering resolution? To investigate this, we leverage NOVA’s continuous
+spatial formulation. During training, the model evaluates the spatial field by sampling a small standard
+coordinate grid of H × W = 32 × 64 points. At inference,7 however, we introduce a scaling factor s
+and resample the grid to a denser (s · H) × (s · W) resolution. When s ≫1, this operation yields
+zero-shot super-resolution without requiring any specialised upsampling networks.
+6This is private since it does not leak the identity of the objects that initiated the actions.
+7To focus on upscaling quality, we disregard the GCM and rely on actions issued by the IDM to drive the video generation.
+However, merely querying this denser grid risks aliasing if the network evaluates high-frequency
+features unsupported by the training resolution [Barron et al., 2021; Lindell et al., 2022]. To guarantee
+artefact-free upscaling, we implement a strict and simple frequency-masking procedure bounded by
+the Nyquist-Shannon theorem. By dynamically zeroing out any Fourier basis frequencies exceeding
+the Nyquist limit of the original training grid (e.g., ξy
+Nyquist = 1/2∆y), we ensure the continuous field
+remains securely within its learned, unaliased manifold (detailed in Section D.3).
+Figure 7: Zero-shot super-resolution on WeatherBench. Ground truth at native 32 × 64 resolution
+next to nearest-neighbour, bilinear interpolation, and NOVA at ×4 and ×32 scaling. NOVA avoids
+aliasing and preserves macro-structure without hallucinating high-frequency textures.
+Figure 7 compares NOVA against nearest-neighbour and bilinear interpolation baselines on a single
+WeatherBench frame [Rasp et al., 2020] at three scaling factors. Our INR-based approach avoids the
+spurious discontinuities of nearest-neighbour and the artificial diffusion of bilinear interpolation at
+both downsampling and extreme upsampling scales.8
+Table 2: Super-resolution (×32) evaluation across
+the test set. We employ a stratified sampling strategy
+over 69 batches to assess distributional and structural
+faithfulness to the original resolution. NOVA consis-
+tently achieves the lowest distributional drift.
+Metric
+NN
+Bilinear
+NOVA
+W1 ↓
+0.137 ± 0.016
+0.140 ± 0.015
+0.135 ± 0.015
+JSD ↓
+0.229 ± 0.017
+0.221 ± 0.022
+0.213 ± 0.018
+B ↓
+0.056 ± 0.009
+0.053 ± 0.012
+0.048 ± 0.009
+dF ↓
+0.427 ± 0.065
+0.427 ± 0.065
+0.427 ± 0.067
+Quantitative results in Table 2 compare distri-
+butional fidelity and state preservation metrics
+across all strategies. We report mean and stan-
+dard deviation metrics across all 24 time steps
+and across the batch dimension, focusing on
+the ×32 upsampling resolution. While we
+observe that these distances are inherently nar-
+row, the key insight is consistency: despite the
+tight margins, NOVA systematically matches
+or outperforms both nearest-neighbour (NN)
+and bilinear interpolation across every empiri-
+cal distribution metric. Taken together with qualitative insights from Figure 7, it follows that, simply
+by re-rendering, NOVA can enhance the sharp, highly dynamic temperature distributions of evolving
+weather fronts without incurring artefacts. This capability has massive implications for localised
+extreme weather forecasting, where such precision impacts the lives of massive populations.
+Conclusion
+We introduced NOVA, a world model and video generation framework that operates entirely in
+the weight space of an INR. By leveraging an analytical INR renderer, NOVA avoids the decoder
+bottleneck and achieves native resolution independence. Furthermore, it decouples background and
+foreground from motion substitution, enabling zero-shot latent state (and action) editing. Through
+experiments on diverse datasets, we demonstrate strong context-conditioned controllability and
+forecasting, operating at around 40M parameters on a single consumer GPU. Because the conceptual
+mechanism underlying NOVA’s editing capabilities is applicable to standard latent action models, it
+could yield substantial benefits if integrated with mainstream world models. We foresee applications in
+various downstream tasks for digital artists and animators, for whom this uncompromising separation
+of motion and form could unlock a new paradigm of limitless expressive control.
+8While NOVA natively supports upsampling to arbitrarily high resolutions, we cap our visualisation at ×32, as further
+magnification yields diminishing perceptual returns. We show downsampled temperature maps in Figure 22.
+Limitations and Future Work.
+While NOVA excels at controllable generation, its formulation
+leaves room for extensions: (i) continuous actions can include high-frequency artefacts (e.g., bright-
+ness), necessitating further regularisations for purer decoupling; (ii) OOD generalisation remains
+challenging, partly because NOVA does not feature the ability to leverage differential equations; and
+(iii) scaling to higher-dimensional INRs may demand parameter-efficient adaptations. We detail
+these limitations in Section E, highlighting them as exciting avenues for future work.
+Broader Impact
+Weight-space world models offer a more interpretable alternative to opaque abstract latent spaces
+by separating geometric semantics into background, content, and motion. While this transparency
+is highly beneficial for safety-critical applications, allowing researchers to audit model behaviour,
+identify biases, and apply safe interventions in fields like autonomous driving and robotics, it also
+introduces severe risks. The precise ability to intervene and edit video content could be easily
+exploited by bad actors to generate highly realistic deepfakes, manipulate visual evidence, and
+spread misinformation. To mitigate these dangers and promote community-driven oversight, we
+fully open-source the code, datasets, and model weights for both our proposed framework and the
+implemented baselines: 
+Acknowledgements
+This work was supported by UK Research and Innovation grant EP/S022937/1: Interactive Artificial
+Intelligence. RDN thanks Bahareh Tolooshams for informative early discussions on world modelling,
+and Kelly Sumelong for key questions that informed the final contribution.
+References
+Azwar Abdulsalam, Christopher Hoang, and Mengye Ren. Lamo: A latent motion world model for long-horizon
+prediction. In ICLR 2026 the 2nd Workshop on World Models: Understanding, Modelling and Scaling, 2026.
+URL 
+Mahmoud Assran, Quentin Duval, Ishan Misra, Piotr Bojanowski, Pascal Vincent, Michael Rabbat, Yann LeCun,
+and Nicolas Ballas. Self-supervised learning from images with a joint-embedding predictive architecture. In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 15619-15629,
+2023.
+Shaojie Bai, J Zico Kolter, and Vladlen Koltun. Deep equilibrium models. Advances in neural information
+processing systems, 32, 2019.
+Adrien Bardes, Quentin Garrido, Jean Ponce, Xinlei Chen, Michael Rabbat, Yann LeCun, Mido Assran, and
+Nicolas Ballas. V-jepa: Latent video prediction for visual representation learning. 2023.
+Jonathan T Barron, Ben Mildenhall, Matthew Tancik, Peter Hedman, Ricardo Martin-Brualla, and Pratul P
+Srinivasan. Mip-nerf: A multiscale representation for anti-aliasing neural radiance fields. In Proceedings of
+the IEEE/CVF international conference on computer vision, pages 5855-5864, 2021.
+James Bradbury, Roy Frostig, Peter Hawkins, Matthew James Johnson, Chris Leary, Dougal Maclaurin, George
+Necula, Adam Paszke, Jake VanderPlas, Skye Wanderman-Milne, and Qiao Zhang. JAX: composable
+transformations of Python+NumPy programs, 2018. URL 
+Jake Bruce, Michael D Dennis, Ashley Edwards, Jack Parker-Holder, Yuge Shi, Edward Hughes, Matthew Lai,
+Aditi Mavalankar, Richie Steigerwald, Chris Apps, et al. Genie: Generative interactive environments. In
+Forty-first International Conference on Machine Learning, 2024.
+Loick Chambon, Paul Couairon, Eloi Zablocki, Alexandre Boulch, Nicolas Thome, and Matthieu Cord. Naf:
+Zero-shot feature upsampling via neighborhood attention filtering. arXiv preprint arXiv:2511.18452, 2025.
+Yi Chen, Yuying Ge, Weiliang Tang, Yizhuo Li, Yixiao Ge, Mingyu Ding, Ying Shan, and Xihui Liu. Moto:
+Latent motion token as the bridging language for learning robot manipulation from videos. In Proceedings of
+the IEEE/CVF International Conference on Computer Vision, pages 19752-19763, 2025.
+Maxime Chevalier-Boisvert, Bolun Dai, Mark Towers, Rodrigo Perez-Vicente, Lucas Willems, Salem Lahlou,
+Suman Pal, Pablo Samuel Castro, and Jordan Terry. Minigrid & miniworld: Modular & customizable
+reinforcement learning environments for goal-oriented tasks. In Advances in Neural Information Processing
+Systems 36, New Orleans, LA, USA, December 2023.
+Kyunghyun Cho, Bart Van Merriënboer, Caglar Gulcehre, Dzmitry Bahdanau, Fethi Bougares, Holger Schwenk,
+and Yoshua Bengio. Learning phrase representations using rnn encoder-decoder for statistical machine
+translation. arXiv preprint arXiv:1406.1078, 2014.
+Tal Daniel, Carl Qi, Dan Haramati, Amir Zadeh, Chuan Li, Aviv Tamar, Deepak Pathak, and David Held. Latent
+particle world models: Self-supervised object-centric stochastic dynamics modeling. In The Fourteenth
+International Conference on Learning Representations, 2026. URL 
+id=lTaPtGiUUc.
+Emily L Denton et al. Unsupervised learning of disentangled representations from video. Advances in neural
+information processing systems, 30, 2017.
+Emilien Dupont, Hyunjik Kim, SM Eslami, Danilo Rezende, and Dan Rosenbaum. From data to functa: Your
+data point is a function and you can treat it like one. arXiv preprint arXiv:2201.12204, 2022.
+Amer Essakine, Yanqi Cheng, Chun-Wun Cheng, Lipei Zhang, Zhongying Deng, Lei Zhu, Carola-Bibiane
+Schönlieb, and Angelica I Aviles-Rivero. Where do we stand with implicit neural representations? a technical
+and performance survey. arXiv preprint arXiv:2411.03688, 2024.
+Chelsea Finn, Pieter Abbeel, and Sergey Levine. Model-agnostic meta-learning for fast adaptation of deep
+networks. In International conference on machine learning, pages 1126-1135. PMLR, 2017.
+Shenyuan Gao, Siyuan Zhou, Yilun Du, Jun Zhang, and Chuang Gan. Adaworld: Learning adaptable world
+models with latent actions. arXiv preprint arXiv:2503.18938, 2025.
+Quentin Garrido, Tushar Nagarajan, Basile Terver, Nicolas Ballas, Yann LeCun, and Michael Rabbat. Learning
+latent action world models in the wild. arXiv preprint arXiv:2601.05230, 2026.
+Albert Gu, Karan Goel, and Christopher Ré. Efficiently modeling long sequences with structured state spaces.
+arXiv preprint arXiv:2111.00396, 2021.
+Vincent Le Guen and Nicolas Thome. Disentangling physical dynamics from unknown factors for unsupervised
+video prediction. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pages 11474-11484, 2020.
+David Ha and Jürgen Schmidhuber. World models. arXiv preprint arXiv:1803.10122, 2018.
+Danijar Hafner, Timothy Lillicrap, Jimmy Ba, and Mohammad Norouzi. Dream to control: Learning behaviors
+by latent imagination. In International Conference on Learning Representations, 2020. URL https:
+//openreview.net/forum?id=S1lOTC4tDS.
+Haoran He, Yang Zhang, Liang Lin, Zhongwen Xu, and Ling Pan. Pre-trained video generative models as world
+simulators. arXiv preprint arXiv:2502.07825, 2025.
+Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition. In
+Proceedings of the IEEE conference on computer vision and pattern recognition, pages 770-778, 2016.
+Hans Hersbach, Bill Bell, Paul Berrisford, Shoji Hirahara, András Horányi, Joaquín Muñoz-Sabater, Julien
+Nicolas, Carole Peubey, Raluca Radu, Dinand Schepers, et al. The era5 global reanalysis. Quarterly journal
+of the royal meteorological society, 146(730):1999-2049, 2020.
+Sepp Hochreiter and Jürgen Schmidhuber. Long short-term memory. Neural computation, 9(8):1735-1780,
+1997.
+Jun-Ting Hsieh, Bingbin Liu, De-An Huang, Li F Fei-Fei, and Juan Carlos Niebles. Learning to decompose
+and disentangle representations for video prediction. Advances in neural information processing systems, 31,
+2018.
+Bingyi Kang, Yang Yue, Rui Lu, Zhijie Lin, Yang Zhao, Kaixin Wang, Gao Huang, and Jiashi Feng. How far is
+video generation from world model: A physical law perspective. arXiv preprint arXiv:2411.02385, 2024.
+Bingyi Kang, Yang Yue, Rui Lu, Zhijie Lin, Yang Zhao, Kaixin Wang, Gao Huang, and Jiashi Feng. How far is
+video generation from world model: A physical law perspective. In Forty-second International Conference
+on Machine Learning, 2025. URL 
+Bernhard Kerbl, Georgios Kopanas, Thomas Leimkühler, George Drettakis, et al. 3d gaussian splatting for
+real-time radiance field rendering. ACM Trans. Graph., 42(4):139-1, 2023.
+Patrick Kidger and Cristian Garcia. Equinox: neural networks in JAX via callable PyTrees and filtered
+transformations. Differentiable Programming workshop at Neural Information Processing Systems 2021,
+2021.
+Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. arXiv preprint arXiv:1412.6980,
+2014.
+Diederik P Kingma, Max Welling, et al. Auto-encoding variational bayes, 2013.
+Remi Lam, Alvaro Sanchez-Gonzalez, Matthew Willson, Peter Wirnsberger, Meire Fortunato, Ferran Alet,
+Suman Ravuri, Timo Ewalds, Zach Eaton-Rosen, Weihua Hu, et al. Learning skillful medium-range global
+weather forecasting. Science, 382(6677):1416-1421, 2023.
+Ruikun Li, Jiazhen Liu, Huandong Wang, Qingmin Liao, and Yong Li. Weightflow: Learning stochastic
+dynamics via evolving weight of neural network. arXiv preprint arXiv:2508.00451, 2025a.
+Xinqing Li, Xin He, Le Zhang, Min Wu, Xiaoli Li, and Yun Liu. A comprehensive survey on world models for
+embodied ai. arXiv preprint arXiv:2510.16732, 2025b.
+Zhixuan Lin, Yi-Fu Wu, Skand Peri, Bofeng Fu, Jindong Jiang, and Sungjin Ahn. Improving generative
+imagination in object-centric world models. In International conference on machine learning, pages 6140-
+6149. PMLR, 2020.
+David B Lindell, Dave Van Veen, Jeong Joon Park, and Gordon Wetzstein. Bacon: Band-limited coordinate
+networks for multiscale scene representation. In Proceedings of the IEEE/CVF conference on computer vision
+and pattern recognition, pages 16252-16262, 2022.
+Guanxing Lu, Baoxiong Jia, Puhao Li, Yixin Chen, Ziwei Wang, Yansong Tang, and Siyuan Huang. Gwm: To-
+wards scalable gaussian world models for robotic manipulation. In Proceedings of the IEEE/CVF International
+Conference on Computer Vision, pages 9263-9274, 2025.
+Lucas Maes, Quentin Le Lidec, Damien Scieur, Yann LeCun, and Randall Balestriero. Leworldmodel: Stable
+end-to-end joint-embedding predictive architecture from pixels.  2026.
+Warren S McCulloch and Walter Pitts. A logical calculus of the ideas immanent in nervous activity. The bulletin
+of mathematical biophysics, 5:115-133, 1943.
+Vincent Micheli, Eloi Alonso, and François Fleuret. Transformers are sample-efficient world models. arXiv
+preprint arXiv:2209.00588, 2022.
+Ben Mildenhall, Pratul P Srinivasan, Matthew Tancik, Jonathan T Barron, Ravi Ramamoorthi, and Ren Ng.
+Nerf: Representing scenes as neural radiance fields for view synthesis. Communications of the ACM, 65(1):
+99-106, 2021.
+Farinaz Mostajeran, Nikhil M Pawar, Jonathan M Villarreal, and Salah A Faroughi. Context-aware implicit
+neural representations to compress earth systems model data. Scientific Reports, 15(1):25932, 2025.
+Roussel Desmond Nzoyem. Out-of-support generalisation via weight space sequence modelling. In Catch,
+Adapt, and Operate: Monitoring ML Models Under Drift Workshop, 2026. URL 
+net/forum?id=bKpwHYXhHK.
+Roussel Desmond Nzoyem, David A.W. Barton, and Tom Deakin. Neural context flows for meta-learning of
+dynamical systems. In The Thirteenth International Conference on Learning Representations, 2025. URL
+
+Roussel Desmond Nzoyem, Nawid Keshtmand, Enrique Crespo-Fernandez, Idriss TSAYEM, Raul Santos-
+Rodriguez, David A.W. Barton, and Tom Deakin. Weight-space linear recurrent neural networks. In The
+Fourteenth International Conference on Learning Representations, 2026. URL 
+forum?id=zHdKaF3ZM7.
+Dean A Pomerleau. Alvinn: An autonomous land vehicle in a neural network. Advances in neural information
+processing systems, 1, 1988.
+Christopher Rackauckas, Yingbo Ma, Julius Martensen, Collin Warner, Kirill Zubov, Rohit Supekar, Dominic
+Skinner, Ali Ramadhan, and Alan Edelman. Universal differential equations for scientific machine learning.
+arXiv preprint arXiv:2001.04385, 2020.
+Stephan Rasp, Peter D Dueben, Sebastian Scher, Jonathan A Weyn, Soukayna Mouatadid, and Nils Thuerey.
+Weatherbench: a benchmark data set for data-driven weather forecasting. Journal of Advances in Modeling
+Earth Systems, 12(11):e2020MS002203, 2020.
+Cynthia Rudin. Stop explaining black box machine learning models for high stakes decisions and use interpretable
+models instead. Nature machine intelligence, 1(5):206-215, 2019.
+Dominik Schmidt and Minqi Jiang. Learning to act without actions. arXiv preprint arXiv:2312.10812, 2023.
+Konstantin Schürholt, Michael W Mahoney, and Damian Borth. Towards scalable and versatile weight space
+learning. arXiv preprint arXiv:2406.09997, 2024.
+Vincent Sitzmann, Julien NP Martel, Alexander W Bergman, David B Lindell, and Gordon Wetzstein. Implicit
+neural representations with periodic activation functions. arXiv preprint arXiv:2006.09661, 2020.
+Nitish Srivastava, Elman Mansimov, and Ruslan Salakhudinov. Unsupervised learning of video representations
+using lstms. In International conference on machine learning, pages 843-852. PMLR, 2015.
+Richard S Sutton, Andrew G Barto, et al. Reinforcement learning: An introduction, volume 1. MIT press
+Cambridge, 1998.
+Cheng Tan, Siyuan Li, Zhangyang Gao, Wenfei Guan, Zedong Wang, Zicheng Liu, Lirong Wu, and Stan Z Li.
+Openstl: A comprehensive benchmark of spatio-temporal predictive learning. Advances in Neural Information
+Processing Systems, 36:69819-69831, 2023.
+Matthew Tancik, Pratul Srinivasan, Ben Mildenhall, Sara Fridovich-Keil, Nithin Raghavan, Utkarsh Singhal,
+Ravi Ramamoorthi, Jonathan Barron, and Ren Ng. Fourier features let networks learn high frequency
+functions in low dimensional domains. Advances in neural information processing systems, 33:7537-7547,
+2020.
+Basile Terver, Randall Balestriero, Megi Dervishi, David Fan, Quentin Garrido, Tushar Nagarajan, Koustuv
+Sinha, Wancong Zhang, Mike Rabbat, Yann LeCun, and Amir Bar. A lightweight library for energy-based
+joint-embedding predictive architectures, 2026. URL 
+SS Vallender. Calculation of the wasserstein distance between probability distributions on the line. Theory of
+Probability & Its Applications, 18(4):784-786, 1974.
+Aaron Van Den Oord, Oriol Vinyals, et al. Neural discrete representation learning. Advances in neural
+information processing systems, 30, 2017.
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser,
+and Illia Polosukhin. Attention is all you need. Advances in neural information processing systems, 30, 2017.
+Yunbo Wang, Haixu Wu, Jianjin Zhang, Zhifeng Gao, Jianmin Wang, Philip S Yu, and Mingsheng Long. Predrnn:
+A recurrent neural network for spatiotemporal predictive learning. IEEE Transactions on Pattern Analysis
+and Machine Intelligence, 45(2):2208-2225, 2022.
+Zhou Wang, Alan C Bovik, Hamid R Sheikh, and Eero P Simoncelli. Image quality assessment: from error
+visibility to structural similarity. IEEE transactions on image processing, 13(4):600-612, 2004.
+Fuxiang Yang, Donglin Di, Lulu Tang, Xuancheng Zhang, Lei Fan, Hao Li, Chen Wei, Tonghua Su, and Baorui
+Ma. Chain of world: World model thinking in latent motion. arXiv preprint arXiv:2603.03195, 2026.
+Seonghyeon Ye, Joel Jang, Byeongguk Jeon, Sejune Joo, Jianwei Yang, Baolin Peng, Ajay Mandlekar,
+Reuben Tan, Yu-Wei Chao, Bill Yuchen Lin, et al. Latent action pretraining from videos. arXiv preprint
+arXiv:2410.11758, 2024.
+Chuheng Zhang, Tim Pearce, Pushi Zhang, Kaixin Wang, Xiaoyu Chen, Wei Shen, Li Zhao, and Jiang Bian.
+What do latent action models actually learn? arXiv preprint arXiv:2506.15691, 2025a.
+Xingyuan Zhang, Philip Becker-Ehmck, Patrick van der Smagt, and Maximilian Karl. Overcoming knowledge
+barriers: Online imitation learning from visual observation with pretrained world models. Transactions
+on Machine Learning Research, 2025b. ISSN 2835-8856. URL 
+BaRD2Nfj41.
+Allan Zhou, Kaien Yang, Yiding Jiang, Kaylee Burns, Winnie Xu, Samuel Sokota, J Zico Kolter, and Chelsea
+Finn. Neural functional transformers. Advances in neural information processing systems, 36:77485-77502,
+2023.
+Luisa Zintgraf, Kyriacos Shiarli, Vitaly Kurin, Katja Hofmann, and Shimon Whiteson. Fast context adaptation
+via meta-learning. In International Conference on Machine Learning, pages 7693-7702. PMLR, 2019.
+Render, Don’t Decode: Weight-Space World Models
+with Latent Structural Disentanglement
+-Supplementary Material-
+A RELATED WORK
+B
+METHODOLOGICAL DETAILS
+B.1 MOTIVATION: INRS AND THE DECODER BOTTLENECK
+. . . . . . . . . . . . . . .
+B.2 ARCHITECTURE & HYPERPARAMETERS . . . . . . . . . . . . . . . . . . . . . . . .
+B.3 CONTEXT-CONDITIONED VIDEO GENERATION . . . . . . . . . . . . . . . . . . . .
+B.4 ZERO-SHOT CONTENT AND MOTION RETARGETING . . . . . . . . . . . . . . . . .
+C
+IMPLEMENTATION AND EXPERIMENTAL DETAILS
+C.1 DATASETS PROPERTIES
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+C.2 NOVA & BASELINE IMPLEMENTATIONS . . . . . . . . . . . . . . . . . . . . . . . . .
+C.3 EVALUATION METRICS
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+D ADDITIONAL RESULTS
+D.1 LATENT STRUCTURAL DISENTANGLEMENT . . . . . . . . . . . . . . . . . . . . . .
+D.2 CONTEXT-CONDITIONED VIDEO GENERATION . . . . . . . . . . . . . . . . . . . .
+D.3 ADDRESSING INFERENCE-TIME ALIASING IN INRS
+. . . . . . . . . . . . . . . . .
+D.4 NAVIGATING DISCRETE ACTION SPACES WITHIN MINIGRID
+. . . . . . . . . . . .
+D.5 COMPARISON TO WEIGHT-SPACE LINEAR RECURRENT NEURAL NETWORKS . . .
+D.6 ADDITIONAL ABLATION STUDIES
+. . . . . . . . . . . . . . . . . . . . . . . . . . .
+E
+LIMITATIONS & FAILURE MODES
+14
+
+A
+Related Work
+Our framework shares similarities with distinct fields and frameworks within the deep learning
+literature. We detail these major intersections below, while providing in Table 3 a high-level summary
+of how NOVA positively distinguishes itself.
+World models and video generation.
+World models [Li et al., 2025b; Zhang et al., 2025b] have
+seen a massive surge in popularity in recent years. The classic paradigm of [Ha and Schmidhuber,
+2018] uses a variational autoencoder to compress observations and an RNN to model latent transitions.
+DreamerV3 [Hafner et al., 2020] scales this with categorical representations and a joint-embedding
+world model. IRIS [Micheli et al., 2022] replaces the continuous latent with discrete tokens processed
+by a Transformer. Genie [Bruce et al., 2024] and V-JEPA [Bardes et al., 2023] learn from unlabelled
+video via latent-only objectives. These models all rely on a learned decoder. A complementary
+direction [He et al., 2025] fine-tunes video generation models to behave as world models. NOVA
+goes the other direction, as it starts with world modelling and recovers video generation capability
+through the GCM. LeWorldModel [Maes et al., 2026] demonstrates the benefits of end-to-end training
+without freezing encoders; NOVA achieves similar benefits by allowing for the possibility to combine
+its first two training phases, while additionally eliminating the decoder.
+Latent action models (LAMs).
+Similar to reinforcement learning [Sutton et al., 1998], world
+models typically require explicit actions to inform their dynamics. When ground-truth actions are
+unavailable, latent action models (as described in Figure 8) infer these from consecutive observations.
+LAPO [Schmidt and Jiang, 2023] and LAPA [Ye et al., 2024] learn inverse dynamics models that
+extract latent actions bridging consecutive states. Moto [Chen et al., 2025] and AdaWorld [Gao et al.,
+2025] incorporate such models into robot learning pipelines. Garrido et al. [2026] demonstrate that
+continuous latent actions, although sparse and noisy, capture for in-the-wild actions learning, whereas
+discrete codebooks struggle. For deployment without future frames, RSSMs [Hafner et al., 2020],
+IRIS [Micheli et al., 2022], and CoWVLA [Yang et al., 2026] use autoregressive models to generate
+actions. Our GCM follows this principle using a causal sequence model.
+ot+1
+Encoder
+zt+1
+ot
+Encoder
+zt
+IDM
+ut
+FDM
+ˆzt+1
+Decoder
+ˆot+1
+Figure 8: Standard latent action model (LAM). The IDM computes the action from consecutive
+latent states during training. This approach relies on a spatial decoder to project the latent state back
+into pixel space, creating a resolution bottleneck (e.g., [Schmidt and Jiang, 2023]). Note that the
+encoder and the decoder can be identity mappings as well, to match the setting of [Zhang et al.,
+2025a].
+Disentanglement in video prediction.
+Decades of work aim to separate content from motion in
+video. DrNET [Denton et al., 2017] uses adversarial training to decompose frames into pose and
+content codes. DDPAE [Hsieh et al., 2018] employs structured probabilistic models to disentangle
+components with low-dimensional temporal dynamics. PhyDNet [Guen and Thome, 2020] introduces
+a PDE-constrained recurrent cell that explicitly separates physical dynamics from residual uncertainty.
+More recent work [Abdulsalam et al., 2026] disentangles static from first-order dynamic changes
+in a latent motion model. Critically, all these approaches impose disentanglement through auxiliary
+objectives or explicit structural priors applied on top of abstract latent spaces, and still require a
+learned decoder. In NOVA, disentanglement is a consequence of the weight-space geometry itself,
+requiring no additional loss terms.
+Our work is particularly motivated by the fact that patch-based video representations [Lin et al.,
+2020], which power the majority of current video and world models, typically lack the human-style
+intuitiveness of object-centric decompositions [Daniel et al., 2026]. Because they struggle to capture
+such clean relationships between objects (which leaves them uninterpretable), they underperform,
+especially in out-of-distribution scenarios [Daniel et al., 2026]. Our work closes this gap by proposing
+weight-based representations, positioning itself as a crucial step for understanding complex scenes.
+Implicit Neural Representations.
+INRs [Sitzmann et al., 2020] parameterise continuous signals via
+the weights of a coordinate-based MLP. Fourier features [Tancik et al., 2020] enable learning of high-
+frequency components. Dupont et al. [2022] introduce the term "functa", showing that meta-learned
+[Zintgraf et al., 2019; Nzoyem et al., 2025] INR weight vectors can serve as data representations for
+downstream tasks. In the 3D domain, 3D Gaussian Splatting [Kerbl et al., 2023] and work such as
+GWM [Lu et al., 2025] exploit structured spatial representations for world modelling. Our work
+extends this to 2D video dynamics, using the INR weights as the latent state that evolves under
+recurrent dynamics.
+A fundamental advantage of INRs is their continuous formulation, encoding data as functional
+mappings rather than discrete spatial grids [Essakine et al., 2024]. This paradigm theoretically
+enables the representation of complex, high-resolution details with exceptional memory efficiency,
+circumventing the storage bottlenecks typical of high-dimensional video data. However, despite
+this compact capacity, standard INRs are notoriously susceptible to severe aliasing artefacts when
+evaluated at high resolutions [Barron et al., 2021]. Addressing this tension between memory efficiency
+and alias-free high-fidelity rendering is a central consideration in our work.
+Weight-space sequence learning.
+[Li et al., 2025a; Nzoyem et al., 2026] demonstrate that the
+hidden state of a network can be parameterised as the weights of an auxiliary network, enabling
+(linear) weight-space sequence modelling. WeightCaster [Nzoyem, 2026] extends weight-space
+methods to out-of-support generalisation. NOVA is a world model that can be viewed as a non-linear
+generalisation of WARP [Nzoyem et al., 2026]. It mainly replaces the globally linear recurrence
+with a decomposed MLP dynamics model, and adds the base-weight stabilisation mechanism that
+makes training on complex visual signals tractable. Although designed for different applications, we
+compare both frameworks in further detail in Section D.5.
+B
+Methodological Details
+B.1
+Motivation: INRs and The Decoder Bottleneck
+Abstract
+Representations
+Input o
+Encoder
+z
+Decoder
+Reconstruction ˆo
+Structured
+Representations
+Input o
+Encoder
+z
+Renderer
+Render ˆo
+Figure 9: Two paradigms for signal encoding. Ab-
+stract encoders map input o to an opaque latent z
+requiring a trained decoder. Structured encoders
+map o to INR weights z, which are subsequently
+rendered analytically.
+Figure 9 contrasts abstract and structured rep-
+resentations. The abstract paradigm has three
+weaknesses as a world model latent space. First,
+the decoder typically consumes more parameters
+than the encoder [Bruce et al., 2024], making it
+a computational bottleneck. Second, the abstract
+latent space has no guaranteed semantic struc-
+ture since disentangling background from fore-
+ground, or content from motion, requires explicit
+post-training alterations. Third, the renderer is
+resolution-locked: changing the output resolution
+requires retraining or expensive upsampling.
+The structured paradigm eliminates these prob-
+lems. The INR renderer is a fixed mathematical
+function, since querying any spatial coordinates
+requires no parameters. The weight vector z
+has a direct interpretation as it parameterises a
+continuous spatial function. And the continuous
+domain means we can query at any resolution by
+simply changing the coordinate grid.
+Table 3: Capability comparison. ✓= yes; ✗= no; ≈= partial or config-dependent. † = requires
+known action labels at training time. Entries reflect standard published configurations. NOVA is
+uniquely positioned among representative baselines by simultaneously achieving decoder-free and
+resolution-independent rendering, latent content-motion disentanglement, zero-shot super-resolution,
+and action-label-free training directly from video data, all while remaining efficient enough to be
+trained on a single consumer GPU.
+NOVA (ours) [Figure 2]
+Standard WM [Figure 8]
+WARP [Nzoyem et al., 2026]
+DreamerV3† [Hafner et al., 2020]
+GENIE [Bruce et al., 2024]
+V-JEPA [Bardes et al., 2023]
+IRIS† [Micheli et al., 2022]
+PredRNN [Wang et al., 2022]
+PhyDNet [Guen and Thome, 2020]
+LeWorldModel† [Maes et al., 2026]
+Architecture
+Decoder-free rendering
+✓
+✗
+✓
+✗
+✗
+✓
+✗
+✗
+✗
+✓
+Resolution-independent rendering
+✓
+✗
+✓
+✗
+✗
+✗
+✗
+✗
+✗
+✗
+Single-GPU training
+✓
+✓
+✓
+✗
+✗
+✗
+✓
+✓
+✓
+✗
+Disentanglement & Control
+Latent content-motion disentanglement
+✓
+≈
+✗
+✗
+✗
+✗
+✗
+✗
+✗
+✗
+Structural A/B dynamics decomposition
+✓
+≈
+✗
+✗
+✗
+✗
+✗
+✗
+≈
+✗
+Zero-shot content/motion retargeting
+✓
+≈
+≈
+✗
+✗
+✗
+✗
+✗
+✗
+✗
+Latent action model (actions from video)
+✓
+✓
+≈
+✗
+✓
+✗
+✗
+✗
+✗
+✗
+Continuous action space
+✓
+✓
+✓
+✓
+✗
+✗
+✗
+✗
+✗
+✓
+Generation
+Zero-shot super-resolution
+✓
+✗
+✓
+✗
+✗
+✗
+✗
+✗
+✗
+✗
+Context-conditioned forecasting
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+Autonomous generation (no test-time actions)
+✓
+✓
+≈
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+Artefact-free rendering
+✓
+≈
+✓
+≈
+≈
+✓
+≈
+≈
+≈
+✓
+Domain coverage
+Continuous geospatial physics
+✓
+✓
+✓
+✗
+✗
+≈
+✗
+✓
+✓
+✗
+Goal-directed discrete control
+✓
+✓
+≈
+✓
+✓
+✗
+✓
+✗
+✗
+✓
+By leveraging Fourier features [Tancik et al., 2020], these representations provide a differentiable, 3D-
+consistent bridge between latent space and pixels. Fourier mapping allows the network to overcome
+spectral bias, capturing the high-frequency details and sharp gradients (e.g., fine textures, localised
+weather fronts) that standard MLPs often blur. This continuous, analytical framework enabled zero-
+shot super-resolution. Such scalability is critical for applications like global weather forecasting,
+where a single pixel must represent vastly different scales without loss of structural integrity.
+Finally, structured representations can be significantly more compact than raw pixel arrays [Mosta-
+jeran et al., 2025]. By encoding complex data into 1D weight vectors, they can be processed with
+generic MLPs rather than specialised architectures like CNNs or RNNs, thus simplifying the pipeline.
+B.2
+Architecture & Hyperparameters
+Figure 10 provides a detailed view of key NOVA components at the configuration used in Weather-
+Bench experiments (see Table 5):
+(a) Implicit Neural Representation. A 6-layer9 MLP of width 12 preceded by a Fourier coordinate
+encoding with 6 frequency bands. The weights and biases of all 5 layers are combined as ¯z + zt
+at render time. Non-batched inputs are (x, y) ∈[−1, 1]2; the output is the pixel value at the
+queried coordinate.
+(b) CNN Encoder. A 5-layer strided convolutional backbone (stride 2, channels 64/128/256/512,
+ReLU activations) followed by a flatten and linear projection to Rdz. We use 3 × 3 kernels.
+(c) Inverse Dynamics Model. A 4-layer MLP of width dz taking concatenated (zt, zt+1) as input
+and outputting ut ∈Rdu.
+(d) Generative Control Model. A causal Transformer with 4 blocks (8 attention heads, MLP
+ratio 4) that processes a sequence of concatenated {zτ, uτ}1≤τ≤t pairs, with learned positional
+embeddings. We set the values corresponding to ut as 0 in the input sequence.
+9Note that the output layer is included in the layer count; meaning that 5 layers corresponds to a depth of 4, following
+Equinox’s convention [Kidger and Garcia, 2021].
+(e) Forward Dynamics Model. Two independent 4-layer MLPs: A of width 2dz taking zt as input,
+and B of width 2dz taking ut as input. Their outputs are summed to produce zt+1.
+(x, y) ∈R2
+Fourier Encode
+Freqs=6
+Linear(12)
++ ReLU
+Linear(12)
++ ReLU
+Linear(12)
++ ReLU
+Linear(12)
++ ReLU
+Linear(12)
++ ReLU
+Linear(C)
+ox,y
+t
+∈RC
+weights & biases = ¯z + zt
+ot
+(H × W × C)
+Conv2D (s=2)
+C = 64
++ ReLU
+Conv2D (s=2)
+C = 128
++ ReLU
+Conv2D (s=2)
+C = 256
++ ReLU
+Conv2D (s=2)
+C = 512
++ ReLU
+Flatten &
+Linear(dz)
+zt ∈Rdz
+zt
+zt+1
+Concat
+Linear(dz)
++ ReLU
+Linear(dz)
++ ReLU
+Linear(dz)
++ ReLU
+Linear(du)
+ut ∈Rdu
+z1:t
+u1:t−1
+Concat, Linear
++ Pos. Emb.
+4× Causal Block
+(MHA + MLP)
+Linear(du)
+ut ∈Rdu
+zt
+ut
+Linear(2dz)
++ ReLU
+Linear(2dz)
++ ReLU
+Linear(2dz)
++ ReLU
+Linear(dz)
+Linear(2dz)
++ ReLU
+Linear(2dz)
++ ReLU
+Linear(2dz)
++ ReLU
+Linear(dz)
++
+zt+1
+(a) Implicit Neural Representation
+(b) CNN Encoder
+(c) Inverse Dynamics Model
+(d) Generative Control Model
+(e) Forward Dynamics Model (Top: A, Bottom: B)
+Figure 10: Detailed NOVA components as used on the WeatherBench dataset, corresponding to the
+experimental configuration (dz = 961, du = 16, and C = 1).
+Architecture of the GCM.
+We employ Transformer architectures exclusively for the WeatherBench
+and MiniGrid datasets, whereas we utilise a GRU for Moving MNIST and an LSTM for PhyWorld.
+Because the latter two datasets serve as the basis for our intervention experiments, we prioritise
+attention-free recurrent architectures to prevent the model from inadvertently attending to historical,
+uncorrupted states. At each time step, the recurrent core (LSTM or GRU) receives the concatenated
+latent observation and previous action as input to update its internal hidden memory state. This
+updated memory state is then passed to an MLP decoder, which projects the concatenated hidden state
+and current latent observation into the target action space. Successfully accommodating this breadth
+of sequence-modelling backbones underscores the versatility of our framework, demonstrating that it
+is robust and agnostic to the choice of GCM architecture.
+Structural inductive biases.
+It is important to note that while NOVA successfully disentangles
+background, object identity, and motion without any semantic supervision (i.e., no explicit labels
+nor ground-truth masks are provided), this emergence is facilitated by minimal structural bottlenecks
+rather than rigid inductive biases. Specifically, isolating ¯z from the temporal dynamics naturally
+encourages the absorption of static elements, while the additive structure of the FDM (A(zt)+B(ut))
+provides a simple factorisation of state representations and temporal transitions. Furthermore,
+employing an Implicit Neural Representation supplies a basic coordinate-based spatial grounding
+without enforcing domain-specific priors.
+B.3
+Context-Conditioned Video Generation
+To generate videos with up to Tinf frames, a context ratio ρ ∈[0, 1] controls the fraction of steps
+in which the reference ground-truth next frame is available. For t/T ≤ρ, the IDM provides the
+action; for t/T > ρ, the GCM takes over. Setting ρ = 1 gives oracle world modelling; ρ = 0 gives
+single-frame-conditioned video generation. Algorithm 1 details the full procedure.
+Algorithm 1 NOVA Context-Conditioned Video Generation
+Require: Ref. video o1:T , inference steps Tinf, context ratio ρ ∈[0, 1], coord. grid (X, Y)
+1: z1 ←Enc(o1)
+2: m1 ←GCMinit()
+▷Initialise memory buffer/state
+3: for t = 1 to Tinf do
+4:
+θt ←unflat(¯z + zt)
+5:
+ˆot ←MLPθt(X, Y)
+▷Render current frame
+6:
+if t/T < ρ then
+7:
+ut ←IDM(zt, Enc(ot+1))
+▷Extract action from context
+8:
+else
+9:
+ut ←GCMdecode(mt, zt)
+▷Autoregressively predict action
+10:
+end if
+11:
+mt+1 ←GCMencode(mt, zt, ut)
+▷Update memory with chosen action
+12:
+zt+1 ←A(zt) + B(ut)
+▷Forward dynamics step
+13: end for
+14: return ˆo1:Tinf
+Managing memory during generation.
+The internal memory state mt presented in Algorithm 1
+takes different forms depending on the architecture: it is a fixed-size hidden vector in the recurrent
+architectures, but a sequence buffer (matrix) in the Transformer. We define three fundamental
+operations to abstract away internal GCM processing: init, decode, and encode.
+For the recurrent architectures (GRU, LSTM), memory is initialised as a zero vector, m1 = 0 ∈
+Rdrnn. During encode, the memory is recursively updated through the recurrent cell:
+mt+1 = RecurentCell([zt, ut], mt).
+(3)
+The decode operation concatenates memory and latent state to predict the action via a MLP:
+ut = MLPdecode([mt, zt])
+(4)
+For the Transformer architecture, memory is initialised as the zero matrix m1 = 0 ∈RT ×dtransformer.
+During encode, the context token is computed using the current latent state and the newly predicted
+action. The memory is updated by permanently assigning this token to the t-th row of the buffer:
+mt+1[i, :] =
+Win[zt, ut] + bin
+if i = t
+mt[i, :]
+otherwise.
+(5)
+Conversely, during decode, because ut is not yet available, a query token is generated using a
+zero-padded action vector, qt = Win[zt, 0] + bin, and inserted into the t-th row of mt to form a
+query buffer ˜mt. This buffer is added to learned positional embeddings Epos and processed through
+causally-masked Multi-Head Attention (MHA) and MLP blocks. The action is then linearly projected
+from the t-th output vector:
+ut = Wout Transformer( ˜mt + Epos)t + bout.
+(6)
+In both architectures, the generation of the action ut is causal. At any given timestep t, the
+GCM always sees the sequence of states up to the current step, z1:t, and the sequence of actions
+from the past, u1:t−1. This causal isolation justifies our simplified notations GCM(zt, ut−1) and
+GCM(z1:t, u1:t−1) utilised from Figure 3 onwards.
+B.4
+Zero-Shot Content and Motion Retargeting
+Because the context-conditioned video generation process is a causal system, we can perform
+zero-shot content and motion retargeting, either independently or simultaneously, through targeted
+inference-time interventions (see Algorithm 2). To perform content retargeting at specific time steps
+included in the intervention set I,10 we intervene just before the forward dynamics step by substituting
+the current state zt with an external alien state zalien
+t
+.11 Conversely, for motion retargeting, we
+intervene on the control variables by swapping the generated action ut for an alien action ualien
+t
+. Both
+interventions can be toggled as needed, operating cleanly within the existing generation pipeline
+without requiring any additional training or overhead.
+Algorithm 2 Content and/or Motion Retargeting
+Require: Reference video o1:T , inference steps Tinf, context ratio ρ ∈[0, 1], coordinate grid (X, Y),
+alien states zalien, alien actions ualien, intervention set I
+1: z1 ←Enc(o1)
+2: m1 ←GCMinit()
+3: for t = 1 to Tinf do
+4:
+θt ←unflat(¯z + zt)
+5:
+ˆot ←MLPθt(X, Y)
+6:
+if t/T < ρ then
+7:
+ut ←IDM(zt, Enc(ot+1))
+8:
+else
+9:
+ut ←GCMdecode(mt, zt)
+10:
+end if
+11:
+mt+1 ←GCMencode(mt, zt, ut)
+12:
+if t ∈I then
+13:
+zt ←zalien
+t
+▷Content intervention!
+14:
+ut ←ualien
+t
+▷Motion intervention!
+15:
+end if
+16:
+zt+1 ←A(zt) + B(ut)
+17: end for
+18: return ˆo1:Tinf
+C
+Implementation and Experimental Details
+C.1
+Datasets Properties
+We evaluate our framework across diverse datasets, testing predictive capability, visual fidelity, and
+dynamic disentanglement across varied domains. Dataset properties are summarised in Table 4.
+(1) Moving MNIST [Srivastava et al., 2015] assesses deterministic spatial-temporal forecasting
+and boundary sharpness over time; sequences (T = 20) show two digits bouncing on a 64 × 64
+grayscale canvas. We use 8,000 training and 2,000 testing sequences.
+(2) PhyWorld 30K [Kang et al., 2024] evaluates modelling of complex, non-linear multi-body phys-
+ical interactions. Rendered at 128 × 128 RGB resolution, we use approximately 26,066 training
+sequences and 1,635 testing sequences containing both in-distribution and out-of-distribution
+characteristics (ball radii and velocities).
+(3) WeatherBench [Rasp et al., 2020] tests continuous, global-scale real-world dynamics, popular
+as a benchmark for data-driven medium-range forecasting. The target temperature variable
+is standard-scaled using training statistics. We inherit the chronological split common in the
+literature: training (1979-2015), validation (2016), and testing (2017-2018).
+(4) MiniGrid [Chevalier-Boisvert et al., 2023] challenges the model to extract discrete control
+policies from visual data without explicit action labels. We generated offline goal-directed
+navigation sequences using a Breadth-First Search (BFS) optimal policy, rendered as 72 × 72 × 3.
+10One single intervention step (i.e., |I| = 1) can be enough for successful motion/content retargeting applicable to all
+subsequent steps, as we achieve on Moving MNIST.
+11Note that all alien frame encodings zalien
+t
+could be identical, i.e., zalien
+t
+= zalien
+t+1, ∀t = 1, . . . , Tinf −1.
+Table 4: Dataset properties and evaluation splits. We abbreviate phase 1, phase 2, and phase 3 as
+p1, p2, and p3, respectively. NA is used when phase 1 was skipped, meaning world model-adjacent
+components (Enc, IDM, and FDM) were trained end-to-end. The star (*) indicated that a test set was
+not available; in which case the prescribed PhyWorld validation set was used for testing.
+Dataset
+T
+H × W × C
+Train size
+Test size
+Batch sizes (p1, p2, p3)
+Moving MNIST
+64 × 64 × 1
+2000
+NA, 256, 256
+PhyWorld 30K
+128 × 128 × 3
+1635*
+16, 64, 64
+WeatherBench
+32 × 64 × 1
+17497
+8, 128, 256
+MiniGrid
+72 × 72 × 3
+2000
+16, 24, 24
+C.2
+NOVA & Baseline Implementations
+Hyperparameters were manually tuned based on empirical performance on the validation sets when
+available. Most batch sizes specified in Table 4, along with a deep and narrow INR layers (which
+reduced the number of parameters dz = 961 or 987) meant the memory consumption was kept
+low across all datasets, never exceeding 4GB. This small memory usage was also made possible
+by the fact that we used the stop-gradient operator as described in Figure 2, while instructing JAX
+to recompute all IDM- and FDM-related quantities during its backward pass. We use a learning
+rate of 10−4 for MNIST, and 10−5 for the majority of other datasets and phases. Unless otherwise
+specified, we generate videos and do interventions using 10 context frames for Moving MNIST
+and 3 for PhyWorld, as suggested in their respective papers. In the discrete NOVA implementation
+described in Section D.4 for MiniGrid, we used a codebook of 200 vectors, each of dimension 2; the
+same codebook is reused by the GCM when performing behaviour cloning. Further NOVA training
+details are provided in Table 5.
+We implement the Standard WM in similar conditions to NOVA, even matching its batch sizes. As for
+the encoder-decoder-free LAPO [Schmidt and Jiang, 2023], we adapt the code from its official repos-
+itory, readily available and downloaded from 
+Table 5: Parameter count across datasets. "Vector" describes the dimension of one-dimension latent
+vectors, while "Submodel" describes submodel components within NOVA. "Total Params" counts all
+learnable submodel parameters, plus the length of the isolated ¯z. To prevent confusion, we present
+configurations for the MiniGrid implementation with continuous actions. Across all datasets, total
+learnable parameters amount to roughly 40 million.
+Dataset
+Vector
+Submodel
+Total Params
+du
+dz
+dEnc.
+dFDM
+dIDM
+dGCM
+Moving MNIST
+961
+20338604
+1251588
+PhyWorld 30K
+987
+21453432
+1597444
+WeatherBench
+961
+20361668
+3421712
+MiniGrid
+987
+21453432
+1597444
+Table 6: NOVA wallclock training times across datasets. NA indicates that phases 1 and 2 were
+performed jointly.
+Dataset
+Train. Times (hours)
+Phase 1
+Phase 2
+Phase 3
+Moving MNIST
+NA
+7.0
+1.2
+PhyWorld 30K
+12.8
+8.1
+5.5
+WeatherBench
+0.9
+2.4
+1.0
+MiniGrid
+3.3
+16.4
+1.4
+C.3
+Evaluation Metrics
+Conventional metrics.
+We use standard pixel-level metrics such as Mean Squared Error (MSE)
+for direct comparison during training, validation, and testing. Mean Absolute Error (MAE) is used
+during the latter two stages.
+To complement this on the PhyWorld physics datasets, we extract the centre-of-mass position x(i)
+t
+of each ball i ∈{1, 2} from each predicted frame and estimate the velocity via finite differences
+v(i)
+t
+= (x(i)
+t
+−x(i)
+t−1)/∆t, with ∆t = 0.1. Ball masses are set to mi = r2
+i , proportional to the
+squared radius provided by the dataset’s initial conditions. We then evaluate total linear momentum
+Momt = m1v(1)
+t
++ m2v(2)
+t
+and total kinetic energy KEt = 1
+2m1(v(1)
+t
+)2 + 1
+2m2(v(2)
+t
+)2, averaging
+across time and reporting the mean absolute error against the same quantities computed from ground
+truth positions issued by Kang et al. [2024].
+Ball positions are extracted from predicted frames via colour thresholding. Each frame ˆot ∈
+[0, 1]H×W ×3 is segmented into two binary masks: a red-ball mask, selecting pixels where the R
+channel exceeds τ = 0.8 while G and B remain below τ, and a blue-ball mask, selecting pixels
+where B exceeds τ while R and G remain below τ. The centre-of-mass position of each ball is then
+computed as the mean pixel coordinate over the corresponding mask and normalised to [0, 1] by
+dividing by the frame dimensions W and H respectively. If a mask is empty at time t, indicating the
+ball has left the field of view or is occluded, the position is set to the last known position at t −1.
+Distributional and structural metrics.
+Beyond trajectory-level agreement, we further assess
+structural and distributional consistency at the frame level through the metrics below.
+Let ˆot ∈[0, 1]H×W ×C denote the predicted frame at time step t, and let ˆpt be its empirical pixel-
+intensity distribution, estimated via a histogram over [0, 1]. We aim to quantify identity drift, stemming
+from the fact that a faithful world model should preserve the visual identity of each object even as it
+undergoes rigid motion; pixel-distribution metrics are invariant to such motion by construction. To
+quantify structural and distributional consistency over time, all metrics compare ˆot (or its histogram
+ˆpt) against a ground truth ot (or ˆp).
+We remark that for long horizon forecasting tasks performed on Moving MNIST where ground
+truth beyond T = 20 is not available, we use, in place of pt, the aggregate empirical distribution
+pemp pooled over all available GT frames, i.e., pt = pemp, ∀t > 1. For pixel-based metrics such as
+SSIM and PSNR, we solely rely on the first frame o1 because spatially averaging GT frames would
+introduce motion-blur artefacts that corrupt the structural reference.
+All
+histogram-based
+metrics
+use
+N=64
+equal-width
+bins;
+Wasserstein-1,
+JSD
+dis-
+tance,
+and Bhattacharyya are computed via scipy.stats.wasserstein_distance and
+scipy.spatial.distance.jensenshannon, with bin centres as support points for W1; SSIM
+and PSNR use skimage.metrics against ot; the FFT metric is computed via numpy.fft.fft2
+with the reference spectrum averaged over all GT frames for motion robustness.
+• Wasserstein-1 distance (W1 , ↓).
+W1(pt, ˆpt) =
+inf
+γ∈Γ(pt, ˆpt) E(u,v)∼γ
+
+|u −v|
+
+=
+Z 1
+Ft(x) −ˆFt(x)
+ dx,
+where Ft and ˆFt are the CDFs of pt and ˆpt, respectively. The closed-form CDF reduction
+holds in one dimension [Vallender, 1974].
+• Jensen-Shannon Divergence (JSD , ↓).
+JSD(pt, ˆpt) =
+q
+2DKL(pt∥m) + 1
+2DKL(ˆpt∥m),
+where m = 1
+2(pt + ˆpt) and DKL(p∥q) = P
+b pb ln(pb/qb).
+• Bhattacharyya distance (B , ↓).
+B(pt, ˆpt) = −ln
+N
+X
+b=1
+p
+pt,b ˆpt,b,
+where the sum inside the logarithm is the Bhattacharyya coefficient, and N the number of
+bins; B = 0 iff pt = ˆpt, and B →∞as the distributions become disjoint.
+• Structural Similarity Index (SSIM, ↑).
+SSIM(ot, ˆot) =
+ 2µo µˆo + C1
+ 2σoˆo + C2
+
+ µ2o + µ2
+ˆo + C1
+ σ2o + σ2
+ˆo + C2
+,
+where all statistics are computed within a sliding 11×11 Gaussian window (σw = 1.5): µo
+and µˆo denote the local means, σ2
+o and σ2
+ˆo the local variances, and σoˆo the local covariance
+of ot and ˆot; the reported score is the mean of this map over all window positions. The
+stabilisation constants are C1 = (K1L)2 and C2 = (K2L)2, with K1 = 0.01, K2 = 0.03,
+and L the pixel dynamic range (e.g. L = 1 for images normalised to [0, 1]). SSIM ∈[−1, 1],
+with 1 indicating perfect structural agreement.
+• Peak Signal-to-Noise Ratio (PSNR, ↑).
+PSNR(ot, ˆot) = 10 log10
+
+MSE(o1, ˆot)
+
+[dB],
+MSE(a, b) =
+HWC ∥a −b∥2
+F ,
+where the peak value MAX = 1 for the normalised range [0, 1] has been substituted. Like
+SSIM, PSNR is not motion-invariant and is included as a complementary pixel-fidelity
+reference.
+• FFT magnitude distance (dF , ↓).
+dF(T, ˆot) =
+HW
+|T|
+X
+t′∈T
+F(ot′)
+ −
+F(ˆot)
+
+
+F
+,
+where F : RH×W →CH×W denotes the 2-D DFT, | · | the element-wise complex modulus,
+T the set of all GT frame indices, and ∥· ∥F /(HW) the size-normalised Frobenius norm.
+While global rigid translation perfectly preserves the magnitude spectrum, scenes with
+multiple independent entities may exhibit phase interference. Averaging over T mitigates
+these oscillating cross-terms, yielding a robust spectral reference of the underlying object
+structures. This metric is only computed for C = 1.
+D
+Additional Results
+D.1
+Latent Structural Disentanglement
+Background absorption by ¯z.
+In all Moving MNIST sequences, the background is uniformly dark.
+As seen in Figure 11, we observe that ¯z naturally absorbs this, indicating that the per-frame offsets zt
+have near-zero contribution to background pixels.
+The utility of ¯z extends beyond structural disentanglement. In particular, sequences with dynamic
+backgrounds or moving cameras, such as in-the-wild videos [Garrido et al., 2026], could mean that a
+single dataset-wide ¯z is not able to perfectly isolate all non-dynamic components. In such settings,
+we hypothesise that ¯z still acts as an important weight-space anchor, as demonstrated by our ablation
+in Figure 28. By framing the temporal predictions as small residuals zt relative to ¯z, analogous to
+residual learning [He et al., 2016], we stabilise optimisation and prevent the network from collapsing
+into local minima. Consequently, even in complex scenes where background disentanglement is
+challenging, the residual anchoring provided by ¯z may remain beneficial for efficient learning.
+The A component processes content identity.
+Figure 12 illustrates a controlled intervention on
+Moving MNIST. After a context phase (t ≤10), we replace zt with a convex combination towards 0
+(the zero offset vector), while keeping ut free from the IDM. The zero vector corresponds to the base
+network ¯z alone, which renders a "prototype" or dataset-average scene. Feeding this interpolated
+state through A gradually morphs the digit identity towards lightly-shaded 8s and 9s, while preserving
+the motion trajectory computed by the GCM. Since perturbing zt changes what appears, not where it
+moves, this demonstrates that A(zt) processes the semantic identity of the objects.
+The B component processes spatial motion.
+Figure 13 shows the complementary intervention:
+keeping zt free while interpolating ut towards 0. The digits progressively decelerate and converge
+towards the centre of the canvas. Their visual identity is fully preserved throughout. This confirms
+that B(ut) processes motion instructions but carries no information about object identity.
+Figure 11: Background isolation on Moving MNIST. Left: one frame from the dataset, rendered with
+¯z + zt; Right: a rendering of ¯z after training, indicating that it encodes the shared dark background
+t = 1
+3
+5
+7
+9
+t = 11
+13
+15
+17
+19
+Figure 12: NOVA’s content identity is encoded in zt. After t = 10 (context phase), we interpolate
+zt →0 while maintaining GCM-extracted actions ut. Digit identities gradually morph towards the
+base-network prototype (8s and 9s), while motion trajectories are preserved. No supervision on digit
+identity was provided.
+D.2
+Context-Conditioned Video Generation
+D.2.1
+Moving MNIST
+Forecasting within the training horizon Tinf = 20.
+To complement results from Section 4.1, we
+generate a number of frames using Algorithm 1. Figure 14 shows qualitative video forecasting results
+on Moving MNIST, conditioned on 10 initial frames and rolling out for 10 predicted frames. NOVA
+produces sharp predictions without checkerboard artefacts, a common failure mode in transposed-
+CNN decoders.
+Forecasting over longer horizons Tinf = 1000
+Long-horizon generation is a potent test of identity
+consistency: a world model that merely interpolates over the temporal dimension will eventually
+collapse, while one with a structured representation should remain coherent far beyond its training
+horizon. We use Algorithm 1 to generate extremely long sequences. Given their storage and
+computational cost, we limit evaluation to two test sequences; we acknowledge this may not be fully
+representative of the test distribution.
+Results in Figure 15 show that LAPO collapses, as its pixel distribution fully darkens and degenerates
+over time. Figure 16 and Table 7 further indicate that the standard WM is stable but for the wrong
+reason: it hedges toward a static, blurry distribution of pixels, hardly distinguishable from start to
+finish. NOVA, by contrast, commits. It picks digits and generates them, which means it can be wrong
+at times (visible as spikes in Figure 16), but the median metrics in Table 7 indicate that NOVA is
+more often right than wrong compared to the Standard WM.
+D.2.2
+PhyWorld
+Unperturbed context-conditioned video generation.
+We also evaluate on PhyWorld under 32-
+step-long horizons, this time focusing on out-of-distribution (OOD) generalisation. Specifically,
+we test on ball radii and velocities that lie outside the training distribution, a regime where models
+without suitable inductive biases are expected to fail. Figure 17 shows four such sequences: in
+t = 1
+3
+5
+7
+9
+11
+13
+15
+17
+19
+Figure 13: NOVA’s spatial motion is encoded in ut. From t = 0, we interpolate ut →0 using
+GCM-generated actions, while keeping zt free. Digits decelerate and converge towards the canvas
+centre, while their visual identities are fully preserved throughout.
+GT
+t = 1
+3
+5
+7
+9
+t = 11
+13
+15
+17
+19
+Pred
+GT
+Pred
+GT
+Pred
+GT
+Pred
+GT
+Pred
+GT
+Pred
+Figure 14: Context-conditioned video generation on Moving MNIST. Frames 1-10 are context
+(ground truth); frames 11-20 are NOVA predictions. The model maintains digit identity and trajectory
+without artefacts.
+each case, NOVA tracks the ground truth trajectory faithfully, correctly predicting both position and,
+implicitly, the physical properties of the balls. This suggests that the weight-space representation
+generalises beyond the training distribution, capturing the underlying collision dynamics rather than
+memorising seen configurations.
+How far is video generation from world model [Kang et al., 2024]?
+Figure 18 shows three
+ground truth sequences and the resulting latent state interventions. We perform the intervention
+at step t = 5, well before the collisions happen. We see that once the new identity is inherited,
+post-collision velocities are different from the ones we would have expected from the ground truth.
+These adjusted collision dynamics appear visually accurate, suggesting that NOVA has effectively
+learned the physics of the PhyWorld environment, placing our latent state intervention experiment as
+a potent test of world modelling accuracy [Kang et al., 2024].
+t = 3
+Standard WM
+t = 1000
+LAPO
+NOVA (ours)
+Figure 15: Comparison of long-horizon forecast ability. The models are only shown the initial two
+frames, and most autoregressively predict from frame t = 3 to t = 1000.
+Table 7: Long-horizon identity-consistency metrics. We report the median, min, and max over
+T = 1000 frames and over two sequences {54, 57}, limited as such for computational reasons.
+Metric
+Method
+Median
+Min
+Max
+W1 ↓
+Standard WM
+0.0780
+0.0462
+0.1308
+LAPO
+0.0110
+0.0037
+0.0847
+NOVA
+0.1222
+0.0258
+0.6138
+JSD ↓
+Standard WM
+0.4255
+0.3313
+0.4966
+LAPO
+0.0771
+0.0703
+0.2731
+NOVA
+0.3204
+0.1418
+0.7994
+SSIM ↑
+Standard WM
+0.5873
+0.4337
+0.8828
+LAPO
+0.7683
+0.4664
+1.0000
+NOVA
+0.5983
+0.3552
+0.9142
+dF ↓
+Standard WM
+0.1224
+0.0903
+0.1982
+LAPO
+0.0409
+0.0234
+0.2343
+NOVA
+0.1953
+0.1313
+0.2517
+B ↓
+Standard WM
+0.2698
+0.1542
+0.3785
+LAPO
+0.0086
+0.0071
+0.1025
+NOVA
+0.1442
+0.0270
+1.8013
+Importantly, we take from Figure 18 that the actions were recalculated, confirming that latent actions
+and states are completely dissociated. Figure 18 shows that when actions are inherited, post-collision
+positions are the same (those of the alien sequence). These results indicate that physics are encoded
+in the action vector, and altering this vector would result in unphysical behaviour.
+D.2.3
+WeatherBench
+We evaluate on WeatherBench with 24-step rollouts: 12 context frames followed by 12 predicted
+steps. Figure 20 shows that NOVA accurately reproduces large-scale weather fronts and avoids the
+excessive smoothing characteristic of phase 2 models trained with reconstruction MSE over the pixel
+space. We avoid this dilemma by computing the loss in the latent weight space.
+200
+600
+1000
+Time step t
+0.0
+0.1
+0.2
+0.3
+W1
+Standard WM
+LAPO
+NOVA (ours)
+400
+800
+Time step t
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+JSD
+Standard WM
+LAPO
+NOVA (ours)
+400
+800
+Time step t
+0.0
+0.2
+0.4
+0.6
+0.8
+SSIM
+Standard WM
+LAPO
+NOVA (ours)
+400
+800
+Time step t
+0.00
+0.05
+0.10
+0.15
+0.20
+d
+Standard WM
+LAPO
+NOVA (ours)
+400
+800
+Time step t
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+B
+Standard WM
+LAPO
+NOVA (ours)
+Figure 16: Long-horizon generation. Comparison of long forecast ability using several metrics. The
+models are only shown the initial two frames, and most predict from frame t = 3 to t = 1000. This
+complements Figure 15 by adding time-dependent quantitative values.
+D.3
+Addressing Inference-Time Aliasing in INRs
+Coordinate-based INRs map continuous coordinates to signals via high-frequency sinusoidal em-
+beddings. When queried at a denser grid than the one used during training, as in super-resolution,
+frequency bands in the Fourier feature encoding may exceed the Nyquist limit of the training grid,
+producing aliasing artefacts [Barron et al., 2021; Lindell et al., 2022]. The effect is visible as horizon-
+tal bars in Figure 22, while Figure 21 illustrates why out-of-band frequencies are indistinguishable
+GT
+t = 1
+3
+5
+7
+9
+11
+13
+15
+t = 17
+19
+21
+23
+25
+27
+29
+31
+Pred
+GT
+t = 1
+3
+5
+7
+9
+11
+13
+15
+t = 17
+19
+21
+23
+25
+27
+29
+31
+Pred
+GT
+t = 1
+3
+5
+7
+9
+11
+13
+15
+t = 17
+19
+21
+23
+25
+27
+29
+31
+Pred
+GT
+t = 1
+3
+5
+7
+9
+11
+13
+15
+t = 17
+19
+21
+23
+25
+27
+29
+31
+Pred
+Figure 17: OOD generalisation on PhyWorld. Ground truth (GT) versus NOVA predictions for ball
+radii and velocities outside the training distribution.
+Figure 18: PhyWorld state intervention after 5 steps, with forecast generated using 3 context frames.
+Despite manually editing their identities, we observe accurate collision dynamics that respect the
+balls’ sizes and velocities in the injected states. The fact that the y-position of the alien balls is
+inherited (in addition to shape and colour) is addressed in Section E.
+Figure 19: PhyWorld action intervention after 5 steps, with forecast generated using 3 context frames.
+We use the same sequences as in Figure 18. Injected alien collision dynamics (actions) are the same,
+leading to unphysical behaviours.
+from in-band ones at the training sample locations.12 The loss cannot differentiate them, so the
+corresponding weights are optimised against noise and produce artefacts at super-resolution.
+Theorem 1 (Nyquist-Shannon Sampling Theorem (Informal)). If a continuous function f(y) is
+sampled at uniform intervals ∆y, it can be unambiguously reconstructed if and only if f contains no
+spatial frequencies exceeding ξNyquist =
+2∆y.
+For a grid of H pixels over y ∈[−1, 1], the sampling interval is ∆y = 2/H, giving ξNyquist = H/4
+periods per unit length. The standard Fourier feature encoding assigns frequency ξk = 2k−1 to band
+k as in [Tancik et al., 2020]
+γ(y)k =
+ sin(2kπy), cos(2kπy)
+
+,
+k ∈{0, 1, . . . , K −1},
+(7)
+or in full,
+γ(y) =
+ sin(20πy), cos(20πy), . . . , sin(2K−1πy), cos(2K−1πy)
+⊤
+∈R2K.
+(8)
+The no-aliasing condition ξk < ξNyquist requires:
+2k−1 < H
+=⇒kmax < log2(H) −1.
+(9)
+For MiniGrid (H = 72), kmax < 5.17; therefore, all K = 6 bands remain within the safe manifold.
+However, for WeatherBench (H = 32), kmax < 4, meaning that the highest-frequency bands must
+be eliminated.
+12For our analysis, we consider aliasing along a single axis y for clarity, as the two spatial dimensions are separable.
+GT
+t = 1
+3
+5
+7
+9
+11
+t = 13
+15
+17
+19
+21
+23
+Pred
+GT
+t = 1
+3
+5
+7
+9
+11
+t = 13
+15
+17
+19
+21
+23
+Pred
+GT
+t = 1
+3
+5
+7
+9
+11
+t = 13
+15
+17
+19
+21
+23
+Pred
+GT
+t = 1
+3
+5
+7
+9
+11
+t = 13
+15
+17
+19
+21
+23
+Pred
+GT
+t = 1
+3
+5
+7
+9
+11
+t = 13
+15
+17
+19
+21
+23
+Pred
+Figure 20: WeatherBench forecasting. Ground truth (GT) versus NOVA predictions conditioned on
+12 initial frames (frames 1-12) and rolling out for 12 steps (frames 13-24).
+Spatial coord.
+Amplitude
+High frequency ξhigh (out-of-band)
+Low frequency ξlow (in-band)
+Figure 21: Illustration of spatial aliasing. The out-of-band signal (red, dashed) coincides with the
+in-band signal (blue) at every training sample point (black dots). During training, however, the loss
+cannot distinguish the two; weights are optimised against noise, producing artefacts when the INR is
+queried at a finer out-of-band grid.
+To suppress these, we remark that entries j = 2k and j = 2k + 1 in γ(y) correspond to band k. We
+define a binary mask m ∈{0, 1}2K with
+m2k = m2k+1 = 1[k < log2(H) −1] ,
+k = 0, . . . , K −1,
+(10)
+and evaluate queries using the masked embedding ˜γ(y) = m ⊙γ(y), where ⊙denotes element-wise
+multiplication. This zeros out every frequency band that violates Equation (9), projecting onto the
+aliasing-free subspace of R2K induced by the training grid. A similar process is independently
+applied to the x coordinate.
+Bespoke architectures such as BACON [Lindell et al., 2022] address this by enforcing band-limiting
+through specialised multiplicative filter networks at training time. Our principled approach, directly
+inspired by the Nyquist-Shannon Sampling Theorem (see Theorem 1), requires only a single masking
+matrix applied to the Fourier embedding at inference time, eliminating aliasing zero-shot, with no
+architectural changes or retraining.
+D.4
+Navigating Discrete Action Spaces within MiniGrid
+For domains with discrete actions such as MiniGrid [Chevalier-Boisvert et al., 2023], we design a
+discrete NOVA variant. We employ codebooks [Van Den Oord et al., 2017], and we quantise the
+continuous prediction ut to its nearest codebook vector ˜ut. To enable backpropagation through this
+non-differentiable operation, we apply the straight-through estimator (STE), redefining the action as
+˜ut = ut + sg(˜ut −ut). The FDM is then evaluated on ˜ut, and the objective (2) is augmented with
+the standard codebook and commitment losses to align the embeddings.
+Figure 24 shows NOVA’s behaviour cloning GCM operating on MiniGrid. Although the environment
+has a small set of canonical discrete actions (turn left, turn right, move forward, toggle), we employed
+200 actions, hoping to form action clusters as done by Schmidt and Jiang [2023]. Figure 23 (left)
+shows soft clusters around the quantised actions formed by the raw GCM-predicted actions.
+Ground Truth
+(32 × 64)
+×0.5
+(16×32)
+Nearest Neighbour
+Bilinear
+NOVA (ours)
+×4
+(128×256)
+×32
+(1024×2048)
+−2.0
+−1.5
+−1.0
+−0.5
+0.0
+0.5
+1.0
+Temperature
+Figure 22: Zero-shot super-resolution on WeatherBench without frequency masking. Compared
+to Figure 7, horizontal bars are visible, indicating spectral aliasing along the vertical axis.
+Figure 23: Latent action dimensions on MiniGrid. Discrete (Left): Raw (grey) and quantised
+(blue). Continuous (Right) The first two dimensions collectively encode something akin to the
+orientation of the agent, while the other two (not shown here) encode its location.
+We also implement the continuous variant as defined in Figure 2 for direct comparison. Continuous
+actions train faster and drive the loss roughly two orders of magnitude lower, yielding better visual
+quality in the downstream GCM-based behaviour cloning rollouts (seen by comparing Figure 25 to
+Figure 24). Furthermore, the continuous action geometry appears more interpretable, as Figure 23
+implies that latent action dimensions 1 and 2 encode the orientation of the agent (red triangle). Taken
+together, these results suggest that the NOVA framework is more naturally suited to continuous action
+representations. This is consistent with the finding of Garrido et al. [2026] that discrete codebooks
+are insufficient for unlabelled videos in the wild.
+D.5
+Comparison to Weight-Space Linear Recurrent Neural Networks
+Within the emerging literature on Weight-Space Learning (WSL), our proposed framework (specifi-
+cally, NOVA’s GCM in phase 3) shares several similarities with contemporary architectures, most
+notably Weight-space Adaptive Recurrent Prediction (WARP) [Nzoyem et al., 2026]. Both frame-
+works view the latent state of the dynamic system not as a standard feature vector, but as the weights
+and biases of an INR. In WARP, this is governed by a continuous linear recurrence defined as
+zt = Azt−1 +B∆ot, where the input difference ∆ot between consecutive frames acts as an implicit
+action driving the process. Despite these foundational similarities, WARP is a general sequence
+model, whereas our framework is designed as a comprehensive world model for modelling complex
+video dynamics.
+Figure 24: Goal-directed navigation within a discrete action space. The GCM, conditioned only on
+the initial frame, imitates the BFS policy to navigate towards the goal (green box). Ground truth (top
+row) vs. NOVA prediction (bottom row) per sequence.
+Figure 25: Goal-directed navigation within a continuous action space. Similar to Figure 24, the agent
+(red triangle) is driven by GCM-generated actions.
+Implementation
+To conduct an empirical comparison, we implemented the WARP architecture
+utilising the JAX [Bradbury et al., 2018] and Equinox [Kidger and Garcia, 2021] libraries. We
+meticulously controlled the experimental environment to ensure parity with our framework’s training
+conditions, matching the batch size and total computational budget. The WARP baseline was trained
+using a fixed learning rate of 10−6. Given stability issues [Nzoyem et al., 2026, p. 23], we stabilise the
+linear recurrence and prevent the unbounded explosion by enforcing weight clipping zt ∈[−0.5, 0.5].
+Furthermore, the decoded outputs were subjected to pixel clipping between 0 and 1. We matched
+the capacity of NOVA by reusing an identical INR of dimension dz = 961. Finally, the same NOVA
+CNN encoder architecture was utilised to act as WARP’s initial hypernetwork ϕ, mapping the initial
+visual observation into the high-dimensional weight space: x0 7→z0.
+Forecasting results.
+Standard evaluation of the forecasted rollouts (Figure 26) demonstrates that
+WARP is somewhat capable of capturing spatial-temporal dynamics when conditioned on 10 previous
+context frames. However, qualitative assessments of the generated sequences reveal a substantial
+degradation in visual fidelity. The predicted digits suffer from severe artifacting; they are noticeably
+blurry, ghosted, and lack crisp, well-defined boundaries. This visual degradation suggests that
+WARP’s unconstrained linear recurrence struggles to balance two competing objectives: maintaining
+accurate physical trajectories and achieving photorealism.
+GT
+t = 1
+3
+5
+7
+9
+t = 11
+13
+15
+17
+19
+Pred
+GT
+t = 1
+3
+5
+7
+9
+t = 11
+13
+15
+17
+19
+Pred
+GT
+t = 1
+3
+5
+7
+9
+t = 11
+13
+15
+17
+19
+Pred
+GT
+t = 1
+3
+5
+7
+9
+t = 11
+13
+15
+17
+19
+Pred
+GT
+t = 1
+3
+5
+7
+9
+t = 11
+13
+15
+17
+19
+Pred
+GT
+t = 1
+3
+5
+7
+9
+t = 11
+13
+15
+17
+19
+Pred
+Figure 26: WARP forecasting results conditioned on t = 10 context frames. While the model tracks
+general temporal dynamics, it fails to maintain sharp visual fidelity, yielding blurred and ghosted
+predictions.
+Latent disentanglement analysis.
+To probe the underlying topology of WARP’s learned repre-
+sentations, we performed the latent state intervention experiment from Figure 1. Following the
+processing of the initial 3 frames and autoregressive generation after those, we intervened at t = 6 by
+replacing the naturally evolved state zt with the latent encoding of an alien frame.
+However, the intervention sequence (Figure 27b) demonstrates a catastrophic failure, as WARP allows
+the alien injection to fundamentally corrupt the forward dynamics (similar to LAPO). Furthermore,
+Figure 27a indicates that the CNN encoder appears unable to reconstruct the latents with high visual
+quality even in isolation. This is likely because the initial representation z0 it is forced to generate
+must be mathematically compatible with the subsequent linear recurrence. We believe this imposes an
+architectural compromise, yielding an initial state that neither perfectly suits the unrolled recurrence
+nor permits faithful visual reconstruction. This behaviour proves that the latent representations
+learned by WARP are thoroughly entangled, with spatial content, temporal coordinates, and motion
+confounded within zt.
+First Context Frame
+Alien Frame
+(a) Initial context frame and ground truth alien frame for latent intervention.
+Clean
+t = 1
+3
+5
+7
+9
+Edited
+(b) Intervention sequence rollout
+Figure 27: Latent State Intervention in WARP. (a) The original context frame alongside the isolated
+decoding of the alien latent state. Note the poor baseline reconstruction quality of the encoder. (b)
+When the alien state is substituted at t = 6, the linear recurrence is fundamentally disrupted, proving
+that content and motion are highly entangled within zt.
+D.6
+Additional Ablation Studies
+Throughout our study, we performed several ablation studies, such as additive vs monolithic FDM
+Section 4.2, and discrete vs continuous action spaces in Section D.4. We use this section to present
+additional abstractions that justify our architectural choices.
+Removing the ¯z anchor.
+Ablating the base parameter ¯z and predicting full INR weights zt instead
+of relative offsets fundamentally destabilises the learning process, trapping the network in local
+minima for prolonged periods (see Figure 28). This observation suggests that ¯z prevents severe
+10k
+20k
+30k
+40k
+50k
+Train Step
+2
+1
+MSE
+w/ ¯z
+w/o ¯z
+Figure 28: Phase 2 training loss with and without ¯z on Moving MNIST.
+bottlenecks and gradient instabilities that arise when the model is forced to independently regress the
+full high-dimensional weight space from scratch at every time step.
+Replacing the recurrent GCM architectures.
+In our study, we observed on PhyWorld 30K that
+latent interventions are most effective when paired with non-attention-based GCM architectures such
+as recurrent neural networks. We hypothesise that this is because standard Transformers compute
+global attention over the entire state-action history. As a result, injecting an alien action mid-sequence
+causes attention disruption and visual artifacting.
+E
+Limitations & Failure Modes
+Spurious information encoded within latent states and actions.
+On Moving MNIST, the latent
+action ut encodes not only the next digit location but also brightness variations. This is partly because
+the IDM is trained to explain all inter-frame differences, including those due to noise [Zhang et al.,
+2025a]. Furthermore, because the actions encode next digit location "go to x, y" instead of saying
+"increment by ∆x, ∆y", it becomes harder to map actions to ground truths when available [Schmidt
+and Jiang, 2023]. On PhyWorld, we find that intervening on the content also shifts the movement
+along the vertical (see Figure 29); we hypothesise that this is because during training, the model only
+sees balls on the same axis, and thus encodes the y-location as part of the identity. Future work could
+explore regularisation mechanisms beyond discretisation [Garrido et al., 2026] to constrain the latent
+spaces. For example, applying SICReg [Maes et al., 2026] to bottleneck the action space and encode
+only meaningful user-mappable motion information (for Moving MNIST and MiniGrid), and data
+augmentations such as video rotations for physics-abiding datasets such as PhyWorld.
+Figure 29: Zero-shot content retargeting on PhyWorld. Intervention starts at t = 5, with all subsequent
+states replaced with those corresponding to the same alien sequence. While all sequences inherit
+new ball colours and shapes, we find that in addition, the y-position is inherited, thus altering visual
+dynamics, which should be free. Future work will aim to make the model robust to such spurious
+correlations while preserving dynamics.
+Physical constraints and OOD generalisation.
+On PhyWorld, we observed diminished OOD
+performance after suppressing the addition and using a single monolithic FDM (see Figure 30
+and Table 8). We believe scientific machine learning techniques [Rackauckas et al., 2020] could
+help alleviate this issue, whereby the INR would be forced to satisfy laws of motion such as
+zt+1 = zt + ∆t · ut [Nzoyem et al., 2026], or any other partial differential equation thanks to the
+implicit function theorem [Bai et al., 2019].
+Figure 30: Additive vs. monolithic (joint) forward dynamics on PhyWorld. Although detrimental for
+disentangled representations, a joint FDM performs better out-of-distribution.
+Table 8: Comparison of additive and joint model performance on in-distribution (InD) and out-of-
+distribution (OOD) data after phase 2 training (i.e., using the IDM to generate actions). Values are
+reported as mean ± standard deviation.
+Distribution
+Model
+Image Metrics
+Physical Metrics
+MSE ↓
+PSNR ↑
+SSIM ↑
+Pos. Error ↓
+Mom. Error ↓
+K.E. Error ↓
+InD
+Additive
+0.0008 ± 0.0004
+32.52 ± 1.52
+0.9792 ± 0.0072
+0.0065 ± 0.0188
+0.0308 ± 0.0455
+0.0404 ± 0.2024
+Joint
+0.0007 ± 0.0003
+32.64 ± 1.40
+0.9803 ± 0.0071
+0.0031 ± 0.0051
+0.0191 ± 0.0099
+0.0041 ± 0.0049
+OOD
+Additive
+0.0141 ± 0.0194
+24.70 ± 6.23
+0.9255 ± 0.0701
+0.0739 ± 0.0883
+0.4109 ± 0.8788
+0.6531 ± 1.8469
+Joint
+0.0117 ± 0.0160
+25.08 ± 5.87
+0.9297 ± 0.0649
+0.0753 ± 0.0882
+0.3380 ± 0.6255
+0.6463 ± 1.7010
+SOTA video generation.
+While our framework enables controllable generation, we do not achieve
+state-of-the-art context-conditioned video forecasting. Supervised spatio-temporal models from
+the OpenSTL benchmark [Tan et al., 2023] achieve highly optimised pixel-level metrics. This
+performance gap arises from an architectural constraint that forces NOVA to autoregressively rely on
+an inferred latent action signal to drive the generation process. Similar trade-offs where world models
+sacrifice raw pixel-level reconstruction performance to prioritise powerful latent representations have
+recently been proposed [Terver et al., 2026]. That said, bridging this gap remains an exciting frontier
+for future work, paving the way for architectures that seamlessly unite state-of-the-art visual fidelity
+with interpretable, action-driven control.

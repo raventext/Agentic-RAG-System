@@ -1,0 +1,1291 @@
+Mind the Gap? A Distributional Comparison of Real
+and Synthetic Priors for Tabular Foundation Models
+Alex O. Davies
+School of Geographical Sciences
+University of Bristol, UK
+alexander.davies@bristol.ac.uk
+Telmo de Menezes e Silva Filho
+School of Engineering Mathematics and Technology
+University of Bristol, UK
+Nirav Ajmeri
+School of Computer Science
+University of Bristol, UK
+Abstract
+Tabular foundation models are pre-trained on one of three classes of corpus: curated
+datasets drawn from benchmark repositories, tables harvested at scale from the
+web, or synthetic tables sampled from a parametric generative prior. Despite the
+centrality of pre-training data to model performance, little is known about how these
+corpora relate to one another in distribution, and the impact this has on downstream
+performance. In this work we take three canonical, archetypal datasets used to
+train tabular foundation models; the T4 dataset represents web-scraped corpora,
+the TabFM dataset curated tables from Kaggle, and the TabICL dataset as the only
+well-used synthetic prior with publicly available parameters. We characterise each
+corpus using aggregate features over whole tables, columns and correlations, and
+compare them using discriminator AUCs and k-NN coverage metrics. We find that
+the TabICL synthetic prior occupies a narrow region of the space of real tables, that
+this mismatch cannot be closed by optimising prior hyper-parameters across more
+than 86 thousand configurations, and that curated and web-scraped corpora are
+broadly interchangeable on a distributional level in feature space. Surprisingly, the
+distributional gap between synthetic pre-training data and real tables has a clearly
+detectable effect on performance under neither feature-based proximity measures
+or TabICL’s own internal representations, suggesting that coverage of the real-data
+distribution is not the primary driver of TabICL’s generalisation.
+Introduction
+Tabular data is among the most prevalent data modalities in applied machine learning, spanning
+domains from healthcare and finance to scientific research and industry [2, 16, 24, 22]. Unlike
+images or text, tabular data lacks a canonical structure, with datasets varying widely in the number
+of columns, the mix of numeric and categorical features, and the statistical properties of individual
+columns. This heterogeneity has historically made it difficult to transfer knowledge across datasets,
+and classical approaches typically require training a new model from scratch for each task.
+Tabular foundation models (TFMs) offer a promising alternative. By pre-training on large corpora
+of tabular data, TFMs can perform in-context learning (ICL) at inference time - generalising to
+new tasks from a small number of examples without further gradient updates [15, 21, 26, 27]. These
+models are comparatively expensive to train as a result; TabPFN required 8 GPUs applied over two
+weeks train-time [15]. The reward for this cost has been competitive performance against task-specific
+Preprint.
+arXiv:2605.06343v1 [cs.AI] 7 May 2026
+
+baselines [15, 27], but its success depends critically on the quality and diversity of the pre-training
+corpus.
+Three broad strategies have emerged for constructing these corpora. The first collates tables from
+existing benchmark repositories, as in TabFM [26]. The second harvests tables at scale from the web,
+exemplified by T4 and Tabula-8B [12]. The third forgoes real data entirely, instead sampling synthetic
+tables from a parametric generative prior; TabICL [21] and TabPFN [15] follow this approach, using
+structural causal models to generate diverse classification tasks.
+1.1
+Research Questions
+Despite the centrality of pre-training data to TFM performance, surprisingly little is known about
+how these three corpora relate to one another. We therefore structure this work around the following
+sequential research questions:
+RQ1: Do synthetic priors cover real tables? Synthetic priors are designed using the causal pro-
+cesses that produce real tables, but whether they actually do is an open question. We show
+that synthetic priors occupy a very small region of the space occupied by real tables, but that
+the space of synthetic tables is well-covered by real tables.
+RQ2: Do curated datasets cover web-scraped tables? Curated datasets make use of tables known
+to be ‘clean’ and useful for ML algorithms, and here we show that web-scraped and
+curated tables occupy broadly overlapping regions of feature space, though individual tables
+remain distinguishable by source. The distributional overlap explains why pre-training on
+comparatively few curated tables yields comparable performance.
+RQ3: Can synthetic priors be optimised to cover real tables? Given that neither web-scraped or
+curated datasets are well-covered by synthetic priors, the question remains as to whether
+the same prior design can be parameterised to match these real tables. Here we show that
+multiple methods of optimisation yield little improvement in coverage, with near perfect
+separation of synthetic and real tables after a highly extensive (86k trial) grid search.
+RQ4: Does proximity to synthetic prior impact performance? Regardless of how well synthetic
+priors match real world distributions, an essential question is whether proximity to the prior
+actually impacts downstream performance. We present the preliminary finding that, under
+our feature sets, performance shows no clear correlation with proximity to the prior.
+This paper addresses these questions directly, collecting archetypal corpora for each school of pre-
+training dataset. We characterise each corpus using various feature sets capturing structural and
+distributional properties of individual tables, and measure sample and distribution-level similarities
+using discriminators and coverage metrics from the generative learning literature. Code is available
+online via GitHub (Supplemental for submission).
+Background and Related Work
+Our focus is on the pre-training corpora used for Tabular Foundation Models (TFMs), how they
+compare to and cover each other, and whether this is relevant for downstream performance.
+2.1
+Curated Datasets
+Curated datasets are assembled by curating tables from established machine learning repositories
+such as OpenML [25] and the UCI Machine Learning Repository [3] or the competition platform
+Kaggle. Rather than collecting new data, this approach aggregates existing benchmarks into a unified
+corpus, applying filters for quality, schema consistency, and licence compatibility. TabFM [26] is the
+primary example in this setting, comprising approximately 380 datasets drawn from Kaggle after
+deduplication and normalisation of column types.
+A known limitation of curated corpora is that they inherit the biases of the repositories from which they
+are drawn. Certain domains, particularly medical and financial datasets, are heavily overrepresented,
+while the distribution of dataset sizes skews small, reflecting the historical tendency of benchmark
+repositories to favour datasets amenable to classical ML methods [19]. These biases may limit the
+diversity of structural patterns seen during pre-training.
+2.2
+Web-Scraped corpora
+An alternative to manual curation is to harvest tabular data at scale from the web. The T4 dataset
+[12] and its respective TFM Tabula-8B follow this approach, extracting tables from HTML pages
+and other structured web sources to produce corpora orders of magnitude larger than hand-curated
+alternatives. The principal advantage is diversity: web-scraped corpora capture a wide range of
+domains, table sizes, and column types that are unlikely to appear in curated benchmark repositories.
+This scale comes at a cost. Web-scraped tables are noisy, often containing malformed schemas,
+merged header rows, or semantically inconsistent columns. Licencing is also ambiguous, as the
+provenance of individual tables is difficult to trace [12]. Pre-processing pipelines therefore play a
+critical role in determining the effective quality of the resulting corpus.
+2.3
+Synthetic Priors
+Synthetic priors avoid real data entirely, instead sampling tables from a parametric generative
+prior. This approach offers several practical advantages: there are no licensing constraints, data
+can be generated at arbitrary scale, and the distribution can be controlled directly via the prior’s
+hyperparameters. Early work in this vein includes the priors used in Prior-Fitted Networks (PFN) and
+TabPFN [15], which generate synthetic classification tasks from simple Bayesian network structures.
+An overview of priors - and their notably limited public availability - is available in the Appendix,
+Table 3.
+TabICL [21] extends this idea using structural causal models (SCMs) as the generative mechanism. A
+SCM defines a directed acyclic graph over variables, with each node’s value determined by a learned
+or sampled function of its parents plus noise. TabICL parameterises this process via a hyperparameter
+vector θ ∈Θ that governs choices such as the SCM type, the tree model family used to instantiate
+causal mechanisms, class balance, and the probability of generating categorical columns. Sampling
+from the prior thus yields synthetic tables whose statistical properties are determined by θ.
+The fundamental limitation of synthetic priors is distributional mismatch: there is no guarantee that
+tables sampled from the prior resemble real-world tabular data in their structural or distributional
+properties. Whether this mismatch is consequential for downstream ICL performance, and whether it
+can be reduced by tuning θ, is the central question of this paper.
+Method
+In this work we investigate, according to our research questions, the degree to which web-scraped,
+curated and synthetic prior tabular datasets cover the same spaces. We conduct this through two
+primary metrics:
+Discriminators: Samples that broadly cover the same space should be indistinguishable to a given
+model. Over the feature space described below, we fit discriminators to predict which class
+of dataset a table belongs to. This assesses the realism of samples on an individual basis,
+and is common in comparing sets of samples in generative modelling [4, 13].
+Coverage: A more direct distance-based metric, here we make use of neighbours-based coverage
+metrics [18, 20, 23] to assess the degree to which these tabular datasets overlap in a given
+feature space. These metrics are commonly applied in generative modelling, assessing how
+well a given model produces samples that cover the original data distribution.
+We denote a table as t with |R| rows and |C| columns. Column j is written Cj, with cardinality ||Cj||
+denoting the number of unique values. The uniqueness ratio κj = ||Cj||/|R| gives the proportion of
+unique values; we treat columns with κ < 0.2 as categorical.
+3.1
+Features
+Given the challenges of operating over datasets of tables (column and row order invariance, heteroge-
+nous column types, etc) it is necessary to move tables into a unified feature space. We build a set of
+aggregate features that summarise table, column and inter-column patterns and distributions. Features
+are, with the exception of column count, invariant to the number of columns and rows in a table, and
+in our later optimisation sections the column count becomes effectively redundant. Details on our
+constructed features can be found in Appendix B.1, and a discussion of their simplicity in Section 5.2.
+It is worth noting that learnt embeddings and projections are not necessary for RQ1-3; it is only
+necessary to demonstrate a lack of coverage within a given feature space to answer these questions.
+While learnt embeddings are likely more expressive, they would restrict our findings to coverage for a
+given model, and as a result are not appropriate. In particular, TabICL embeddings risk boot-strapping
+in these model-agnostic findings, though we do deploy them in Section 5.1 as features maximally
+expressive with reference to TabICL and its prior distribution.
+We perform limited ablation over this feature set to ensure robustness in our results, using the
+following feature sets:
+• Full (d = 70): for table-level analysis, the complete feature vector ϕ(t).
+• Scalars (d = 9): for table-level analysis, distributional scalar features, excluding the number
+of columns.
+• Histograms (d = 60): for table-level analysis, average histogram mean and standard
+deviation features only.
+• Col. Hists (d = 50) for column-level analysis, cumulative column histograms extracted
+from individual tables.
+• Corr. Hists (d = 50) for inter-column level analysis, correlation histograms over tables.
+These ablations and varied feature sets allow us to validate the robustness of our findings, showing
+that our findings are neither specific to only one feature set, nor reliant on one single feature.
+3.2
+Discriminator
+Given a set of real tables Tr and synthetic tables Ts, we train a binary discriminator to distinguish
+between the two populations. Each table t is embedded as ϕ(t) ∈R70 using the above-described
+features and assigned label y = 1 (real) or y = 0 (synthetic), yielding dataset
+D = {(ϕ(t), 1) : t ∈Tr} ∪{(ϕ(t), 0) : t ∈Ts}.
+(1)
+Given the number of necessary trials, concessions are made for speed and efficiency. We use XGBoost
+classifiers trained on stratified splits of D. A value of AUC = 0.5 indicates the discriminator performs
+at chance, with synthetic and real tables indistinguishable, while AUC = 1.0 indicates perfect
+separability. Thus AUC is a proxy for prior realism, and all prior optimisation methods minimise it.
+3.3
+Coverage
+In addition to measuring sample realism, we use coverage as a measure of distributional overlap.
+This is a set of methods and metrics developed primarily in generative modelling. Sajjadi et al. [23]
+first frame ‘recall’ and ‘precision’ for generative models as measures of distributional coverage.
+Kynkäänniemi et al. [18] then extend this work using manifold estimation, with Naeem et al. [20]
+proposing k-NN-based metrics along this theme which are related to the metrics we describe below.
+We measure the fraction of the real distribution not covered by the synthetic prior via a k-nearest-
+neighbour estimator, as well as the inverse, the fraction of the synthetic distribution not covered
+by the real. Feature vectors are normalised to [0, 1]. A coverage threshold δ0.95 is set as the 95th
+percentile of mean within-synthetic k-NN distances at k = 5. A real table is considered uncovered if
+its mean distance to its k nearest synthetic neighbours exceeds this threshold:
+func =
+|Tr|
+X
+j
+ ¯dk(rj, Ts) > δ0.95
+
+.
+(2)
+Coverage: A point p is covered by a set Q, written p ∈Q, if its mean distance to its k nearest
+neighbours in Q does not exceed δ0.95. For two sets P and Q, we write P ∈Q to denote
+the proportion of points in P covered by Q:
+P ∈Q =
+|P|
+X
+p∈P
+1[p ∈Q].
+(3)
+Recall: The Recall of Q with respect to P is the dataset-level coverage of P by Q.
+Precision: The Precision of Q with respect to P is the dataset-level coverage of Q by P.
+A crucial note on coverage is that, while qualitative findings hold from these metrics, quantitative
+results are comparable only under the same feature and distance metrics. Reported recall and precision
+values should therefore be interpreted as lower and upper bounds respectively, rather than absolute
+characterisations of distributional overlap.
+Figure 1: PCA projections of cumulative histograms for the Curated, Web-Scraped and Synthetic
+datasets within our full table-level feature space. Sample count is equal for each pair.
+3.4
+Datasets
+Curated, web-scraped and synthetic prior-based datasets all aim to include enough statistical patterns
+that a TFM can downstream be applied to an arbitrary tabular dataset, the intent being that some of
+the downstream patterns will have appeared during pre-training. To this extent, it is fair to say that
+the intent of these pre-training datasets is to cover the space of downstream tables.
+Curated and Web-Scraped We select representative examples of web-scraped and curated datasets
+of real-world tables. As a web-scraped dataset we use the T4 corpus [12]. This dataset was used
+to pre-train the model Tabula-8B, a language-model based TFM, and is a trimmed version of the
+massive TabLib [10] corpus, sourced from GitHub and CommonCrawl. As a curated dataset, we use
+the collection of Kaggle datasets presented in Wen et al. [26], 384 mixed classification and regression
+datasets selected by various properties (e.g. row and column count, completeness). This dataset was
+used to train the TFM TabFM; where appropriate we refer to the dataset by the moniker FM.
+Synthetic Prior It remains to select a reasonable prior framework for generating tables. We use
+that from TabICL [21], which builds on the successes of the TabPFN [15] prior, and performs very
+strongly on benchmarks when compared with other single-prior methods. We study a single prior,
+TabICL, for two reasons: first, it is the only canonical synthetic prior whose default parameters and
+generation code are fully open-source (TabPFN does not release prior parameters; Mitra does not
+distribute data-level code); second, restricting to one prior makes the 86k-configuration optimisation
+in Section 4.3 computationally tractable.
+A notable pattern in TFM development is closed-source code; Mitra [27] does not distribute data-
+level code, and TabPFN [15] do not share prior parameters. Comparisons without access to default
+parameters are simply impossible. Despite this, TabICL functions very similarly to TabPFN and other
+priors, including mixture models like Mitra, all of which rely on SCM-based modelling. As a result,
+TabICL’s priors are a best-case, with both strong, canonical performance and default parameters and
+code both open-source. TabICL, within the literature of synthetic priors, builds on the successes of
+other priors, meaning that our findings may also carry over to these and other similar priors should
+their parameters become available. We encourage future research to release open-source parameters
+so that this analysis can be extended.
+Comparisons Between Datasets
+In this section we address our first two research questions through treating datasets as-is, without
+optimisation towards either dataset of real tables. In Figure 1, we show PCA projections of the feature
+Table 1: Bootstrap AUC and two-directional coverage across all experiments. The upper section
+shows unoptimised pairwise comparisons grouped by research question. The middle section shows
+the top-5 grid-search configurations (AUC-optimised) evaluated against T4. The lower section shows
+the best Bayesian-optimised configurations (joint AUC + coverage loss, Equation 6) validated at
+larger sample sizes. Recall = A covered by B (A∈B); Precision = B covered by A (B∈A).
+Dataset
+Bootstrap AUC
+Coverage
+A
+B
+Features
+Rank
+Mean ± Std
+Recall
+Precision
+Validation: Self-Comparisons Between Subsets
+T4
+Full
+0.498 ± 0.015
+0.940
+0.957
+ICL
+0.501 ± 0.037
+0.944
+0.963
+FM
+0.500 ± 0.009
+0.938
+0.955
+Unoptimised: Synthetic vs. Web-scraped (RQ1)
+ICL
+T4
+Full
+0.9997 ± 0.0001
+0.0882
+0.9880
+Histograms
+0.9985 ± 0.0003
+0.1617
+0.9849
+Scalars
+0.9991 ± 0.0002
+0.0854
+0.9318
+Col. Hists
+0.977 ± 0.003
+0.250
+0.987
+Corr. Hists
+0.988 ± 0.011
+0.187
+1.00
+Unoptimised: Synthetic vs. Curated (RQ1)
+ICL
+FM
+Full
+0.9972 ± 0.0029
+0.1604
+0.9780
+Histograms
+0.9943 ± 0.0049
+0.2421
+0.8742
+Scalars
+0.9958 ± 0.0037
+0.2736
+0.6132
+Col. Hists
+0.972 ± 0.007
+0.421
+0.970
+Corr. Hists
+0.983 ± 0.014
+0.276
+0.992
+Unoptimised: Web-scraped vs. Curated (RQ2)
+T4
+FM
+Full
+0.9133 ± 0.0237
+0.9748
+0.8302
+Histograms
+0.8884 ± 0.0276
+0.9748
+0.8836
+Scalars
+0.8972 ± 0.0250
+0.9906
+0.8805
+Col. Hists
+0.906 ± 0.013
+0.968
+0.852
+Corr. Hists
+0.841 ± 0.052
+0.951
+0.902
+Grid search optimised (AUC), ICL vs. T4 - top-5 ranked configurations (RQ3)
+ICL
+T4
+Full
+0.9989 ± 0.0013
+0.063
+0.996
+0.9987 ± 0.0014
+0.080
+0.992
+0.9985 ± 0.0016
+0.125
+0.991
+Bayesian optimised (Equation 6), ICL vs. real datasets - best run per dataset (RQ3)
+ICL
+FM
+Full
+0.995 ± 0.018
+0.194
+0.981
+T4
+0.997 ± 0.006
+0.218
+0.978
+sets for each dataset plotted against each other. Figures showing cumulative coverage curves, feature
+importances and aggregates of our histogram features are available in the Appendix. We present
+our results for discriminators and coverage in Table 1, including validation of our discriminator and
+coverage metrics over two independent 1000-size samples of the respective dataset. An ablation study
+for Recall and Precision is also available in Appendix B.2.
+4.1
+RQ1: Real vs. Synthetic
+Discriminator AUCs between ICL and our datasets of real tables are consistently high, within-margin
+of perfect performance when considering deviations during bootstrapping (200 re-samples). Coverage
+is similarly very low between ICL and our real tables, and comparatively high in reverse, indicating
+that the real tables cover the synthetic far more effectively than the inverse.
+Feature importances indicate that histogram features prove the most useful for each pairwise discrimi-
+nator (Figure 4). On comparing synthetic and real datasets, and with consideration of our visualisation
+in Figure 5, we note that at intermediate histogram bins ICL columns are consistently lower than
+columns from real tables, and have low variance within that region, making the middle range of
+column distributions highly informative for discriminators. Discriminators remain highly performant
+when histogram features are included, indicating that simple summary statistics (in-particular the
+number of columns and the skewness of distributions) are still highly informative.
+We also investigate the same metrics on column and inter-relation level distributions. Over columns
+we use cumulative histograms, and over correlations simple histograms. These results are reported in
+Table 1 and visualised through PCA in Figure 2, with cumulative column histograms in Figure 9.
+Column and correlation AUCs are somewhat lower than for the whole feature set, due to decreased
+expressiveness compared to our full features which compare both. Recall is also higher, though still
+comparably low, again due to the limited expressiveness of these feature sets. That being said, AUCs
+are still near-perfect for Real/Synthetic discriminators, with recall consistently below 50%.
+From these results we can conclude that with default parameters, ICL priors produce tables with
+un-realistic patterns within columns and the distribution of synthetic tables is a narrow region of the
+space which real tables occupy. Further, from column and correlation histograms as features, it is
+clear that these patterns hold true both within columns and in how columns relate to one another.
+4.2
+RQ2: Curated vs. Web-Scraped
+Here we see significantly lower discriminator AUCs than for synthetic and real tables, though
+performance is still strong, indicating good sample-level discrimination. Coverages are high in both
+directions, with T4 covering almost all of the FM tables, and FM covering the large majority (> 83%)
+of T4 tables. While histogram features still prove the most informative, none of them contribute a
+gain of more than 6%, indicating a more challenging classification task.
+These results support two distinct conclusions. At the distributional level, the two corpora are near-
+interchangeable: high bidirectional coverage indicates that pre-training on either source encounters
+similar support in feature space, explaining why comparatively few curated datasets yield competitive
+performance. At the sample level, however, individual tables retain systematic source signatures
+(likely artefacts of curation filtering and web-scraping noise) sufficient for high discriminator AUCs.
+4.3
+RQ3: Optimisation of Priors
+In this section we explore whether the priors can be optimised to improve their poor coverage of real
+tables. The TabICL generative prior is parameterised θ ∈Θ governing structural choices such as
+SCM type, tree model family, class balance, and the probability of generating categorical columns.
+We seek θ∗= argminθ∈Θ AUC(θ), where AUC(θ) is the discriminator score when Neval = 200
+synthetic tables are drawn from the prior parameterised by θ. The search space, i.e. the parameters for
+the TabICL prior over which we attempt to optimise, is outlined in the Appendix. We make the trivial
+optimisation of sampling column counts from the distribution of columns counts in the respective
+real dataset, meaning that this can be effectively removed from our search space.
+We attempt optimisation over AUC using Bayesian and Genetic optimisers (Appendix C), yielding
+no significant improvement in AUCs with either strategy. Following the lack of convergence from
+these optimisers, we perform an exhaustive grid-search over AUC.
+Grid Search - AUC. We construct a discrete grid by sampling each continuous or integer parameter at
+G evenly-spaced values between its bounds, and taking the Cartesian product. Conditional parameters
+are only included where relevant, reducing the search space substantially. At our grid resolution of
+G = 6, chosen to remain somewhat computationally tractable, this results in more than 86 thousand
+prior parameters and evaluations. Even with only 200 real and synthetic samples, this is still highly
+computationally expensive. This analysis was parallelised over a cluster of 6 nodes, each with 2
+NVIDIA Grace CPU Superchips, and took a little less than 23 hours.
+Figure 8 shows AUCs over the whole grid search. The lowest recorded AUC over this grid search
+is still > 0.95, with the large majority not significantly different from the un-optimised synthetic
+prior. Given the computational cost of this search we limit dataset sizes to 200 for both T4 and FM
+datasets, but perform subsequent analysis with top-ranked parameter combinations over 1000 samples
+to ensure robustness. To avoid overfitting we reduce our discriminator trees to 100.
+Following the grid search, the top-K = 5 configurations by AUC are subjected to a deeper post-hoc
+evaluation, with 1000 synthetic tables sampled from the prior, compared against an equal sample of
+the T4 tables. Five analyses are run per configuration.
+These results are presented in Table 1. Larger sample sizes lead to the resumption of near-perfect
+AUC, and coverage metrics are near-consistent with the unoptimised prior. Taken together, this
+search has shown that the ICL prior simply cannot produce consistently realistic samples. Given the
+lack of success in these optimisations we return to a Bayesian optimisation with a modified reward
+function that includes precision and recall, presented in Appendix C.1.2, but again find no significant
+improvement in coverage or AUC.
+Table 2: Coverage and k-NN distance (k = 5) correlation against coverage with varying relative
+performance metrics across the TALENT benchmark tables. ↓where correlation indicates decreasing
+performance w.r.t. proximity to the ICL prior and ↑for the inverse. No correlation results are
+statistically significant at p ≤0.05.
+Rank
+AUCICL
+mean(AUCbench)
+AUCICL
+max(AUCbench )
+Features
+Recall
+Precision
+r
+p
+r
+p
+r
+p
+Full
+0.171
+0.988
+↓
+0.084
+0.283
+↑
+0.036
+0.646
+↑
+0.013
+0.872
+Column Hists.
+0.244
+0.973
+↓
+0.103
+0.188
+↓
+-0.050
+0.528
+↓
+-0.041
+0.602
+Corr. Hists.
+0.308
+0.995
+↓
+0.145
+0.172
+↑
+0.002
+0.982
+↑
+0.045
+0.674
+TabICL Columns
+0.226
+0.783
+↓
+0.125
+0.111
+↑
+0.021
+0.787
+↓
+-0.021
+0.791
+TabICL Rows
+0.659
+0.841
+↓
+0.138
+0.078
+↓
+-0.007
+0.927
+↓
+-0.066
+0.401
+TabICL Concat.
+0.598
+0.822
+↓
+0.138
+0.078
+↓
+-0.002
+0.979
+↓
+-0.067
+0.393
+Discussion
+Here we discuss two key points related to our above findings. First, implications for performance
+downstream, and second, whether our sets are adequate for our findings.
+5.1
+RQ4: Proximity to Prior and Performance
+Despite the results presented above - namely that the TabICL prior cannot be optimised to cover the
+space of real tables - it remains to investigate whether this gap has a detectable relationship with
+downstream TFM performance. In most machine-learning settings we would expect that increasing
+distance from the training distribution leads to degraded relative performance. We test this expectation
+using both hand-crafted feature sets and, crucially, the model’s own internal representations.
+To this end, we assemble a collection of classical models (See Appendix D) along with TabICL. We
+then apply this set of models on classification datasets from the more than 300 TALENT benchmarks
+[19] and record the mean rank of ICL. The TALENT benchmarks are specifically curated to reflect
+a large span of potential downstream applications, and are used in-literature to reflect the validity
+of an approach [16, 21]. Having collected these rankings, we calculate 5-NN distance using (i) Our
+full, table-level feature set (ii) Cumulative column histograms (iii) Correlation histograms over the
+table (iv) Internal embeddings from the pre-trained TabICL model. We report quantitative results in
+Table 2, and visualise in the Appendix.
+The strongest evidence comes from the model’s own internal representations (lower section of Table 2).
+TabICL’s row and column embeddings are the learned features from which its predictions are directly
+derived; distance in this space is therefore the most functionally relevant measure of proximity to
+the prior. Even here, correlations with performance remain below 0.14 and none approach statistical
+significance. This result cannot be attributed to inadequacy of the feature representation - the
+features are the model’s own view of the data, the same representation from which classification
+decisions are made. If distance from the prior were degrading performance, we would expect it to be
+visible in the space the model itself uses.
+The hand-crafted feature sets corroborate this finding across independent projections. Under all six
+feature representations, across rank, mean-relative-AUC, and best-relative-AUC metrics, no correla-
+tion reaches significance at p ≤0.05 (Table 2). With the 200 classification TALENT benchmarks,
+and at a power of p ≥0.8 for significance at p ≤0.05, we would detect correlations of |r| > 0.2. To
+further validate these results we perform the same analysis using the TabArena benchmark, which
+though consisting of fewer tables, does not overlap with TALENT. These results are available in
+Appendix E.1 - the same null result holds. We perform a partial correlation analysis controlling
+for dataset size, dimensionality, and class balance in Appendix E.2, finding that the null result holds
+across all three covariates.
+Together with RQ1-RQ3, this presents a coherent picture: synthetic prior pre-training is substan-
+tially out-of-distribution with respect to real tables, yet this distance does not predict downstream
+performance in the model’s own representation space. We note that dataset-level covariates such
+as size, dimensionality, and class balance may independently affect both distance and difficulty; a
+partial-correlation analysis is available in the Appendix showing that this is not the case.
+The mechanism underlying this robustness is not well-understood, and we outline two candidate
+interpretations. First, in-context learning may be inherently more robust to pre-training distributional
+shift than standard supervised learning, with the inference-time conditioning on task-specific examples
+compensating for out-of-distribution pre-training. Second, the inductive biases instilled by SCM-
+based pre-training (causal structure, tree-based mechanisms) may constitute a form of implicit
+regularisation that transfers broadly regardless of low-level distributional alignment. Directly testing
+these accounts through pre-training under alternative or degraded priors is left to future work due to
+computational constraints. We provide a brief for this future work in Appendix Section F.
+5.2
+Choice of Features
+The feature sets used in RQ1-RQ3 are intentionally simple. For those questions this is sufficient:
+if tables are easily separable under a simple feature set, they remain separable under any more
+expressive one, and it is therefore not necessary to exhaust the space of possible representations
+to establish distributional mismatch. For RQ4 the situation differs. There, we do not rely solely
+on hand-crafted features but also measure proximity using TabICL’s own internal row and column
+embeddings, the representations from which its classification decisions are directly derived. A richer
+external feature set could not be more relevant to the question of whether the distributional gap affects
+performance than the space the model itself uses to make predictions, and the null result in RQ4 is
+therefore not one that a more expressive feature set could plausibly overturn.
+Conclusion
+We have investigated the distributional relationships between the three principal classes of pre-training
+corpora for tabular foundation models. The archetypal TabICL prior occupies a narrow and unrealistic
+region of the space of real tables. Discriminators achieve near-perfect separation under all feature sets,
+coverage of real tables by the synthetic prior is consistently below 25%, and extensive optimisation
+of prior hyperparameters yields no meaningful improvement - the lowest AUC across more than
+86 thousand grid evaluations remains above 95%. The distributional mismatch is therefore not a
+tuning problem but a structural limitation of this prior. Given the mixed-inclusion architecture shared
+across priors in this class (Table 3), we conjecture this limitation extends beyond TabICL, though
+direct verification awaits open-source release of comparable prior parameters. Curated and web-
+scraped datasets, by contrast, occupy broadly overlapping regions of feature space despite remaining
+distinguishable at the individual-table level, providing a principled explanation for the empirical
+observation that comparatively few curated datasets can match web-scale performance [12, 26].
+We find no evidence that this distributional gap predicts downstream ICL performance, across two
+benchmarks, three performance metrics, and a partial correlation analysis controlling for dataset-level
+covariates. This result holds also in TabICL’s own representation space, the setting in which a
+coverage-based account of generalisation would most plausibly predict a signal. That no such signal
+is observed is more consistent with an account based on the inductive biases instilled by SCM-based
+pre-training than with one based on distributional coverage, though we note this remains a conjecture.
+We note that this use of internal embeddings is appropriate only for RQ4, where the question concerns
+a specific model’s behaviour; for RQ1-RQ3, where the question is whether the corpora differ in their
+intrinsic distributional properties, proximity must be assessed independently of any particular model’s
+learned representation. Direct investigation is left to future work, and we encourage the release of
+generation code and default parameters as a norm in TFM development to make such comparisons
+possible.
+References
+[1] T. Akiba, S. Sano, T. Yanase, T. Ohta, and M. Koyama. Optuna: A Next-generation Hyper-
+parameter Optimization Framework. In Proceedings of the 25th ACM SIGKDD International
+Conference on Knowledge Discovery & Data Mining, KDD ’19, pages 2623-2631, New York,
+NY, USA, July 2019. Association for Computing Machinery. ISBN 978-1-4503-6201-6. doi:
+10.1145/3292500.3330701. URL 
+[2] L. Akoglu, M. McGlohon, and C. Faloutsos. RTM: Laws and a recursive generator for weighted
+time-evolving graphs. In Proceedings - IEEE international conference on data mining, ICDM,
+pages 701-706, 2008. ISBN 978-0-7695-3502-9. doi: 10.1109/ICDM.2008.123.
+[3] S. D. Bay, D. Kibler, M. J. Pazzani, and P. Smyth. The UCI KDD archive of large data sets for
+data mining research and experimentation. SIGKDD Explor. Newsl., 2(2):81-85, Dec. 2000.
+ISSN 1931-0145. doi: 10.1145/380995.381030. URL 
+380995.381030.
+[4] A. Borji. Pros and cons of GAN evaluation measures. Computer Vision and Image Under-
+standing, 179:41-65, Feb. 2019. ISSN 1077-3142. doi: 10.1016/j.cviu.2018.10.009. URL
+
+[5] F. d. Breejen, S. Bae, S. Cha, and S.-Y. Yun. Fine-tuned In-Context Learning Transformers are
+Excellent Tabular Data Classifiers, Jan. 2025. URL 
+arXiv:2405.13396 [cs].
+[6] L. Breiman. Random Forests. Machine Learning, 45(1):5-32, Oct. 2001. ISSN 1573-0565.
+doi: 10.1023/A:1010933404324. URL 
+[7] T. Chen and C. Guestrin. XGBoost: A Scalable Tree Boosting System. In Proceedings of the
+22nd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining, KDD
+’16, pages 785-794, New York, NY, USA, Aug. 2016. Association for Computing Machinery.
+ISBN 978-1-4503-4232-2. doi: 10.1145/2939672.2939785. URL 
+doi/10.1145/2939672.2939785.
+[8] C. Cortes and V. Vapnik. Support-vector networks. Machine Learning, 20(3):273-297, Sept.
+1995. ISSN 1573-0565. doi: 10.1007/BF00994018. URL 
+BF00994018.
+[9] A. V. Dorogush, V. Ershov, and A. Gulin. CatBoost: gradient boosting with categorical features
+support, Oct. 2018. URL  arXiv:1810.11363 [cs].
+[10] G. Eggert, K. Huo, M. Biven, and J. Waugh. TabLib: A Dataset of 627M Tables with Context,
+Oct. 2023. URL  arXiv:2310.07875 [cs].
+[11] N. Erickson, J. Mueller, A. Shirkov, H. Zhang, P. Larroy, M. Li, and A. Smola. AutoGluon-
+Tabular: Robust and Accurate AutoML for Structured Data, Mar. 2020. URL 
+org/abs/2003.06505. arXiv:2003.06505 [stat].
+[12] J. Gardner, J. C. Perdomo, and L. Schmidt.
+Large Scale Transfer Learning for
+Tabular Data via Language Modeling.
+In Advances in Neural Information Pro-
+cessing Systems,
+volume 37,
+pages 45155-45205,
+Dec. 2024.
+doi:
+10.52202/
+079017-1435.
+URL 
+hash/4fd5cfd2e31bebbccfa5ffa354c04bdc-Abstract-Conference.html.
+[13] I. J. Goodfellow, J. Pouget-Abadie, M. Mirza, B. Xu, D. Warde-Farley, S. Ozair, A. Courville,
+and Y. Bengio. Generative Adversarial Nets. In Advances in Neural Information Processing
+Systems, volume 27. Curran Associates, Inc., 2014. URL 
+cc/paper/2014/hash/f033ed80deb0234979a61f95710dbe25-Abstract.html.
+[14] K. Helli, D. Schnurr, N. Hollmann, S. Müller, and F. Hutter. Drift-resilient TabPFN: in-context
+learning temporal distribution shifts on tabular data. In Proceedings of the 38th International
+Conference on Neural Information Processing Systems, volume 37 of NIPS ’24, pages 98742-
+98781, Red Hook, NY, USA, Dec. 2024. Curran Associates Inc. ISBN 979-8-3313-1438-5.
+[15] N. Hollmann, S. Müller, L. Purucker, A. Krishnakumar, M. Körfer, S. B. Hoo, R. T. Schirrmeis-
+ter, and F. Hutter. Accurate predictions on small data with a tabular foundation model. Nature,
+637(8045):319-326, Jan. 2025. ISSN 1476-4687. doi: 10.1038/s41586-024-08328-6. URL
+ Publisher: Nature Publish-
+ing Group.
+[16] J.-P. Jiang, S.-Y. Liu, H.-R. Cai, Q.-L. Zhou, and H.-J. Ye. Representation Learning for
+Tabular Data: A Comprehensive Survey. IEEE Transactions on Pattern Analysis and Machine
+Intelligence, pages 1-20, 2026. ISSN 1939-3539. doi: 10.1109/TPAMI.2026.3657217. URL
+
+[17] G. Ke, Q. Meng, T. Finley, T. Wang, W. Chen, W. Ma, Q. Ye, and T.-Y. Liu. LightGBM:
+a highly efficient gradient boosting decision tree. In Proceedings of the 31st International
+Conference on Neural Information Processing Systems, NIPS’17, pages 3149-3157, Red
+Hook, NY, USA, Dec. 2017. Curran Associates Inc. ISBN 978-1-5108-6096-4. URL https:
+//dl.acm.org/doi/10.5555/3294996.3295074.
+[18] T. Kynkäänniemi, T. Karras, S. Laine, J. Lehtinen, and T. Aila. Improved Precision and
+Recall Metric for Assessing Generative Models. In Advances in Neural Information Processing
+Systems, volume 32. Curran Associates, Inc., 2019. URL 
+cc/paper/2019/hash/0234c510bc6d908b28c70ff313743079-Abstract.html.
+[19] S.-Y. Liu, H.-R. Cai, Q.-L. Zhou, H.-H. Yin, T. Zhou, J.-P. Jiang, and H.-J. Ye. Talent: A Tabular
+Analytics and Learning Toolbox. Journal of Machine Learning Research, 26(226):1-16, 2025.
+ISSN 1533-7928. URL 
+[20] M. F. Naeem, S. J. Oh, Y. Uh, Y. Choi, and J. Yoo. Reliable Fidelity and Diversity Metrics
+for Generative Models. In Proceedings of the 37th International Conference on Machine
+Learning, pages 7176-7185. PMLR, Nov. 2020. URL 
+v119/naeem20a.html.
+[21] J. Qu, D. Holzmüller, G. Varoquaux, and M. L. Morvan. TabICL: A Tabular Foundation
+Model for In-Context Learning on Large Data. In Proceedings of the 42nd International
+Conference on Machine Learning, pages 50817-50847. PMLR, Oct. 2025. URL https:
+//proceedings.mlr.press/v267/qu25d.html.
+[22] H. O. Quinn, M. Sedky, J. Francis, and M. Streeton.
+Literature Review of Explain-
+able Tabular Data Analysis.
+Electronics, 13(19), Sept. 2024.
+ISSN 2079-9292.
+doi:
+10.3390/electronics13193806. URL 
+[23] M. S. M. Sajjadi, O. Bachem, M. Lucic, O. Bousquet, and S. Gelly. Assessing Generative Models
+via Precision and Recall. In Advances in Neural Information Processing Systems, volume 31.
+Curran Associates, Inc., 2018. URL 
+hash/f7696a9b362ac5a51c3dc8f098b73923-Abstract.html.
+[24] R. Shwartz-Ziv and A. Armon. Tabular data: Deep learning is not all you need. Information
+Fusion, 81:84-90, May 2022. ISSN 1566-2535. doi: 10.1016/j.inffus.2021.11.011. URL
+
+[25] J. Vanschoren, J. N. van Rijn, B. Bischl, and L. Torgo. OpenML: networked science in
+machine learning. SIGKDD Explor. Newsl., 15(2):49-60, June 2014. ISSN 1931-0145. doi:
+10.1145/2641190.2641198. URL 
+[26] X. Wen, H. Zhang, S. Zheng, W. Xu, and J. Bian. From Supervised to Generative: A Novel
+Paradigm for Tabular Deep Learning with Large Language Models. In Proceedings of the
+30th ACM SIGKDD Conference on Knowledge Discovery and Data Mining, KDD ’24, pages
+3323-3333, New York, NY, USA, Aug. 2024. Association for Computing Machinery. ISBN
+979-8-4007-0490-1. doi: 10.1145/3637528.3671975. URL 
+1145/3637528.3671975.
+[27] X. Zhang, D. C. Maddix, J. Yin, N. Erickson, A. F. Ansari, B. Han, S. Zhang, L. Akoglu,
+C. Faloutsos, M. W. Mahoney, C. Hu, H. Rangwala, G. Karypis, and B. Wang. Mitra: Mixed
+Synthetic Priors for Enhancing Tabular Foundation Models, Oct. 2025. URL 
+org/abs/2510.21204. arXiv:2510.21204 [cs].
+[28] X. Zhang, G. Ren, H. Yu, H. Yuan, H. Wang, J. Li, J. Wu, L. Mo, L. Mao, M. Hao, N. Dai,
+R. Xu, S. Li, T. Zhang, Y. He, Y. Wang, Y. Zhang, Z. Xu, D. Li, F. Gao, H. Zou, J. Liu, J. Liu,
+J. Xu, K. Cheng, K. Li, L. Zhou, Q. Li, S. Fan, X. Lin, X. Han, X. Li, Y. Lu, Y. Xue, Y. Jiang,
+Z. Wang, Z. Wang, and P. Cui. LimiX: Unleashing Structured-Data Modeling Capability for
+Generalist Intelligence, Sept. 2025. URL 
+A
+Synthetic Priors
+Table 3: Synthetic priors for tabular foundation model pre-training, ordered by paper date. "Prior
+code" means the data generation pipeline is publicly available, not merely inference code or trained
+weights. "Covers / extends" describes inclusion at the level of the prior’s generative mechanism.
+Model
+Prior
+Family
+Code
+Params
+Paper
+Covers / extends
+TabPFN v1
+SCM +
+BNN
+✗
+✗
+Hollmann et al.
+[15], published
+Root of the SCM lineage. Equal mixture
+of random-DAG SCMs (MLP edges) and
+Bayesian neural nets. The BNN compo-
+nent was not carried forward by any suc-
+cessor.
+TabForestPFN SCM +
+Forest
+✓
+✓
+Breejen et al.
+[5],
+pre-print
+2025 (arXiv)
+Strictly includes the v1 SCM prior as
+one component.
+The forest generator
+(decision-boundary-oriented) is an inde-
+pendent primitive.
+Direct ancestor of
+TabICL v1’s and Mitra’s tree-mixing
+strategies.
+Drift-
+Resilient
+TabPFN
+Temporal
+SCM
+✓
+✗
+Helli et al. [14],
+published 2024
+Strictly includes v1 SCM as its inner
+prior; wraps it in a second-level pro-
+cess that modulates DAG parameters over
+time. Does not incorporate forest or tree-
+ensemble components.
+TabPFN v2 /
+v2.5
+SCM
+(en-
+riched)
+✗
+✗
+Hollmann et al.
+[15], published
+Parallel refinement of v1’s SCM, not a
+strict superset.
+DAGs grown via redi-
+rection sampling; edge functions include
+small NNs and decision trees. BNN com-
+ponent dropped. Prior generation explic-
+itly not released.
+TabICL
+v1/v2
+SCM
++ Tree-
+SCM
+✓
+✓
+Qu et al. [21],
+published 2025
+Subsumes the v1 SCM prior (with ex-
+tended activations) and adds a tree-based
+SCM branch (XGBoost models at DAG
+edges) inspired by TabForestPFN. Cov-
+ers TabForestPFN’s intent; implementa-
+tion differs.
+LimiX (16M
+/ 2M)
+Hierarchical
+SCM
+✗
+✗
+Zhang
+et
+al.
+[28], published
+2025 (arXiv)
+Parallel
+SCM
+lineage;
+hierarchical
+DAG generation with graph-aware and
+solvability-aware sampling. Does not in-
+clude forest or tree-ensemble components.
+Broadest task scope (imputation, causal
+inference).
+Mitra
+SCM +
+GBDT
++ RF +
+DT
+✗
+✗
+Zhang
+et
+al.
+[27], published
+Broadest mixture prior. Includes an SCM
+component and three tree-based genera-
+tors (gradient boosting, random forest, de-
+cision tree) selected via a Generalizability
+Matrix (diversity × performance).
+Tabular foundation models (TFMs) trained via prior-data fitted networks (PFNs) approximate
+Bayesian inference over a hand-designed generative prior rather than learning from real-world
+datasets. This makes the choice of synthetic prior the central design decision in TFM development:
+the prior encodes all inductive biases the model will bring to unseen tabular tasks, and its coverage
+of realistic data-generating processes directly determines downstream generalisation. Despite this
+centrality, the prior design space has received comparatively little systematic attention relative to
+architectural innovations, and crucially, the generation code is rarely released - making the prior
+something closer to proprietary IP than a scientific artefact.
+Table 3 surveys the synthetic priors used in the main PFN-style TFMs to date, ordered chronologically.
+The dominant primitive is the structural causal model (SCM), in which a directed acyclic graph
+encodes causal dependencies between features and targets, with each edge function drawn from a
+parameterised family. TabPFN v1 [15] established this foundation, mixing SCM-generated datasets
+equally with Bayesian neural network samples; every successor dropped the BNN component and
+focused on enriching the SCM side. Two parallel directions have emerged from this base. The first
+refines DAG construction - TabPFN v2 [15] replaces fully-connected MLP edges with a redirection-
+sampling growth procedure, while LimiX [28] introduces a hierarchical generation paradigm with
+explicit solvability control. The second direction mixes the SCM prior with tree-based generators,
+motivated by the observation that gradient-boosted decision trees carry inductive biases that purely
+causal models lack: TabForestPFN [5] introduced this mixture, and both TabICL v1 [21] and Mitra
+[27] extended it, with Mitra offering the most principled treatment by selecting mixture components
+via a formal diversity-and-performance criterion.
+Notably, only three of the seven priors surveyed (TabForestPFN [5], Drift-Resilient TabPFN [14], and
+TabICL v1 [21]) have released their generation code; the remainder describe their priors in varying
+levels of paper detail but treat the generation pipeline as closed. Only TabICL and TabForestPFN
+release default parameters for their own training runs; we opt for TabICL due to its popularity and
+publication status.
+B
+Comparisons Between Datasets
+Figure 2: PCA projections of cumulative histograms for the curated FM dataset, the web-scraped T4
+dataset, and the synthetic ICL datasets within with cumulative column histograms as a feature space.
+Sample count is equal for each pair.
+B.1
+Features
+We begin with simple aggregate features over table structure:
+Num Cols: The dimensionalities |R| and |C| of the table
+Categorical Ratio The proportion of columns with κ < 0.2, inferred as categorical under the
+uniqueness heuristic.
+|C|
+|C|
+X
+j=1
+1[κj < 0.2] .
+(4)
+Within-Column We then compute a set of features to express properties of the numeric or categorical
+values within columns, which are then aggregated over the table. Let Cnum = {j : κj ≥0.2} denote
+the set of inferred numeric columns, with per-column mean µj = E[Cj] and standard deviation σj.
+Mean cardinality for categorical columns: Let Ccat = {j : κj < 0.2}. The mean number of
+distinct values across inferred categorical columns, ¯
+Ccat.
+|Ccat|
+X
+j∈Ccat
+∥Cj∥.
+(5)
+Max cardinality for categorical columns: The maximum number of distinct values across inferred
+categorical columns.
+Skewness: The third standardised moment of each numeric column, averaged across all columns. We
+summarise across columns via the mean skew =
+|Cnum|
+P
+j skew(Cj) and standard deviation
+σskew.
+Kurtosis: The fourth standardised moment (excess), averaged across all columns.
+Entropy for categorical columns: The Shannon entropy of the empirical value distribution of each
+inferred categorical column.
+Between-Column
+Also necessary to express is how columns relate to one another; this inter-column structure is captured
+via the Pearson correlation matrix over numeric columns. Let P ∈R|Cnum|×|Cnum| be the matrix of
+pairwise Pearson correlations, and let P = {|Pjk| : j ̸= k} denote the multiset of off-diagonal
+absolute correlations.
+We extract three summary statistics; the mean absolute correlation ¯ρ = (1/|P)|·P
+r∈P r, the standard
+deviation of absolute correlations σρ, and the proportion of highly correlated pairs r ≥0.7.
+B.2
+Ablation - Recall, Coverage
+We perform a limited ablation over the number of neighbours k and the distance threshold ¯δk for each
+pairwise comparison between our datasets. We use equal sized samples for each dataset comparison,
+meaning that T4 and ICL are limited to 318 tables when comparing to FM, and 5k samples when
+compared to one another. We present the results, through annotated heatmaps, in Figure 3.
+Figure 3: Our ablation study over the number of neighbours k and threshold δk for recall and precision
+for each pairwise comparison of our default-parameter datasets.
+Figure 4: Feature importances, assessed from performance gains through tree splits, for each pairwise
+discriminator over our three datasets.
+Figure 5: Example visualisations of our aggregate column histogram features. Left: Mean bin values
+across tables. Right: Mean bin deviations across tables.
+C
+Optimisation
+C.1
+Search Space θ
+The search space θ is defined over the following parameters, partitioned by their conditional relevance
+to the SCM prior type τ:
+Shared (active for all τ):
+• λc ∈{2, . . . , 20} - maximum number of target classes.
+• pcat ∈[0, 0.6] - probability of generating a categorical column.
+• pord ∈[0, 1] - probability of ordered multiclass targets.
+• balanced ∈{0, 1} - whether class balance is enforced.
+• replay_small ∈{0, 1} - whether small-dataset replay is used.
+• τ ∈{mlp_scm, tree_scm, mix_scm} - SCM prior type.
+Conditional on τ ∈{tree_scm, mix_scm}:
+• m ∈{DT, ET, RF, XGB} - tree model family.
+• λd ∈[0.3, 1.0] - tree depth rate parameter.
+• λn ∈[0.3, 1.0] - number-of-estimators rate parameter.
+Conditional on τ = mix_scm only:
+• pmlp ∈[0, 1] - MLP mixing probability (the tree weight is 1 −pmlp).
+Two additional parameters are fixed per dataset rather than searched: the column-count bounds
+(minf, maxf), derived from the range of |C| observed across the cached real-table features.
+C.1.1
+Bayesian, Genetic Searches - AUC
+We begin our attempts at optimisation using bayesian and genetic optimisation approached.
+Bayesian optimisation We use the Tree-structured Parzen Estimator (TPE) as implemented in Optuna
+[1]. At each trial, TPE fits two kernel density estimates over previously evaluated configurations:
+ℓ(θ) over the top-performing quartile and g(θ) over the remainder. The next candidate maximises the
+expected improvement proxy ℓ(θ)/g(θ). We run Ntrials = 1000 trials per source dataset.
+Genetic algorithm A population of Npop = 16 candidate configurations is evolved over Ngen = 100
+generations. Each generation proceeds follows the process
+1. Evaluation: compute AUC(θi) for all i.
+2. Elitism: retain the Nelite = 4 fittest individuals unchanged.
+3. Selection: fill remaining slots via tournament selection with k = 3 competitors; the
+individual with the lowest AUC wins.
+4. Crossover: pairs of selected parents produce offspring by sampling each parameter uni-
+formly from either parent.
+5. Mutation: each parameter is independently mutated with probability pmut = 0.5. Con-
+tinuous parameters receive Gaussian noise N(0, 0.1 · (hi −lo)); integer parameters use
+N(0, (hi −lo)/6); categorical parameters are resampled uniformly.
+Results Neither the Bayesian nor genetic optimisation is able to significantly decrease the AUC
+of a discriminator, despite extensive experiments and attempts at finding superior optimisation
+performance. Though both methods have limited guarantees on convergence, their failure does
+suggest that the prior cannot produce tables that match those from T4. To ensure this finding is not a
+product of our optimisation processes, we conduct a high-resolution grid search over the prior space.
+Figure 6: Recall and Precision for optimising the ICL prior to match the FM and T4 datasets, towards
+the loss function defined in Equation 6. The Recall/Precision Pareto front is marked with red stars.
+C.1.2
+Bayesian Search - Coverage + AUC
+Given that all optimisations over AUC failed, we also experiment with a reward function that includes
+coverage alongside AUC through a cartesian combination as in Equation 6:
+L =
+
+1/
+√
+
+·
+q
+(A ∈B)2 + (B ∈A)2 + (2 · |0.5 −AUC|)2
+(6)
+A grid search is less tractable here, as coverage is expensive to calculate compared to AUC, so we
+limit our methods to a Bayesian search. We use 50 Bayesian optimisers, each of 20 trials, as higher
+trial counts did not lead to improved convergence in our analysis over AUC. We also use larger
+evaluation counts of 500 prior-generated tables to reduce aleatoric noise. A visualisation of Recall
+and Precision for each trial step can be found in Figure 6.
+We find that while optimising this three-term reward function does increase recall (Real ∈Synth),
+AUC remains high, and all three metrics degrade when re-run with the same prior parameters and
+larger sample sizes for the best-performing runs (see Table 1). We note that there is a Pareto front
+along the Recall/Precision metrics; the best runs have higher recall only with the penality of reduced
+precision.
+C.2
+Further Figures
+Figure 7: Cumulative coverage curves for ICL over T4 (left) and T4 over ICL (right).
+Figure 8: A histogram and a cumulative histogram of AUC values over our grid search.
+C.3
+Column Examples
+Figure 9: Examples of cumulative histograms over columns randomly selected from the TALENT
+benchmarks, the curated FM dataset, the web-scraped T4 dataset, and the synthetic prior-based ICL
+dataset.
+D
+Benchmarks: Classical Models
+We benchmark TabICL against a suite of classical and automated machine learning baselines on
+all binary and multi-class classification datasets in the TALENT benchmark [19]. Each model is
+evaluated under identical preprocessing and, where applicable, averaged over 3 random seeds. All
+models receive the full training data. For TabICL this means that the maximum amount of training
+data is presented as context.
+D.1
+Gradient-Boosted Trees
+We include three gradient-boosted decision tree methods: XGBoost [7], LightGBM [17], and
+CatBoost [9]. All three build an additive ensemble of shallow trees by greedily minimising a
+regularised loss, differing primarily in their tree-growth strategy and regularisation scheme. Each
+ensemble contains up to 2 000 trees, with early stopping applied on a held-out validation split to
+prevent overfitting.
+D.2
+Random Forest
+We include a Random Forest [6] of 2 000 trees. Unlike boosting methods, each tree is trained
+independently on a bootstrap sample of the data with a random subset of features considered at each
+split, and predictions are aggregated by majority vote. Trees are capped at depth 12.
+D.3
+Logistic Regression
+Logistic Regression with ℓ2 regularisation serves as a linear baseline. It models the log-odds of each
+class as a linear function of the input features, making it well-suited to linearly separable problems
+and providing a simple reference point for non-linear methods.
+D.4
+Support Vector Machine
+We include a Support Vector Machine [8] with an RBF kernel, which implicitly maps inputs to a
+high-dimensional feature space and finds the maximum-margin separating hyperplane therein. SVM
+is particularly competitive on small, high-dimensional datasets.
+D.5
+k-Nearest Neighbours
+k-Nearest Neighbours (k-NN) classifies each test point by majority vote among its k = 5 nearest
+neighbours in the training set, weighted by inverse distance. It is a non-parametric method with no
+explicit training phase, making it a useful lower bound on the difficulty of each dataset.
+D.6
+AutoGluon
+AutoGluon [11] is an automated machine learning system that constructs a multi-layer stacked
+ensemble, combining gradient-boosted trees, neural networks, and other base learners selected and
+weighted automatically. It is included as a strong, well-tuned ensemble baseline that is representative
+of the current practical state of the art for tabular classification.
+E
+Benchmarking: Alternative Performance Metrics
+As well as the ranking analysis presented in Figure 10, we substitute ranking for both the TabICL
+AUC relative to the mean benchmark performance:
+rAUC =
+AUCICL
+P
+i∈Benchmarks AUCi
+(7)
+and the TabICL AUC relative to the best performing benchmark:
+r′
+AUC =
+AUCICL
+max ({AUCi|i ∈Benchmarks}).
+(8)
+Figure 10: k-NN histograms (5 neighbours) calculated for ICL against itself and the TALENT bench-
+mark tables across our full feature set, cumulative column histograms, and correlation histograms.
+Plotted alongside is the mean TabICL rank against classical benchmarks for the tables within that bin.
+Figure 11: k-NN histograms (5 neighbours) calculated for ICL against itself and the TALENT bench-
+mark tables across our full feature set, cumulative column histograms, and correlation histograms.
+Plotted alongside is the mean TabICL rank against classical benchmarks for the tables within that bin.
+The mean relative AUC metric is shown in Figure 11, and AUC relative to benchmark maximum in
+Figure 12. Here we see the same lack of pattern, and low correlations, that we observed when using
+the rank of the TabICL compared to the benchmark. These alternative metrics therefore corroborate
+our findings in the main text.
+E.1
+TabArena
+We perform the same analysis using the pre-compiled ranking results from TabArena, a smaller set of
+tabular benchmarks. We visualise these results in Figures 13, 14, 15. This broadly reproduces the
+results of our above work; there is little trend between proximity to the prior and performance on
+these benchmarks.
+E.2
+Confound Analysis
+Dataset-level covariates such as size, dimensionality, and class balance may independently affect
+both proximity to the synthetic prior and task difficulty, potentially confounding the null result
+reported in Section 5.1. To address this, we recompute the correlation between k-NN distance and
+each performance metric using partial correlation, controlling for these covariates. We consider two
+covariate sets: a universal set (number of rows, number of columns, and class balance) available for
+Figure 12: k-NN histograms (5 neighbours) calculated for ICL against itself and the TALENT bench-
+mark tables across our full feature set, cumulative column histograms, and correlation histograms.
+Plotted alongside is the mean TabICL rank against classical benchmarks for the tables within that bin.
+Figure 13: The average rank of TabICL on TabArena, scattered against the average k-NN distance for
+the benchmark table in question.
+all TALENT classification datasets, and a full set that additionally includes skewness, kurtosis, and
+categorical ratio, available for datasets where these are fully observed.
+Results are reported in Table 4. No partial correlation reaches significance at p ≤0.05 under either
+covariate set, across all six feature representations and all three performance metrics. The partial
+correlations are uniformly small in magnitude, with no consistent sign, and in several cases are
+smaller in absolute value than the uncorrected correlations in Table 2. The null result of Section 5.1
+therefore does not appear to be an artefact of covariate confounding.
+Figure 14: The mean relative AUC of TabICL on TabArena, scattered against the average k-NN
+distance for the benchmark table in question.
+Figure 15: The worst-case relative AUC of TabICL on TabArena, scattered against the average k-NN
+distance for the benchmark table in question.
+Table 4: Partial correlations between k-NN distance (k = 5) and performance metrics, controlling
+for dataset-level covariates. Universal covariates (number of rows, columns, and class balance)
+are available for all TALENT classification datasets; full covariates additionally include skewness,
+kurtosis, and categorical ratio. No result is statistically significant at p ≤0.05.
+Rank
+AUCICL
+mean(AUCbench)
+AUCICL
+max(AUCbench )
+Features
+Covariates
+r
+p
+r
+p
+r
+p
+Table features
+Universal
+↓
+0.071
+0.364
+↑
+0.094
+0.234
+↑
+0.079
+0.316
+Full
+↓
+0.133
+0.248
+↓
+−0.127
+0.270
+↓
+−0.046
+0.691
+Col. Hists.
+Universal
+↓
+0.097
+0.219
+↓
+−0.024
+0.761
+↓
+−0.007
+0.928
+Full
+↓
+−0.039
+0.734
+↓
+−0.084
+0.470
+↓
+−0.020
+0.861
+Corr. Hists.
+Universal
+↓
+0.131
+0.216
+↓
+−0.021
+0.845
+↓
+−0.021
+0.841
+Full
+↓
+−0.161
+0.286
+↓
+−0.002
+0.988
+↑
+0.078
+0.607
+TabICL Columns
+Universal
+↓
+0.117
+0.137
+↑
+0.077
+0.325
+↑
+0.042
+0.596
+Full
+↓
+0.021
+0.856
+↑
+0.057
+0.620
+↓
+−0.031
+0.789
+TabICL Rows
+Universal
+↓
+0.141
+0.072
+↓
+−0.004
+0.958
+↓
+−0.044
+0.573
+Full
+↓
+0.025
+0.832
+↓
+−0.027
+0.818
+↓
+−0.027
+0.814
+TabICL Concat.
+Universal
+↓
+0.136
+0.084
+↑
+0.018
+0.823
+↓
+−0.029
+0.709
+Full
+↓
+0.016
+0.892
+↓
+−0.012
+0.915
+↓
+−0.028
+0.807
+F
+Future Work Brief
+The null result of RQ4 admits two candidate explanations: that in-context learning is inherently
+robust to pre-training distributional shift by virtue of inference-time conditioning on task-specific
+examples, or that the inductive biases instilled by SCM-based pre-training transfer broadly regardless
+of low-level distributional alignment. Directly testing these accounts requires a controlled pre-training
+ablation that is computationally prohibitive at the scale of the present work; we outline the design
+here for completeness.
+Experimental Design
+The ablation requires training two model variants on deliberately degraded priors. The first, a
+distribution-matched prior, preserves SCM causal structure but replaces synthetic marginal column
+distributions with those drawn from real tables, for instance by fitting empirical CDFs over T4
+or FM columns and using these as leaf-node noise distributions. The second, a structure-ablated
+prior, retains realistic marginal distributions but removes causal structure by permuting DAG edges,
+breaking generative dependencies between features while preserving column-level realism. Both
+variants should otherwise follow the TabICL training setup exactly.
+Each variant is evaluated on the TALENT benchmark under the proximity-performance correlation
+analysis of Section 5.1, with internal embeddings from each trained model used as the proximity
+measure, following Table 2.
+Predicted Outcomes
+If the null result is driven by the causal inductive biases of SCM pre-training, it should survive in the
+distribution-matched variant but degrade in the structure-ablated one. If robustness instead arises from
+the inference-time conditioning mechanism of ICL, the null result should hold under both. A third
+outcome, degradation under both ablations, would suggest that causal structure and distributional
+realism are jointly necessary, motivating a more fine-grained factorial design.
+Computational Scope
+Each variant requires a full pre-training run comparable in cost to the original TabICL training,
+and a minimum of two variants plus a matched control are required for a clean comparison. This
+places the experiment beyond the scope of the present work. We leave direct investigation to future
+work, and note that the mechanistic question it addresses, whether distributional coverage or causal
+inductive bias is the primary driver of TFM generalisation, has direct implications for prior design
+more broadly.

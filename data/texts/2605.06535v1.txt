@@ -1,0 +1,1733 @@
+Sparkle: Realizing Lively Instruction-Guided Video
+Background Replacement via Decoupled Guidance
+Ziyun Zeng
+Yiqi Lin
+Guoqiang Liang
+Mike Zheng Shou✉
+Show Lab, National University of Singapore
+✉Corresponding Author
+Abstract
+In recent years, open-source efforts like Señorita-2M [29] have propelled video
+editing toward natural language instruction. However, current publicly available
+datasets predominantly focus on local editing or style transfer, which largely pre-
+serve the original scene structure and are easier to scale. In contrast, Background
+Replacement, a task central to creative applications such as film production and
+advertising, requires synthesizing entirely new, temporally consistent scenes while
+maintaining accurate foreground-background interactions, making large-scale data
+generation significantly more challenging. Consequently, this complex task re-
+mains largely underexplored due to a scarcity of high-quality training data. This
+gap is evident in poorly performing state-of-the-art models, e.g., Kiwi-Edit [14],
+because the primary open-source dataset that contains this task, i.e., OpenVE-
+3M [9], frequently produces static, unnatural backgrounds. In this paper, we trace
+this quality degradation to a lack of precise background guidance during data syn-
+thesis. Accordingly, we design a scalable pipeline that generates foreground and
+background guidance in a decoupled manner with strict quality filtering. Building
+on this pipeline, we introduce Sparkle, a dataset of ∼140K video pairs spanning
+five common background-change themes, alongside Sparkle-Bench, the largest
+evaluation benchmark tailored for background replacement to date. Experiments
+demonstrate that our dataset and the model trained on it achieve substantially
+better performance than all existing baselines on both OpenVE-Bench and Sparkle-
+Bench. Our proposed dataset, benchmark, and model are fully open-sourced at
+
+Introduction
+Over the past few years, the visual generation community has evolved rapidly. Within the image
+domain, significant breakthroughs have been achieved in editing. Open-source models, e.g., Qwen-
+Image-Edit [23] and FLUX.2-klein-9B [3], have gradually narrowed the performance gap with
+commercial models like Nano Banana 2 [18] and GPT-Image-2 [17]. As a natural extension of image
+synthesis, video editing has attracted increasing attention from researchers in recent months, and it is
+emerging as a promising direction that could be highly beneficial for advancing world understanding
+and inspiring human creativity. Unlike the traditional condition-driven editing paradigm that requires
+users to prepare depth videos or other auxiliary inputs, e.g., VACE [10], the research community
+is currently making significant efforts to adapt the success of instruction-guided image editing
+techniques to video editing, offering a more user-friendly and easily deployable alternative.
+Among the various explorations, establishing a robust data infrastructure remains a critical priority
+for this nascent field. Recently, several works have introduced high-quality video editing data.
+For instance, Señorita-2M [29], ReCo [28], and Ditto-1M [1] provide diverse edits. However,
+the majority of these datasets focus exclusively on object manipulation and global style transfer.
+Consequently, they neglect the highly challenging background replacement task requiring large-scale
+arXiv:2605.06535v1 [cs.CV] 7 May 2026
+
+Replace the background with a coastal lighthouse scene at dusk, featuring crashing waves against rocky shores, wind-swept grass swaying in 
+the foreground, and a beam of light sweeping across the dark ocean, creating a moody, atmospheric depth with gentle motion.
+Location
+Transform the background into a serene amber-toned forest canopy in autumn, with golden sunlight filtering through dense, rust-colored 
+leaves and a gentle cascade of falling leaves drifting through the air.
+Season
+Shift the background to a moonlit forest clearing at night, bathed in cool blue tones with soft, drifting clouds passing across a glowing full moon. Add a 
+gentle ripple on the surface of a nearby still pond and subtle flickering from distant fireflies to enhance the serene, dynamic nighttime ambiance.
+Time
+Move the subject to an ethereal heavenly sky filled with soft, luminous clouds that gently drift and pulse with light, with radiant beams of 
+golden light streaming down and shimmering particles floating upward, creating a serene and dynamic celestial atmosphere.
+Style
+Replace the background with a dynamic rustic cabin interior where the fire in the stone 
+fireplace flickers warmly, soft shadows dance on wooden walls, and [Misalignment⚠] a 
+gentle breeze causes a curtain to sway slightly. The subject remains perfectly still.
+Replace the background with a lively Mediterranean terrace scene where sunlight sparkles 
+on the sea, flowers gently sway in the breeze, and [Misalignment⚠] distant seagulls fly 
+by. The subject remains perfectly still.
+No Background Guidance -> Unnaturally Static
+No Background Guidance -> Messy / Blurry
+Sparkle
+OpenVE-3M
+Decoupled Generation
+Foreground Guidance
+Background Guidance
+Mixed Generation
+Foreground Guidance
+Background Guidance
+Ineffective Quality Control -> Prompt Misalignment
+Ineffective Quality Control -> Prompt Misalignment
+Pre-train: unlock basic ability
+SFT: pursue better quality
+Figure 1: Data comparison between OpenVE-3M [9] and our proposed Sparkle. Left: Relying solely
+on foreground guidance, OpenVE-3M frequently suffers from severe background structural collapse.
+Right: Sparkle curates foreground-compatible background videos independently. The final synthesis
+utilizes dual guidance from both the background and the foreground (tracked by our high-precision
+BAIT algorithm) to ensure dynamic realism. Zoom in for subtle dynamics like crashing waves.
+area re-creation while preserving the foreground figures and objects, a capability that is in high
+demand across numerous real-world applications like film post-production and advertising.
+Recently, OpenVE-3M [9], the largest open-source video editing dataset to date, became the first
+to explicitly incorporate background replacement as a supported task. The derivative models, e.g.,
+OpenVE-Edit [9] and Kiwi-Edit [14], unlock basic video background replacement capability. How-
+ever, despite their specialized training, these models struggle to surpass 50% of the maximum score
+(i.e., 2.5/5.0) on OpenVE-Bench under the rigorous Gemini-2.5-Pro evaluation. Furthermore, the
+generated videos frequently suffer from rigid compositing, unnaturally blending dynamic foreground
+subjects with entirely static backgrounds, and sometimes fail to preserve the foreground subjects,
+thereby falling significantly short of acceptable visual quality.
+To investigate the root cause of these stale background edits, we conducted an in-depth analysis of
+OpenVE-3M’s data pipeline. We observe that it directly feeds the background-replaced initial frame
+into Wan2.1-Fun-V1.1-14B-Control [21] to generate the full video, where the overall motion control
+signal solely comes from a foreground Canny edge video generated via a single-pass Grounded
+SAM2 tracking. As illustrated in Figure 1 (left), this pipeline suffers from two primary issues:
+• Absence of Background Guidance. This is the primary cause of low-quality background edits.
+Without explicit background guidance, the model typically ignores background dynamics entirely,
+e.g., the bottom-left video. In more severe cases, the background structure collapses, resulting in
+messy or blurry artifacts, e.g., the top-left video.
+• Prompt Misalignment. Because OpenVE-3M lacks quality filtering, the edited initial frames
+frequently fail to align with the prompts. For instance, the top-left video completely omits the
+flying seagulls, and the bottom-left video lacks a curtain entirely, let alone the required dynamics.
+Furthermore, the single-pass foreground tracking approach is susceptible to Entity Loss, which
+degrades the foreground guidance quality. As demonstrated in Figure 1 (left), this tracking deficiency
+fails to preserve fine-grained temporal details. For instance, in the third frame of the top-left video,
+the subject’s originally open hand is erroneously rendered as a closed fist in the edited frame.
+Based on these observations, we propose a scalable pipeline designed to synthesize high-quality and
+lively background replacement data illustrated in Figure 1 (right). Its unique properties are as follows:
+• Individual Lively Background Generation. We abandon the mixed generation paradigm that
+directly generates edited videos from a composite foreground-background frame. Instead, we
+propose a novel method that first gathers pure background images compatible with the original
+foreground. These images are subsequently animated using an I2V model. By omitting the
+foreground, the model focuses exclusively on background dynamics, producing vivid videos that
+accurately capture subtle motions (e.g., crashing waves, falling leaves, and drifting clouds).
+• High-Precision Foreground Tracking (BAIT). To overcome the limitations of coarse, single-pass
+tracking, we propose Bbox-Anchor-In-Temporal (BAIT), a two-stage approach for fine-grained
+foreground extraction. This pipeline performs VLM-based grounding on sparsely sampled frames,
+followed by multi-pass dense tracking via SAM3 [4]. A voting mechanism then aggregates the
+resulting masks, ensuring high precision through consensus across diverse temporal anchors.
+• High-Quality Background Replacement via Decoupled Guidance. Instead of simply cutting
+out the foreground tracked by BAIT and pasting it onto the new background, we separately
+extract Canny edges from both the prepared foreground and background. We then regenerate the
+background-replaced video using a control model. This decoupled approach effectively prevents
+artifacts such as harsh cutout contours, ensuring exceptional visual quality.
+• Rigorous Quality Filtering. Inspired by the recent success of image reward models, we apply
+EditScore [24] after every operation involving content modification (e.g., background generation
+and final video synthesis). This rigorous filtering significantly suppresses prompt misalignment.
+Building upon this data pipeline, we introduce the Sparkle dataset, comprising ∼140K high-quality
+video pairs tailored for the background replacement task. Sparkle encompasses five themes and 21
+subthemes across ∼100 distinct scenes. Under the OpenVE-Bench evaluation protocols, its data
+quality significantly surpasses that of OpenVE-3M. Furthermore, it maintains a balanced difficulty
+level optimal for model training, as evidenced by the substantial performance gains observed in a
+Sparkle-tuned general video editor, i.e., Kiwi-Edit [14]. Additionally, we propose Sparkle-Bench, the
+largest background replacement benchmark to date, covering 458 videos across ∼100 scenes. This
+benchmark is accompanied by a fine-grained six-dimensional evaluation protocol. We believe our
+dataset, benchmark, and model will facilitate more comprehensive research in this field.
+Related Work
+Instruction-Guided Video Editing Datasets. As instruction-guided video editing is a rapidly emerg-
+ing research area, the community has made significant strides in establishing its data infrastructure
+over the past year. Current data synthesis paradigms for instruction-video pairs can be broadly
+categorized into two approaches: (i) One-step V2V Generation. This approach is primarily applied to
+relatively simple tasks, such as object removal. For instance, Señorita-2M [29] trains a dedicated
+video remover that directly operates on source videos to generate object removal data. Similarly,
+OpenVE-3M [9] adopts DiffuEraser [12] to erase target objects within source videos. (ii) Two-step
+I2I + I2V Generation. This represents a more generalized paradigm applicable to complex tasks, such
+as object swapping, local modification, or global style transfer. Recent datasets, including InsViE-
+1M [25], Señorita-2M [29], Ditto-1M [1], and OpenVE-3M [9], adopt this pipeline for both local and
+global manipulations. Typically, the first frame of the source video is extracted and processed by an
+image editing or inpainting model. Subsequently, an in-context video generator leverages this edited
+frame, along with auxiliary conditions such as depth maps, to synthesize the final edited video.
+The aforementioned paradigms excel at local manipulation and style transfer because they avoid the
+large-scale scene re-creation and strict foreground preservation required for background replacement.
+This complexity leads to the scarcity of high-quality data for this task. OpenVE-3M attempted
+to address this gap via the I2I + I2V paradigm. It uses FLUX.1-Kontext [11] to replace the first
+frame’s background and synthesizes the full video with Wan2.1-Fun-V1.1-14B-Control [21], guided
+by foreground Canny edges tracked by Grounded SAM2 [19]. While this preserves the foreground, it
+suffers from severe background structural collapse as discussed in Section 1, resulting in sub-optimal
+data quality. In contrast, we introduce a novel decoupled generation paradigm tailored specifically
+for background replacement. By independently generating precise foreground and background
+guidance, our approach maintains control over subtle motions. Consequently, the Sparkle dataset and
+its derivative model achieve significant quality improvements over the OpenVE-3M baseline, fully
+demonstrating the effectiveness of our pipeline.
+Video Editing Models. Traditional video editing models typically rely on auxiliary control signals.
+For example, VACE [10] requires inputs such as Canny edges or depth maps to execute an edit.
+Following the introduction of high-quality instruction-guided video editing datasets [29, 1, 25, 9],
+the paradigm has rapidly shifted toward natural language-driven editing, which eliminates the need
+for explicit auxiliary conditions. Several notable models have recently emerged in this space, e.g.,
+InstructX [16], UniVideo [22], and Kiwi-Edit [14]. Nevertheless, due to the scarcity of high-quality
+background replacement data, existing models struggle with this specific task. They often inherit the
+data deficiencies of their upstream training sets, e.g., OpenVE-3M, resulting in stale and rigid edits.
+To validate our data pipeline, we select a representative medium-sized model, i.e., Kiwi-Edit, and
+fine-tune it on the proposed Sparkle dataset. We intentionally avoid any structural modifications to the
+model architecture to ensure that all performance gains stem purely from the enhanced data quality.
+Experimental results show that the Sparkle-tuned Kiwi-Edit, namely Kiwi-Sparkle, significantly
+outperforms the baseline, firmly validating the high quality and effectiveness of our curated dataset.
+Methodology
+In this section, we detail the five-stage data pipeline used to construct the proposed Sparkle dataset,
+as illustrated in Figure 2. This sequential process integrates rigorous data filtering across all stages,
+encompassing source video collection, independent background generation, high-precision foreground
+tracking, and decoupled guidance-driven background replacement.
+3.1
+Source Video Collection
+To efficiently harvest a diverse corpus for background replacement, we sample source and edited
+videos from OpenVE-3M at 2FPS. We then evaluate the paired frames using EditScore [15], discard-
+ing videos with an average frame-level overall score below 8. We hypothesize that these remaining
+videos are more amenable to high-quality manipulation via current open-source toolkits. This initial
+filtering stage yields a preliminary pool of ∼940K source videos.
+Since current open-source models struggle to synchronize the camera movement of the edited
+video with that of the source video, we restrict our scope to fixed-camera videos, enabling natural
+background detachment. To efficiently handle the large video volume, we employ a coarse-to-fine
+filtering approach (Figure 2, Stage 1). The coarse stage detects camera movement via optical flow
+computed by Unimatch [26] and homography matrix estimation. Due to space constraints, we defer
+the algorithmic details to Appendix A. This process rapidly reduces the source pool from ∼940K to
+∼260K. To address cases missed by the coarse stage, we further implement a fine-grained VLM filter.
+Specifically, we utilize Qwen3-VL-32B [2] to detect residual camera movement across the entire
+video, requiring the model to articulate its reasoning before judging to ensure high accuracy. This
+rigorous step further reduces the candidate pool from ∼260K to ∼224K.
+3.2
+Preliminary Background Replacement
+To generate diverse editing prompts, we first reuse existing prompts from OpenVE-3M’s background
+replacement tasks, establishing a robust baseline for direct quality comparison. Next, based on a
+systematic review of existing datasets, we leverage Gemini-2.5-Pro to hierarchically categorize scene
+types into four themes (Location, Season, Time, and Style). Each theme comprises 4-6 subthemes,
+with ∼10 specific scenes per subtheme. The statistical distribution of these categories is illustrated
+in Figure 4 and will be discussed later. Finally, Qwen3-VL-32B formulates comprehensive editing
+instructions for all source videos. To ensure accurate visual comprehension, it first describes the
+original scene before randomly selecting a target subtheme and scene to generate the final prompt.
+Next, we perform a preliminary background replacement by leveraging FLUX.2-klein-9B [3] to
+edit the first frame of the source video according to the prompt. Because the editing process can
+occasionally fail, e.g., missing required background elements, we employ an image editing reward
+model, i.e., EditScore [15], to evaluate the output quality. We filter out any edits with an overall score
+below 8, as this typically indicates prompt misalignment or poor visual fidelity. The overall workflow
+is illustrated in Figure 2, Stage 2. These successfully edited frames then serve as the initial condition
+for the final video synthesis.
+3.3
+Individual Background Generation
+Although we obtain high-quality edited initial frames in the previous stage, directly synthesizing the
+video using a control model guided solely by the foreground inevitably leads to structural collapse
+or motion loss within the background, thereby significantly degrading overall visual quality. This
+degradation occurs because control models, e.g., Wan2.1-Fun-V1.1-14B-Control [21], are prone to
+over-concentrating on the foreground when explicit background guidance is absent.
+Stage 1: Fixed-Camera Source Video Filtering
+Coarse-level: Op9cal Flow-based 
+Camera Movement Detector
+Fine-level: VLM-based 
+Camera Movement Detector
+Qwen3-VL-32B
+Unimatch
+Stage 2: Preliminary Background Replacement
+Stage 3: Individual Background Genera9on
+Stage 4: BAIT Foreground Tracking
+FLUX.2-klein-9B
+Qwen3-VL-32B
+Edit-driven First-frame 
+Foreground Grounding
+FLUX.2-klein-9B
+Label-driven 
+Foreground Removal
+Qualiﬁed Preliminary Edit Pairs
+Background 
+Image-to-Video
+Wan2.2-I2V-A14B
+Frame 1
+Frame 49
+Frame 73
+Label-driven 2FPS Foreground Bounding Boxes
+Voted Foreground Mask
+Mask 1
+Mask 2
+Mask N
+Pixel Vote
+SAM3
+Stage 5: Edited Video Genera9on with Decoupled Fore/Background Guidance
+BBox-Anchor-In-Temporal Tracking
+×
+Foreground Canny
+Synthesized Video
+Background Canny
+Mixed Canny
+×
+First Frame
+Wan2.2-Fun-A14B-Control
+Sparkle
+Data Pipeline
+Quality Checker 
+Applied
+Synthesized Background Video
+Foreground Compa6bility
+Mo6on Quality
+Figure 2: The Sparkle data pipeline. First, only fixed-camera videos are retained to enable independent
+background generation. After preliminary first-frame background replacement, a VLM identifies the
+foreground, which is then removed to isolate a pure background image. An I2V model animates this
+image into a background video. Concurrently, our BAIT algorithm precisely tracks the foreground.
+Finally, decoupled foreground and background Canny edges guide video synthesis, conditioned on
+the edited first frame. EditScore [15] filters low-quality outputs after every modification.
+To address this limitation, we propose a novel pipeline to completely detach the foreground from the
+background, enabling decoupled guidance. As shown in Figure 2, Stage 3, the process begins with
+edit-driven foreground grounding. Qwen3-VL-32B compares the original and preliminarily edited
+first frames to identify foreground elements to preserve. These labels are translated into removal
+instructions, e.g., "Remove the bald man", for FLUX.2-klein-9B to erase the foreground from the
+edited first frame. This operation ensures foreground compatibility, as the isolated background
+derives directly from the composite frame. To guarantee a perfectly clean background, we apply
+EditScore [15] after each removal, using a stricter threshold of 8.5 to discard sub-optimal outputs.
+Finally, we use Qwen3-VL-32B to extract the target background caption from the editing prompt.
+We then feed the isolated background image into an I2V model, i.e., Wan2.2-I2V-A14B, utilizing the
+extracted caption as the textual condition. To accelerate this time-consuming process, we employ
+a four-step distilled version [6], as we observed no significant quality degradation for this task.
+Unhindered by foreground elements, the model focuses entirely on rendering the required background
+dynamics, e.g., swaying grass, thereby generating a high-quality, motion-centric background video.
+3.4
+Bbox-Anchor-In-Temporal (BAIT) Foreground Tracking
+As discussed in Section 1, the single-pass tracking employed by OpenVE-3M is susceptible to
+entity loss, which leads to occasional visual inconsistencies between the source and edited frames.
+Therefore, in addition to our independent background generation approach, we propose a high-
+precision foreground tracking algorithm termed Bbox-Anchor-In-Temporal (BAIT).
+To begin, we prompt Qwen3-VL-32B to conduct a second round of grounding on frames sampled at
+2FPS, tracing the foreground labels obtained in Figure 2, Stage 3, to extract precise bounding boxes.
+These bounding boxes at various timestamps serve as explicit temporal anchors. Next, utilizing these
+boxes as visual prompts, we employ SAM3 [4] to perform N isolated forward and backward tracking
+passes, where N denotes the total number of sampled frames. Finally, we apply a pixel-wise voting
+mechanism across the resulting N video masks: a pixel is assigned to the final foreground mask
+only if a majority consensus is reached, i.e., predicted as foreground by more than half of the masks;
+otherwise, it is classified as background. The whole process is illustrated in Figure 2, Stage 4.
+1st frame
+2nd frame
+3rd frame
+BAIT 
+Tracking
+Single-frame 
+Tracking
+Foreground Missing
+Noise Glitch
+Figure 3: Visual comparison between single-frame tracking (top) and our BAIT (bottom). The red and
+green boxes highlight foreground missing and noise glitches in single-frame tracking, respectively.
+Figure 3 illustrates the advantages of leveraging consensus across multiple temporal anchors. The
+top row demonstrates single-pass tracking initialized from a single frame’s bounding boxes, which
+frequently encounters foreground missing (the incompletely tracked glasses in red boxes) and noise
+glitches (artifact spots on the background in green boxes). By employing our proposed BAIT
+algorithm, these artifacts are effectively suppressed, resulting in clean and precise foreground masks.
+3.5
+Edited Video Generation with Decoupled Guidance
+Finally, we extract Canny edges from the source and background videos using Lineart [5], and com-
+bine them according to the foreground mask generated by BAIT. Specifically, within the foreground
+contour, we utilize the Canny edges from the source video; otherwise, we use the Canny edges from
+the background video. This process yields a high-quality, comprehensive control video derived from
+decoupled foreground and background guidance. This guidance, along with the edited first frame
+from Figure 2, Stage 2, is fed into a control model, i.e., Wan2.2-Fun-A14B-Control [21], to synthesize
+the final background-replaced video. Lastly, we uniformly sample four frames while excluding the
+first frame from the synthesized video (which was already evaluated in Stage 2) and compute the
+average overall score via EditScore. We discard videos with an average score below 8. Figure 2,
+Stage 5 illustrates the full workflow. Compared to the naive foreground copy-and-paste shortcut,
+this regeneration paradigm effectively avoids artifacts such as harsh cutout contours, ensuring the
+synthesized videos maintain high quality.
+3.6
+Dataset Statistics
+Sparkle
+OpenVE-3M
+20,602
+15.0%
+Style
+19,907
+14.5%
+Time
+29,882
+21.7%
+Season
+36,259
+26.4%
+Location
+30,827
+22.4%
+137,477
+rural
+indoor
+landmark
+urban
+natural
+exotic
+spring
+autumn
+summer
+winter
+dawn
+golden hour
+dusk
+blue hour
+night
+midday
+era
+cinematic
+mood
+render style
+art style
+Sparkle 
+re-create
+Figure 4: Sparkle statistical distribution.
+Building upon the aforementioned pipeline, we curated
+Sparkle, comprising ∼140K videos across five relatively
+balanced themes and 22 subthemes across ∼100 diverse
+scenes (Figure 4). Notably, our Style theme differs from
+simple global style transfer by requiring the foreground
+to remain entirely intact while modifying only the back-
+ground. This challenging constraint for existing models
+results in a lower yield of qualified videos compared to
+other themes. In summary, Sparkle covers diverse back-
+ground replacement scenarios at a modest scale, making it
+highly suitable for capability refinement following large-
+scale pre-training. As demonstrated in our Experiments,
+lightweight fine-tuning on Sparkle yields significant im-
+provements, firmly validating the substantial benefit of our
+data pipeline and the dataset.
+3.7
+Sparkle-Bench
+Beyond the dataset, we also introduce Sparkle-Bench, a benchmark tailored specifically for back-
+ground replacement. To ensure an appropriate level of difficulty, we construct this benchmark using
+candidate videos that passed the first four stages of our pipeline but failed the final quality check
+in Stage 5. These videos provide ideal evaluation targets: having passed most checks, their lower
+synthesis scores indicate they are challenging yet viable for manipulation. Through rigorous manual
+inspection, we selected 4-5 appropriately challenging videos per subtheme. This yields 458 videos
+Table 2: Data quality assessment. We randomly sample 500 videos per theme to represent the overall
+distribution. Gray numbers denote the scores of OpenVE-3M raw edits, which share the same source
+videos and prompts as our OpenVE-3M subset and can be directly compared. Red numbers denote
+the absolute gain compared to the OpenVE-3M baseline.
+Dimensions
+OpenVE-3M
+Location
+Season
+Time
+Style
+Instruction Compliance
+3.34
+3.82 (+14%)
+4.09 (+22%)
+4.04 (+21%)
+4.03 (+21%)
+3.85 (+15%)
+Consistency & Detail Fidelity
+2.91
+3.62 (+24%)
+3.81 (+31%)
+3.75 (+29%)
+3.70 (+27%)
+3.65 (+25%)
+Visual Quality & Stability
+3.01
+3.68 (+22%)
+3.75 (+25%)
+3.81 (+27%)
+3.80 (+26%)
+3.65 (+21%)
+Average Score
+3.09
+3.71 (+20%)
+3.88 (+26%)
+3.86 (+25%)
+3.84 (+24%)
+3.72 (+20%)
+covering 97 distinct scenes across 21 subthemes as shown in Table 1. As the largest benchmark of its
+kind to date, we believe Sparkle-Bench offers the community comprehensive evaluation insights.
+Table 1: Statistics of Sparkle-Bench.
+Theme
+Subtheme
+Scene
+Vid / Scene
+Videos
+Location
+27
+108
+Season
+24
+120
+Time
+24
+120
+Style
+22
+110
+Total
+97
+-
+Regarding the evaluation metrics, we find the con-
+ventional OpenVE-Bench protocol somewhat coarse.
+Therefore, we propose a set of six-dimensional cri-
+teria (each scored on a 1-to-5 scale) spanning three
+perspectives, specifically tailored for background re-
+placement: (i) Global Assessment, which includes
+Instruction Compliance to measure overall prompt
+adherence, and Overall Visual Quality to encompass
+global video quality and foreground-background harmonization (with specific consideration given to
+lighting and shadow adjustments); (ii) Foreground Assessment, which includes Foreground Integrity
+to assess whether the foreground is preserved intact, and Foreground Motion Consistency to evaluate
+whether the preserved foreground subjects behave consistently with the source videos; and (iii)
+Background Assessment, which includes Background Dynamics to measure the dynamic realism of
+the background (i.e., whether it accurately produces the required motion), and Background Visual
+Quality to determine if the replaced background maintains a high aesthetic standard. Following
+OpenVE-Bench, we constrain the scores of the other five dimensions to be no higher than Instruction
+Compliance, thereby emphasizing instruction-following. Please refer to Appendix B for more details.
+Experiments
+4.1
+Experimental Setup
+Since the primary focus of this paper is the data pipeline and the resulting Sparkle dataset, we
+perform a lightweight fine-tuning on a general video editing model, i.e., Kiwi-Edit [14], without any
+architectural modifications. By doing so, we demonstrate that the observed performance gains stem
+purely from the superior quality of our data. Specifically, we fine-tune the model on the proposed
+Sparkle dataset for 10K steps with a batch size of 128, namely Kiwi-Sparkle. All other training
+configurations remain identical to those detailed in the official Kiwi-Edit repository.
+For evaluation, we primarily adopt the OpenVE-Bench protocol to ensure continuous comparison
+with the OpenVE-3M baseline. This protocol evaluates Instruction Compliance, Consistency &
+Detail Fidelity, and Visual Quality & Stability on a 1-to-5 scale. Following OpenVE-3M [9], we cap
+the latter two scores at the Instruction Compliance score. This constraint prevents score hacking,
+where models might inflate visual quality at the expense of accurate instruction following. For
+Sparkle-Bench, we utilize the six-dimensional metrics detailed in Section 3.7. Across all benchmarks,
+we employ Gemini-2.5-Pro as the evaluator due to its exceptional video understanding capabilities.
+4.2
+Main Results
+Data Quality Assessment. We evaluate the data quality of Sparkle by randomly sampling 500 videos
+per theme due to quota constraints. For the OpenVE-3M subset, our recreated videos share the exact
+source videos and prompts with the original dataset, enabling rigorous direct comparison. As shown
+in Table 2, the OpenVE-3M baseline (gray numbers) scores poorly across all dimensions, explaining
+why its derivative models struggle to surpass 2.5/5.0 in downstream evaluations. In contrast, Sparkle
+achieves average gains of over 20% in both the OpenVE-3M subset and the remaining four themes.
+The particularly significant improvements in Consistency & Detail Fidelity and Visual Quality &
+Stability indicate that while OpenVE-3M suffers from severe structural degradation due to its sole
+reliance on foreground guidance, our decoupled guidance paradigm effectively mitigates these issues,
+substantially enhancing overall quality.
+Table 3: Scores for the background replacement task on OpenVE-Bench. Ins, Cons, and VQ stand for
+Instruction Compliance, Consistency & Detail Fidelity, and Visual Quality & Stability, respectively.
+Model
+Params.
+Res.
+Frames
+Public Access
+Overall
+Ins.
+Cons.
+VQ.
+InsViE [25]
+2B
+480P
+Model & Data
+1.02
+1.03
+1.02
+1.02
+DITTO [1]
+14B
+480P
+Model & Data
+1.55
+1.66
+1.56
+1.44
+ICVE [13]
+13B
+480P
+Model-Only
+1.87
+2.15
+1.83
+1.63
+OmniVideo2 [27]
+A14B
+480P
+Model-Only
+2.04
+2.19
+2.03
+1.90
+Lucy-Edit-1.1 [7]
+5B
+720P
+Model-Only
+2.10
+2.41
+2.03
+1.86
+OpenVE-Edit [9]
+5B
+720P
+-
+Data-Only
+2.36
+-
+-
+-
+Kiwi-Edit [14]
+5B
+720P
+Model & Data
+2.58
+2.81
+2.58
+2.36
+Runway Aleph [20]
+-
+720P
+-
+Proprietary
+2.62
+-
+-
+-
+UniVideo [22]
+13B
+480P
+Model-Only
+2.74
+3.12
+2.64
+2.46
+Kiwi-Sparkle (Ours)
+5B
+720P
+Model & Data
+3.29
+3.51
+3.15
+3.22
+Table 4: Scores on Sparkle-Bench. Abbreviations: Instruction Compliance (Ins), Overall Visual
+Quality (Vis), Foreground Integrity (FgIn), Foreground Motion Consistency (FgMo), Background
+Dynamics (BgDy), and Background Visual Quality (BgVi).
+Model
+Configuration
+Overall
+Global
+Foreground
+Background
+Ins.
+Vis.
+FgIn.
+FgMo.
+BgDy.
+BgVi.
+InsViE [25]
+2B-25F@480P
+1.05
+1.08
+1.03
+1.05
+1.08
+1.04
+1.05
+ICVE [13]
+13B-81F@480P
+1.95
+2.25
+1.49
+2.13
+2.24
+1.58
+1.99
+DITTO [1]
+14B-81F@480P
+2.01
+2.15
+1.94
+1.94
+2.11
+1.77
+2.13
+OmniVideo2 [27]
+A14B-41F@480P
+2.35
+2.58
+2.17
+2.43
+2.48
+1.92
+2.55
+UniVideo [22]
+13B-81F@480P
+2.41
+2.71
+1.82
+2.59
+2.71
+2.02
+2.62
+Kiwi-Edit [14]
+5B-81F@720P
+2.54
+2.92
+2.15
+2.86
+2.90
+1.57
+2.84
+Lucy-Edit-1.1 [7]
+5B-81F@720P
+2.74
+3.06
+2.23
+2.78
+3.04
+2.46
+2.83
+Kiwi-Sparkle (Ours)
+5B-81F@720P
+3.81
+4.10
+3.40
+3.77
+4.05
+3.54
+3.99
+Performance on OpenVE-Bench. Although Table 2 demonstrates that our Sparkle dataset inherently
+possesses high data quality, if the editing pairs are too difficult for a model to learn from, the
+impact of our technical contributions would be diminished. To investigate this, we fine-tuned a
+medium-sized general video editor, i.e., Kiwi-Edit, on Sparkle (referred to as Kiwi-Sparkle) and
+evaluated its background replacement performance on OpenVE-Bench. The results are presented
+in Table 3. Notably, even the best open-source models trained on proprietary internal data, e.g.,
+UniVideo [22], fail to reach the 60% score threshold (3.0/5.0), highlighting the severe scarcity of
+high-quality background replacement data within the current community. Conversely, Kiwi-Sparkle
+exhibits a remarkable boost compared to existing baselines, achieving a 28% overall gain from
+Kiwi-Edit and outperforming competitors with 3× more parameters, e.g., UniVideo and OmniVideo2.
+This demonstrates that Sparkle not only significantly improves instruction compliance and the visual
+quality of such edits, but also maintains a well-balanced difficulty level that allows general video
+editors to effectively inherit its knowledge, thereby making a timely contribution to the field.
+Performance on Sparkle-Bench. Table 4 presents the overall scores across the four themes on
+Sparkle-Bench. Encompassing ∼100 diverse scenes, this benchmark demands broader background
+replacement capabilities. We observe that models specifically enhanced for background editing
+demonstrate greater robustness. For instance, Lucy-Edit-1.1 [7] achieves better performance here than
+on OpenVE-Bench. Conversely, general models like UniVideo suffer from degraded performance.
+Their low Background Dynamics scores suggest a deficit of high-quality training data, resulting in
+poorly animated backgrounds. In contrast, our Kiwi-Sparkle exhibits strong performance, significantly
+improving both instruction-following and the generation quality of the foreground and background,
+solidifying our contribution. Please refer to Appendix C.1 for specific scores of the four themes.
+4.3
+Ablation Studies
+Comparison to Copy-and-Paste Video Synthesis. A shortcut for final synthesis is directly pasting
+the foreground onto the background. However, this naive approach introduces artifacts like harsh
+contours and ignores crucial shadow adjustments in light-sensitive scenarios, e.g., time-oriented
+editing, resulting in inharmonious compositions. To validate this, we evaluated 500 copy-and-pasted
+videos per theme using sources from Table 2. As Table 5 shows, this rigid paradigm severely degrades
+overall quality, whereas our approach achieves a notable 115% visual quality gain over this baseline
+in the Time theme. These results demonstrate that our decoupled paradigm, which leverages Canny
+edges and the edited first frame for full-video regeneration, effectively ensures dynamic realism and
+harmonious environmental integration, yielding significantly higher-quality outputs.
+Table 5: Comparison between the Copy-and-Paste and our Decoupled generation paradigms for video
+synthesis. Red numbers denote the absolute gain compared to the Copy-and-Paste baseline.
+Dimensions
+OpenVE-3M
+Location
+Season
+Time
+Style
+Copy
+Decouple
+Copy
+Decouple
+Copy
+Decouple
+Copy
+Decouple
+Copy
+Decouple
+Instruction Compliance
+3.12
+3.82 (+22%)
+3.15
+4.09 (+30%)
+3.10
+4.04 (+30%)
+2.88
+4.03 (+40%)
+3.26
+3.85 (+18%)
+Consistency & Detail Fidelity
+2.57
+3.62 (+41%)
+2.45
+3.81 (+56%)
+2.46
+3.75 (+52%)
+2.20
+3.70 (+68%)
+2.61
+3.65 (+40%)
+Visual Quality & Stability
+2.36
+3.68 (+56%)
+2.14
+3.75 (+75%)
+2.18
+3.81 (+75%)
+1.77
+3.80 (+115%)
+2.28
+3.65 (+60%)
+Average Score
+2.68
+3.71 (+38%)
+2.58
+3.88 (+50%)
+2.58
+3.86 (+50%)
+2.28
+3.84 (+68%)
+2.72
+3.72 (+37%)
+Table 6: Comparison of video quality using Foreground-only guidance (FG-Only) versus our Decou-
+pled guidance (FG+BG). Red numbers denote the absolute gain compared to the FG-Only baseline.
+Dimensions
+OpenVE-3M
+Location
+Season
+Time
+Style
+FG-Only
+FG+BG
+FG-Only
+FG+BG
+FG-Only
+FG+BG
+FG-Only
+FG+BG
+FG-Only
+FG+BG
+Instruction Compliance
+3.55
+3.82 (+ 8%)
+3.71
+4.09 (+10%)
+3.56
+4.04 (+13%)
+3.62
+4.03 (+11%)
+3.45
+3.85 (+12%)
+Consistency & Detail Fidelity
+3.29
+3.62 (+10%)
+3.40
+3.81 (+12%)
+3.22
+3.75 (+16%)
+3.37
+3.70 (+10%)
+3.22
+3.65 (+13%)
+Visual Quality & Stability
+3.25
+3.68 (+13%)
+3.30
+3.75 (+14%)
+3.08
+3.81 (+24%)
+3.28
+3.80 (+16%)
+3.23
+3.65 (+13%)
+Average Score
+3.36
+3.71 (+10%)
+3.47
+3.88 (+12%)
+3.29
+3.86 (+17%)
+3.42
+3.84 (+12%)
+3.30
+3.72 (+13%)
+Effectiveness of BAIT, Quality Control, and Background Guidance. To validate each of our
+main contributions, we conducted a rigorous video quality comparison using the same 500 source
+videos and prompts as in Table 2, utilizing only foreground Canny edges to control the overall video
+generation in the final stage. As shown in the FG-Only columns of Table 6, the average scores of
+these videos already exhibit a remarkable improvement over those of OpenVE-3M presented in
+Table 2. Since background guidance is omitted in this setting, these gains stem purely from our more
+precise BAIT foreground tracking and the strict quality control that prevents prompt misalignment,
+thereby demonstrating their effectiveness. Furthermore, when introducing background guidance, i.e.,
+the FG+BG columns, the average quality improves substantially, indicating that structural collapse
+issues have been significantly mitigated by our proposed decoupled background guidance.
+Table 7: Performance of Kiwi-Edit trained on dif-
+ferent Sparkle corpus. Gray numbers denote the
+Kiwi-Edit baseline. Red numbers indicate the ab-
+solute gain.
+Dimensions
+Kiwi-Edit
+w/ OpenVE-3M
+w/ Full Dataset
+Instruction Compliance
+2.81
+3.24 (+15%)
+3.51 (+25%)
+Consistency & Detail Fidelity
+2.58
+2.92 (+13%)
+3.15 (+22%)
+Visual Quality & Stability
+2.36
+2.95 (+25%)
+3.22 (+36%)
+Average Score
+2.58
+3.04 (+18%)
+3.29 (+28%)
+Generalizability. We further evaluate whether
+the four proposed themes beyond the OpenVE-
+3M subset are diverse enough to yield universal
+improvements across most background editing
+scenarios by comparing a Kiwi-Edit model fine-
+tuned exclusively on the OpenVE-3M subset
+against one fine-tuned on the full dataset. The
+results are presented in Table 7. Although the
+high-quality data within our OpenVE-3M subset already yields a clear gain over the untuned baseline,
+training on the full dataset, which incorporates broader data not explicitly tailored for this benchmark,
+achieves a more significant gain (28% vs 18%) compared to the subset-only model. These encouraging
+results demonstrate that Sparkle maintains a high level of diversity capable of handling a broad
+spectrum of background replacements, thereby facilitating generalized performance improvements.
+Visualization. We provide extensive visualizations for all main experiments in Appendix C.2 due to
+space constraints. These encompass qualitative comparisons of the original OpenVE-3M against our
+recreated data (Table 2), ablation results evaluating edited videos synthesized using the copy-and-
+paste paradigm (Table 5) and those using foreground-only guidance (Table 6), visual comparisons
+between the outputs of Kiwi-Edit and Kiwi-Sparkle on OpenVE-Bench (Table 3) and Sparkle-Bench
+(Table 4), and demonstrations of Kiwi-Sparkle’s efficacy as a foreground tracker via a trigger phrase.
+Conclusion
+In this paper, we analyze the limitations of existing video background replacement data, pinpointing
+how the conventional mixed generation paradigm leads to stale edits. To address this, we propose a
+novel 5-stage decoupled generation paradigm. By combining our precise BAIT tracking for clean
+foreground detachment with compatible background video generation, we synthesize high-quality
+edits via decoupled guidance. Under strict quality control across all stages, we curate the Sparkle
+dataset, which exhibits significant quality boosts over existing data. Furthermore, we introduce
+Sparkle-Bench, encompassing ∼100 diverse scenes across 458 videos to advance comprehensive
+evaluation. Finally, our derivative model, Kiwi-Sparkle, demonstrates remarkable gains over existing
+baselines. We believe this robust infrastructure (dataset, benchmark, and model) will greatly facilitate
+future research in this demanding area.
+References
+[1] Qingyan Bai, Qiuyu Wang, Hao Ouyang, Yue Yu, Hanlin Wang, Wen Wang, Ka Leong Cheng,
+Shuailei Ma, Yanhong Zeng, Zichen Liu, et al. Scaling instruction-based video editing with a
+high-quality synthetic dataset. arXiv preprint arXiv:2510.15742, 2025.
+[2] Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao
+Deng, Wei Ding, Chang Gao, Chunjiang Ge, et al. Qwen3-vl technical report. arXiv preprint
+arXiv:2511.21631, 2025.
+[3] Black Forest Labs. FLUX.2-klein-9B. 
+FLUX.2-klein-9B, 2026.
+[4] Nicolas Carion, Laura Gustafson, Yuan-Ting Hu, Shoubhik Debnath, Ronghang Hu, Didac
+Suris, Chaitanya Ryali, Kalyan Vasudev Alwala, Haitham Khedr, Andrew Huang, et al. Sam 3:
+Segment anything with concepts. arXiv preprint arXiv:2511.16719, 2025.
+[5] Caroline Chan, Frédo Durand, and Phillip Isola. Learning to generate line drawings that convey
+geometry and semantics. In Proceedings of the IEEE/CVF conference on computer vision and
+pattern recognition, pages 7915-7925, 2022.
+[6] LightX2V Contributors. Lightx2v: Light video generation inference framework. https:
+//github.com/ModelTC/lightx2v, 2025.
+[7] DecartAI Team.
+Lucy edit:
+Open-weight text-guided video editing.
+2025.
+URL
+
+Guided_Video_Editing.pdf.
+[8] Martin A Fischler and Robert C Bolles. Random sample consensus: a paradigm for model
+fitting with applications to image analysis and automated cartography. Communications of the
+ACM, 24(6):381-395, 1981.
+[9] Haoyang He, Jie Wang, Jiangning Zhang, Zhucun Xue, Xingyuan Bu, Qiangpeng Yang, Shilei
+Wen, and Lei Xie. Openve-3m: A large-scale high-quality dataset for instruction-guided video
+editing. arXiv preprint arXiv:2512.07826, 2025.
+[10] Zeyinzi Jiang, Zhen Han, Chaojie Mao, Jingfeng Zhang, Yulin Pan, and Yu Liu. Vace: All-in-
+one video creation and editing. In Proceedings of the IEEE/CVF International Conference on
+Computer Vision, pages 17191-17202, 2025.
+[11] Black Forest Labs, Stephen Batifol, Andreas Blattmann, Frederic Boesel, Saksham Consul,
+Cyril Diagne, Tim Dockhorn, Jack English, Zion English, Patrick Esser, et al. Flux. 1 kontext:
+Flow matching for in-context image generation and editing in latent space. arXiv preprint
+arXiv:2506.15742, 2025.
+[12] Xiaowen Li, Haolan Xue, Peiran Ren, and Liefeng Bo. Diffueraser: A diffusion model for
+video inpainting. arXiv preprint arXiv:2501.10018, 2025.
+[13] Xinyao Liao, Xianfang Zeng, Ziye Song, Zhoujie Fu, Gang Yu, and Guosheng Lin.
+In-
+context learning with unpaired clips for instruction-based video editing.
+arXiv preprint
+arXiv:2510.14648, 2025.
+[14] Yiqi Lin, Guoqiang Liang, Ziyun Zeng, Zechen Bai, Yanzhe Chen, and Mike Zheng Shou.
+Kiwi-edit: Versatile video editing via instruction and reference guidance. arXiv preprint
+arXiv:2603.02175, 2026.
+[15] Xin Luo, Jiahao Wang, Chenyuan Wu, Shitao Xiao, Xiyan Jiang, Defu Lian, Jiajun Zhang,
+Dong Liu, et al. Editscore: Unlocking online rl for image editing via high-fidelity reward
+modeling. arXiv preprint arXiv:2509.23909, 2025.
+[16] Chong Mou, Qichao Sun, Yanze Wu, Pengze Zhang, Xinghui Li, Fulong Ye, Songtao Zhao,
+and Qian He. Instructx: Towards unified visual editing with mllm guidance. arXiv preprint
+arXiv:2510.08485, 2025.
+[17] OpenAI. ChatGPT Images 2.0 System Card, 2026. URL 
+openai.com/chatgpt-images-2-0/introduction.
+[18] Naina Raisinghani. Nano Banana 2: Combining Pro Capabilities with Lightning-Fast Speed.
+ 2026.
+[19] Tianhe Ren, Shilong Liu, Ailing Zeng, Jing Lin, Kunchang Li, He Cao, Jiayu Chen, Xinyu
+Huang, Yukang Chen, Feng Yan, et al. Grounded sam: Assembling open-world models for
+diverse visual tasks. arXiv preprint arXiv:2401.14159, 2024.
+[20] Runway.
+Introducing
+runway
+aleph.
+
+introducing-runway-aleph, 2025. Runway Research blog.
+[21] Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu,
+Haiming Zhao, Jianxiao Yang, et al. Wan: Open and advanced large-scale video generative
+models. arXiv preprint arXiv:2503.20314, 2025.
+[22] Cong Wei, Quande Liu, Zixuan Ye, Qiulin Wang, Xintao Wang, Pengfei Wan, Kun Gai, and
+Wenhu Chen. Univideo: Unified understanding, generation, and editing for videos. arXiv
+preprint arXiv:2510.08377, 2025.
+[23] Chenfei Wu, Jiahao Li, Jingren Zhou, Junyang Lin, Kaiyuan Gao, Kun Yan, Sheng-ming
+Yin, Shuai Bai, Xiao Xu, Yilei Chen, et al. Qwen-image technical report. arXiv preprint
+arXiv:2508.02324, 2025.
+[24] Keming Wu, Sicong Jiang, Max Ku, Ping Nie, Minghao Liu, and Wenhu Chen.
+Editre-
+ward: A human-aligned reward model for instruction-guided image editing. arXiv preprint
+arXiv:2509.26346, 2025.
+[25] Yuhui Wu, Liyi Chen, Ruibin Li, Shihao Wang, Chenxi Xie, and Lei Zhang. Insvie-1m:
+Effective instruction-based video editing with elaborate dataset construction. In Proceedings of
+the IEEE/CVF International Conference on Computer Vision, pages 16692-16701, 2025.
+[26] Haofei Xu, Jing Zhang, Jianfei Cai, Hamid Rezatofighi, Fisher Yu, Dacheng Tao, and Andreas
+Geiger. Unifying flow, stereo and depth estimation. IEEE Transactions on Pattern Analysis and
+Machine Intelligence, 45(11):13941-13958, 2023.
+[27] Hao Yang, Zhiyu Tan, Jia Gong, Luozheng Qin, Hesen Chen, Xiaomeng Yang, Yuqing Sun,
+Yuetan Lin, Mengping Yang, and Hao Li. Omni-video 2: Scaling mllm-conditioned diffusion
+for unified video generation and editing. arXiv preprint arXiv:2602.08820, 2026.
+[28] Zhongwei Zhang, Fuchen Long, Wei Li, Zhaofan Qiu, Wu Liu, Ting Yao, and Tao Mei. Region-
+constraint in-context generation for instructional video editing. arXiv preprint arXiv:2512.17650,
+2025.
+[29] Bojia Zi, Penghui Ruan, Marco Chen, Xianbiao Qi, Shaozhe Hao, Shihao Zhao, Youze Huang,
+Bin Liang, Rong Xiao, and Kam-Fai Wong. Se\˜ norita-2m: A high-quality instruction-based
+dataset for general video editing by video specialists. arXiv preprint arXiv:2502.06734, 2025.
+A
+Coarse Camera Movement Filtering
+Since processing a large volume of source videos using the fine-grained VLM filter introduced in
+Section 3.1 is unacceptably time-consuming, we propose a preliminary coarse filtering approach to
+efficiently eliminate vast numbers of unqualified videos. As illustrated in Figure 2, Stage 1, we first
+utilize Unimatch [26] to compute the optical flow of the source videos at 2 FPS. Subsequently, we
+apply the coarse-grained filtering strategy as follows:
+Preliminary. When camera movement occurs between two consecutive frames, the background pixels
+satisfy:
+[x′; y′; 1] ∼H[x; y; 1]
+(1)
+where (x, y) denotes a point in the first frame, (x′, y′) is its corresponding position in the second
+frame, and H ∈R3×3 represents the homography matrix. Alternatively, given the optical flow (u, v)
+computed at (x, y) between the two frames, the anticipated movement is:
+(x′, y′) ≈(x + u, y + v)
+(2)
+Consequently, using the source points (x, y) and their flow-derived destinations (x′, y′), we apply
+the RANSAC [8] algorithm to estimate a robust homography matrix H that models the dominant
+transformation. We then apply H to compute the transformed coordinates for each point. If the
+transformed position aligns with the optical flow estimation, the corresponding pixel is classified as
+background. We define r as the ratio of points satisfying this transformation, where an empirical
+r ≥50% indicates a high probability of global camera movement. Furthermore, we calculate the
+motion magnitude m =
+√
+u2 + v2 at each pixel. We conclude that camera movement exists between
+the sampled frames only if both r ≥50% and the average motion magnitude satisfies m ≥1. If
+all consecutive sampled frames within a video are determined to be free of camera movement, the
+sequence is classified as static-camera and retained. This efficient process drastically reduces the
+overall source videos from 940K to 260K.
+B
+Detailed Evaluation Protocol on Sparkle-Bench
+In Section 3.7, we introduce our six-dimensional criteria spanning three perspectives on the proposed
+Sparkle-Bench. As previously stated, we utilize Gemini-2.5-Pro as the scorer due to its exceptional
+video understanding capabilities. The detailed evaluation criteria are outlined below:
+Background Replacement Scoring Prompt
+You are a data rater specializing in grading video background replacement. You will be given two videos
+(source and edited) and the editing instruction. Your task is to evaluate the result on a 5-point scale across
+six dimensions:
+Instruction Compliance
+1. No change, or background entirely unrelated to the prompt, or foreground also replaced/distorted such
+that the edit fails as a whole.
+2. Background only partially matches prompt content or style; major requested elements wrong or
+missing; or foreground noticeably altered.
+3. Main background concept matches but with missing/extra elements, wrong sub-style, or partial spill
+onto the subject.
+4. Requested background fully present and consistent with the prompt; only minor mismatches in tone,
+detail, or atmosphere.
+5. Background exactly matches the prompt in content, style, mood, and any specified dynamics; fore-
+ground untouched.
+Overall Visual Quality. This dimension covers global image quality AND foreground-background
+harmonization. The lighting, color temperature, and shadows on the foreground must match the new
+background environment. For example, when the prompt changes the time of day (e.g. day to night, noon
+to sunset), keeping the original daytime lighting on the foreground while the background is dark is a major
+harmonization failure. The same applies to season, location, and style edits that imply different ambient
+light.
+1. Severe artefacts throughout (tearing, posterisation, color banding, heavy flicker), OR foreground
+lighting is grossly inconsistent with the new background (e.g. brightly lit subject against a night scene,
+conflicting light directions, no shadow adaptation).
+2. Clear visual degradation (persistent blur, noise, unstable colors), OR obvious lighting / color-
+temperature mismatch between foreground and background visible at first glance.
+3. Watchable but with visible flaws on closer look: occasional flicker, mild compression artefacts, soft
+regions, OR partial harmonization where the foreground tone is in the right direction but not fully
+matched to the background.
+4. Clean output with only minor issues when zoomed in or paused; foreground lighting and color grading
+are well aligned with the background, with only subtle discrepancies.
+5. Indistinguishable from real captured footage: sharp, stable, well-graded across the entire clip, with
+foreground lighting, color temperature, and shadows fully harmonized with the new background
+environment.
+Foreground Integrity
+1. Foreground severely damaged: missing limbs/parts, large holes, replaced with a different subject, or
+shape collapsed.
+2. Noticeable foreground damage: partial erosion by background, distorted contours, identity drift across
+frames.
+3. Foreground mostly preserved but with visible defects: edge halos, slight shape deformation, occasional
+color bleed.
+4. Foreground well preserved with only minute edge artefacts; shape and identity stable throughout.
+5. Foreground perfectly preserved: every pixel of shape, texture, and identity intact across all frames.
+Foreground Motion Consistency
+1. Foreground motion completely different from source: actions replaced, frozen, looped, or temporally
+scrambled.
+2. Major motion deviations: different gestures, dropped actions, or strong temporal jitter not present in
+source.
+3. Same general action is recognizable but with timing drift, trajectory shifts, or inconsistent speed versus
+source.
+4. Motion closely tracks the source with only minor temporal misalignment or subtle smoothing.
+5. Foreground motion is identical to the source video in trajectory, timing, and articulation, frame by
+frame.
+Background Dynamics (Liveness). This dimension measures whether the background motion matches
+the intensity and character implied by the prompt. The bar is appropriateness to the prompt, not absolute
+amount of motion. A "gentle swaying grass" prompt rendered as subtle wind-like sway is fully correct
+and should receive a high score; the same subtle motion for a "rushing waterfall" prompt is severely
+under-rendered.
+1. Background motion contradicts the prompt: completely static when the prompt implies any motion, or
+wrong type/direction of motion (e.g. crashing waves rendered as a still pond).
+2. Motion intensity is far below what the prompt implies (e.g. a "rushing river" rendered as barely moving
+water), or required dynamics are largely absent.
+3. Motion type is in the right direction but noticeably under- or over-rendered, OR motion exists but feels
+stiff and unnatural.
+4. Motion intensity and character are well matched to the prompt, with only minor stiffness, small frozen
+patches, or slight over/under rendering.
+5. Background motion perfectly matches the prompt in both intensity and character, rendered naturally
+and continuously throughout the clip - gentle prompts receive gentle motion, energetic prompts
+receive energetic motion.
+Special case: if the prompt explicitly asks for a static background (e.g. "still photo", "frozen scene", "no
+motion"), a faithfully static background scores 5 and any unwanted motion lowers the score accordingly.
+Background Visual Quality
+1. Background severely degraded: melting structures, broken geometry, heavy blur, or incoherent
+textures.
+2. Clear distortion or blur in major background regions; structures wobble or warp over time.
+3. Acceptable background with visible imperfections: soft textures, mild geometric inconsistency, minor
+temporal warping.
+4. High-quality background with only minor issues on close inspection; geometry and textures stable.
+5. Background is sharp, geometrically coherent, and temporally stable; on par with real footage.
+Constraints. The scores for Overall Visual Quality, Foreground Integrity, Foreground Motion Consis-
+tency, Background Dynamics, and Background Visual Quality must not exceed the score for Instruction
+Compliance.
+Example Response Format.
+- Brief reasoning: No more than 30 words.
+- Instruction Compliance: 1-5.
+- Overall Visual Quality: 1-5.
+- Foreground Integrity: 1-5.
+- Foreground Motion Consistency: 1-5.
+- Background Dynamics: 1-5.
+- Background Visual Quality: 1-5.
+Editing instruction is: {edit_prompt}.
+Below are the videos before and after editing:
+As outlined above, rather than merely outputting the dimensional scores, we intentionally prompt
+Gemini-2.5-Pro to generate a brief rationale via chain-of-thought reasoning prior to its final response,
+thereby yielding more accurate and reliable evaluation results.
+C
+Additional Experiments
+C.1
+Theme-specific Results on Sparkle-Bench
+Table 8: Scores on the Location theme of Sparkle-Bench.
+Model
+Configuration
+Overall
+Global
+Foreground
+Background
+Ins.
+Vis.
+FgIn.
+FgMo.
+BgDy.
+BgVi.
+InsViE [25]
+2B-25F@480P
+1.00
+1.00
+1.00
+1.00
+1.00
+1.00
+1.00
+ICVE [13]
+13B-81F@480P
+2.01
+2.28
+1.59
+2.18
+2.27
+1.71
+2.05
+DITTO [1]
+14B-81F@480P
+2.00
+2.14
+1.95
+1.97
+2.08
+1.74
+2.11
+OmniVideo2 [27]
+A14B-41F@480P
+2.42
+2.67
+2.23
+2.47
+2.56
+1.98
+2.63
+UniVideo [27]
+13B-81F@480P
+2.20
+2.47
+1.59
+2.31
+2.47
+1.93
+2.41
+Kiwi-Edit [14]
+5B-81F@720P
+2.53
+2.92
+2.12
+2.88
+2.90
+1.51
+2.86
+Lucy-Edit-1.1 [7]
+5B-81F@720P
+2.86
+3.22
+2.28
+2.94
+3.19
+2.55
+3.00
+Kiwi-Sparkle (Ours)
+5B-81F@720P
+3.84
+4.10
+3.47
+3.83
+4.06
+3.57
+4.00
+Table 9: Scores on the Season theme of Sparkle-Bench.
+Model
+Configuration
+Overall
+Global
+Foreground
+Background
+Ins.
+Vis.
+FgIn.
+FgMo.
+BgDy.
+BgVi.
+InsViE [25]
+2B-25F@480P
+1.05
+1.07
+1.02
+1.05
+1.07
+1.04
+1.04
+ICVE [13]
+13B-81F@480P
+2.00
+2.37
+1.46
+2.22
+2.36
+1.52
+2.06
+DITTO [1]
+14B-81F@480P
+2.00
+2.14
+1.97
+1.93
+2.12
+1.75
+2.11
+OmniVideo2 [27]
+A14B-41F@480P
+2.22
+2.44
+2.04
+2.25
+2.33
+1.82
+2.41
+UniVideo [22]
+13B-81F@480P
+2.60
+3.01
+1.83
+2.83
+3.01
+2.12
+2.83
+Kiwi-Edit [14]
+5B-81F@720P
+2.55
+2.97
+2.12
+2.87
+2.95
+1.51
+2.88
+Lucy-Edit-1.1 [7]
+5B-81F@720P
+2.68
+3.07
+2.15
+2.67
+3.04
+2.41
+2.76
+Kiwi-Sparkle (Ours)
+5B-81F@720P
+3.79
+4.14
+3.34
+3.77
+4.06
+3.39
+4.03
+In addition to the overall scores on Sparkle-Bench (Table 4), we provide theme-specific results for
+Location, Season, Time, and Style in Tables 8, 9, 10, and 11, respectively. Across all dimensions,
+Kiwi-Sparkle demonstrates exceptional instruction-following capabilities, emerging as the only model
+to surpass 4.0/5.0. This indicates that almost all required elements are accurately synthesized during
+editing, a conclusion further supported by its high Background Dynamics (BgDy) and Background
+Visual Quality (BgVi) scores. These encouraging results firmly validate the high data quality of
+Sparkle. Simultaneously, the foreground is well-preserved with consistent motion. The related
+metrics, namely Foreground Integrity (FgIn) and Foreground Motion Consistency (FgMo), remain
+Table 10: Scores on the Time theme of Sparkle-Bench.
+Model
+Configuration
+Overall
+Global
+Foreground
+Background
+Ins.
+Vis.
+FgIn.
+FgMo.
+BgDy.
+BgVi.
+InsViE [25]
+2B-25F@480P
+1.13
+1.20
+1.06
+1.12
+1.19
+1.09
+1.11
+ICVE [13]
+13B-81F@480P
+1.87
+2.19
+1.39
+2.08
+2.18
+1.47
+1.92
+DITTO [1]
+14B-81F@480P
+2.17
+2.38
+1.96
+2.16
+2.34
+1.84
+2.34
+OmniVideo2 [27]
+A14B-41F@480P
+2.20
+2.45
+1.99
+2.33
+2.36
+1.67
+2.40
+UniVideo [22]
+13B-81F@480P
+2.33
+2.63
+1.83
+2.56
+2.63
+1.77
+2.53
+Kiwi-Edit [14]
+5B-81F@720P
+2.48
+2.89
+2.08
+2.83
+2.88
+1.48
+2.73
+Lucy-Edit-1.1 [7]
+5B-81F@720P
+2.62
+2.94
+2.14
+2.77
+2.93
+2.19
+2.76
+Kiwi-Sparkle (Ours)
+5B-81F@720P
+3.69
+4.01
+3.14
+3.66
+3.99
+3.47
+3.87
+Table 11: Scores on the Style theme of Sparkle-Bench.
+Model
+Configuration
+Overall
+Global
+Foreground
+Background
+Ins.
+Vis.
+FgIn.
+FgMo.
+BgDy.
+BgVi.
+InsViE [25]
+2B-25F@480P
+1.04
+1.05
+1.04
+1.04
+1.05
+1.04
+1.05
+ICVE [13]
+13B-81F@480P
+1.90
+2.15
+1.50
+2.05
+2.14
+1.63
+1.95
+DITTO [1]
+14B-81F@480P
+1.85
+1.95
+1.87
+1.68
+1.91
+1.75
+1.95
+OmniVideo2 [27]
+A14B-41F@480P
+2.57
+2.76
+2.41
+2.65
+2.66
+2.20
+2.75
+UniVideo [22]
+13B-81F@480P
+2.52
+2.75
+2.02
+2.65
+2.75
+2.27
+2.71
+Kiwi-Edit [14]
+5B-81F@720P
+2.60
+2.92
+2.29
+2.85
+2.88
+1.80
+2.88
+Lucy-Edit-1.1 [7]
+5B-81F@720P
+2.77
+3.02
+2.35
+2.74
+3.00
+2.71
+2.82
+Kiwi-Sparkle (Ours)
+5B-81F@720P
+3.92
+4.15
+3.65
+3.80
+4.10
+3.75
+4.05
+close to 4.0. This strongly proves the effectiveness of our BAIT algorithm in imparting precise
+foreground knowledge to downstream models.
+Among all themes, Time proves to be the most challenging. Most models, including our Kiwi-Sparkle,
+yield their lowest scores on this theme, indicating that light and shadow adjustments still leave room
+for improvement. Nevertheless, even in this challenging scenario, Kiwi-Sparkle surpasses the SOTA
+model, i.e., Lucy-Edit-1.1, by approximately 41%. This demonstrates that our rigorous data pipeline
+significantly contributes to achieving more harmonious edits. Conversely, most models achieve their
+highest scores on the Style theme. This suggests that the knowledge acquired from abundant global
+style transfer data can somewhat generalize to style-oriented background editing, an observation that
+warrants future investigation. In summary, Sparkle facilitates a balanced refinement across all themes,
+making it highly suitable as a post-training corpus to enhance background replacement capabilities.
+C.2
+Visualization
+Comparison between OpenVE-3M and Sparkle. Beyond the statistical data quality comparison
+in Table 2, we provide intuitive visual comparisons of edits derived from identical source videos
+and prompts in Figures 5, 6, 7, and 8. We clearly observe that OpenVE-3M suffers severely from
+Prompt Misalignment. For instance, crucial elements such as the swaying curtains (Figure 5), flying
+seagulls (Figure 6), strolling passersby (Figure 7), and floating motes (Figure 8) are entirely missing.
+Furthermore, the backgrounds in the OpenVE-3M videos remain unnaturally static, indicating that
+relying solely on foreground guidance often fails to generate proper dynamics. In contrast, benefiting
+from our novel decoupled generation paradigm and rigorous quality control, all requested elements
+are faithfully rendered in our edits. Simultaneously, the backgrounds maintain dynamic realism, such
+as rolling waves, in a harmonious manner, significantly boosting the overall data quality.
+Replace the background with a classic library study. The desk lamp flickers softly, dust motes float in the warm light, and a gentle breeze causes the 
+curtains to sway slightly. The subject should remain perfectly still.
+Source Video
+OpenVE-3M
+Sparkle
+Figure 5: Data comparison between OpenVE-3M [9] and our proposed Sparkle-Part1.
+Replace the background with a lively tropical beach where waves gently roll in, palm fronds sway in a light breeze, seagulls fly in the distance, and 
+sunlight sparkles on the water surface, while the foreground character remains still.
+Source Video
+OpenVE-3M
+Sparkle
+Figure 6: Data comparison between OpenVE-3M [9] and our proposed Sparkle-Part2.
+Replace the background with a dynamic vintage European street cafe. The scene should include flickering street lamps, gentle movement of leaves in 
+a light breeze, and occasional passersby strolling softly in the distance. The subject should remain perfectly still.
+Source Video
+OpenVE-3M
+Sparkle
+Figure 7: Data comparison between OpenVE-3M [9] and our proposed Sparkle-Part3.
+Transform the background into a lively enchanted forest clearing with gentle rays of sunlight flickering through leaves, soft wind causing subtle 
+movement in the foliage, and occasional floating motes of light drifting through the air. The person remains still in the foreground.
+Source Video
+OpenVE-3M
+Sparkle
+Figure 8: Data comparison between OpenVE-3M [9] and our proposed Sparkle-Part4.
+Shift the background to a sunlit vineyard with rows of grapevines stretching into the distance, where golden light filters through rustling green leaves 
+gently swaying in a warm breeze, and soft shadows dance across the earth below.
+Source Video
+Copy-and-Paste
+Sparkle
+Figure 9: Data comparison between Copy-and-Paste and our proposed Sparkle. The theme, subtheme,
+and scene are "Location-rural-vineyard rows with rustling leaves".
+Put the subject against a spring meadow where melting snow reveals patches of vibrant green grass, with gentle streams of water flowing over the 
+ground and sunlight filtering through budding trees, creating soft, shifting shadows and glistening droplets in the air.
+Source Video
+Copy-and-Paste
+Sparkle
+Figure 10: Data comparison between Copy-and-Paste and our proposed Sparkle. The theme, sub-
+theme, and scene are "Season-spring-melting snow revealing grass".
+Comparison with Videos Synthesized by Copy-and-Paste. Figures 9, 10, 11, and 12 illustrate the
+low-quality synthesized videos by the Copy-and-Paste paradigm across the four themes, respectively.
+As shown in these figures, harsh contours are clearly visible, as current segmentation models are
+incapable of entirely eliminating contour noise. A more significant issue lies in lighting and shadow
+adjustments. For instance, in Figure 9, the sunlight originates from behind the man. Therefore,
+maintaining the uniform lighting of the source figure creates unnatural artifacts. In contrast, the edits
+produced by Sparkle not only adjust the lighting of the figure appropriately but also simulate the
+shadow on the table, an effect impossible to achieve with the Copy-and-Paste paradigm. Similarly, in
+Figure 11, our Sparkle edits vividly model the light reflections on the camera lens. This makes the
+Place the subject in a serene morning landscape where soft golden light filters through a thick layer of rolling mist over a forested valley, with drifting 
+fog gently swaying between trees and subtle sunbeams piercing through the canopy.
+Source Video
+Copy-and-Paste
+Sparkle
+Figure 11: Data comparison between Copy-and-Paste and our proposed Sparkle. The theme, sub-
+theme, and scene are "Time-dawn-morning mist rolling over terrain".
+Move the subject to a medieval stone-and-timber village setting with cobblestone paths, thatched-roof cottages, and wooden beams, where warm 
+flickering torchlight casts dancing shadows and embers float gently in the evening air.
+Source Video
+Copy-and-Paste
+Sparkle
+Figure 12: Data comparison between Copy-and-Paste and our proposed Sparkle. The theme, sub-
+theme, and scene are "Style-era-medieval stone-and-timber village setting".
+results far more realistic than their rigidly pasted counterparts, demonstrating the high reliability of
+our full-video regeneration driven by decoupled guidance.
+Place the subject in an open prairie under a vast sky, with tall golden grass swaying vigorously in a strong wind, creating waves of motion across the 
+landscape, and distant rolling hills fading into a hazy horizon.
+Source Video
+Foreground-Only
+Sparkle
+Figure 13: Data comparison between Foreground-Only and our proposed Sparkle. The theme,
+subtheme, and scene are "Location-rural-open prairie with tall grass waving".
+Move the subject to a serene spring park filled with cherry blossom trees in full bloom, soft golden sunlight filtering through the pink canopies, and 
+delicate petals gently drifting through the air in a subtle, animated breeze.
+Source Video
+Foreground-Only
+Sparkle
+Figure 14: Data comparison between Foreground-Only and our proposed Sparkle. The theme,
+subtheme, and scene are "Season-spring-cherry blossoms in full bloom".
+Comparison with Foreground-Only Guidance. Because we utilize a different set of toolkits for
+data creation compared to OpenVE-3M, we conduct a more rigorous comparison by using only
+the BAIT-detected foreground to synthesize the final video in Stage 5. Under this setting, the sole
+variable is the presence of background guidance. The results across the four themes are presented in
+Figures 13, 14, 15, and 16, respectively. Although our BAIT algorithm ensures accurate foreground
+preservation, the complete absence of background guidance inevitably leads to severe structural
+collapse. The most frequent issue, as shown in Figures 13 and 14, is the loss of high-frequency
+textures (such as yellow grass and blooming flowers). Furthermore, lighting control becomes highly
+unstable. For example, in Figure 16, the frames suddenly become extremely overexposed. The
+model completely loses lighting control due to the difficulty of modeling motion without background
+Shift the background to a serene twilight landscape with the fading sun casting warm orange and pink hues across the horizon, silhouetting distant 
+trees that sway gently in the breeze, while soft, drifting clouds slowly move across the sky illuminated by the last rays of light.
+Source Video
+Foreground-Only
+Sparkle
+Figure 15: Data comparison between Foreground-Only and our proposed Sparkle. The theme,
+subtheme, and scene are "Time-dusk-silhouette lighting against fading sun".
+Set the scene to a sci-fi dystopian industrial wasteland with crumbling metallic structures, flickering neon signs, and floating debris drifting slowly in 
+the air. Add a hazy, toxic orange glow emanating from distant smelters, with subtle animated smoke trails rising from broken pipes.
+Source Video
+Foreground-Only
+Sparkle
+Figure 16: Data comparison between Foreground-Only and our proposed Sparkle. The theme,
+subtheme, and scene are "Style-cinematic-sci-fi dystopian industrial wasteland".
+guidance. Additionally, the unnatural static background issue observed in OpenVE-3M also occurs in
+Figure 15. Conversely, with sufficient decoupled background guidance, our Sparkle-created videos
+maintain excellent structural integrity. These results firmly validate that our observation is universal
+rather than specific to a particular toolkit, thoroughly justifying the necessity of introducing decoupled
+background guidance during data generation, as implemented in Sparkle.
+Replace the background with a vibrant secret garden balcony scene where gentle breezes cause flowers and vines to sway softly, warm sunlight 
+dapples through leaves creating moving light patterns, and distant birds chirp faintly, while the couple remains perfectly still.
+Source Video
+Kiwi-Edit
+Kiwi-Sparkle
+Figure 17: Edited video comparison between Kiwi-Edit and Kiwi-Sparkle on OpenVE-Bench-Part1.
+Replace the background with a dynamic snowy alpine scene where gentle snowflakes fall, pine branches sway lightly in the cold breeze, and sunlight 
+glints off the snow. The subject remains perfectly still.
+Source Video
+Kiwi-Edit
+Kiwi-Sparkle
+Figure 18: Edited video comparison between Kiwi-Edit and Kiwi-Sparkle on OpenVE-Bench-Part2.
+Evaluation Results on OpenVE-Bench. Beyond evaluating the data itself, we illustrate the visual
+edits on OpenVE-Bench produced by the vanilla Kiwi-Edit and our Sparkle-tuned version, Kiwi-
+Sparkle, in Figures 17, 18, and 19. We observe that Kiwi-Edit inherits the drawbacks of OpenVE-
+3M, consistently producing suboptimal static backgrounds. It also fails to make proper lighting
+adjustments, merely pasting the foreground onto the static background inharmoniously. Consequently,
+required dynamic elements, such as the "warm sunlight" in Figure 17 and the "falling snowflakes"
+in Figure 18, are entirely missing. After fine-tuning on Sparkle, these issues are resolved to a great
+extent. The edited videos become significantly more vibrant and lively, featuring harmonious lighting
+and motion without disturbing the foreground. This indicates that our high-quality Sparkle dataset
+plays a vital role in infusing liveness into foundational background replacement capabilities following
+large-scale but noisy pre-training.
+Source Video
+Kiwi-Edit
+Kiwi-Sparkle
+Replace the background with a dynamic 1970s living 
+room scene. Include subtle flickering of the vintage lamp 
+light, a slow-moving curtain in a gentle breeze, and soft 
+ambient shadows shifting with the light. The child and 
+knitted snake remain perfectly still in the foreground.
+Source Video
+Kiwi-Edit
+Kiwi-Sparkle
+Place the subject in a lively outdoor garden. The 
+background should have gentle motion with leaves 
+rustling in a light breeze, butterflies fluttering, and 
+dappled sunlight shifting through tree branches. The 
+subject remains perfectly still.
+Figure 19: Edited video comparison between Kiwi-Edit and Kiwi-Sparkle on OpenVE-Bench-Part3.
+Put the subject against a cascading waterfall flowing over mossy rocks in a lush forest, with mist gently rising and sunlight filtering through swaying 
+trees in the background.
+Source Video
+Kiwi-Edit
+Kiwi-Sparkle
+Figure 20: Edited video comparison between Kiwi-Edit and Kiwi-Sparkle on Sparkle-Bench. The
+theme, subtheme, and scene are "Location-nature-waterfall cascading over mossy rocks".
+Set the scene to a sweltering summer day with heat haze shimmering across a dry, sunbaked earth. Replace the forest with sparse, heat-stressed 
+shrubs and cracked soil, and add dynamic, rising waves of shimmering air distorting the horizon under a bright, glaring sun.
+Source Video
+Kiwi-Edit
+Kiwi-Sparkle
+Figure 21: Edited video comparison between Kiwi-Edit and Kiwi-Sparkle on Sparkle-Bench. The
+theme, subtheme, and scene are "Season-summer-heat haze shimmering on ground".
+Evaluation Results on Sparkle-Bench. Figures 20, 21, 22, and 23 illustrate the evaluation results
+across the four themes on Sparkle-Bench for Kiwi-Edit and Kiwi-Sparkle. Similar to the results
+on OpenVE-Bench, Kiwi-Edit consistently produces suboptimal static or light-inconsistent edits,
+demonstrating that its low Background Dynamics (BgDy) and Background Visual Quality (BgVi)
+scores under our proposed evaluation metrics are well-justified. In contrast, our Kiwi-Sparkle
+yields significantly higher-quality results, accurately modeling subtle motions such as "heat haze"
+in Figure 21 and "gentle ripples" in Figure 22. These successful edits prove that the knowledge
+embedded within Sparkle is highly suitable for general models to absorb, even across a broad range
+of scenes beyond the OpenVE-3M distribution.
+Swap the background to a serene dawn scene where the first rays of golden light break through soft, drifting clouds, casting dynamic, elongated 
+shadows across a misty forest clearing, with gentle ripples on a nearby pond reflecting the rising sun.
+Source Video
+Kiwi-Edit
+Kiwi-Sparkle
+Figure 22: Edited video comparison between Kiwi-Edit and Kiwi-Sparkle on Sparkle-Bench. The
+theme, subtheme, and scene are "Time-dawn-first rays of light breaking through".
+Change the background to an oil painting style with visible brushstroke textures, depicting a dynamic, smoky forest at dusk with flickering embers 
+drifting upward from a glowing campfire, and soft, swirling mist moving across the scene to create a sense of flowing energy.
+Source Video
+Kiwi-Edit
+Kiwi-Sparkle
+Figure 23: Edited video comparison between Kiwi-Edit and Kiwi-Sparkle on Sparkle-Bench. The
+theme, subtheme, and scene are "Style-art style-oil painting style with visible brushstroke textures".
+Change the background to a minimalist clean white space with subtle floating particles that gently drift upward and softly glow, creating a serene and 
+dynamic atmosphere while preserving spatial coherence.
+Source Video
+Kiwi-Sparkle
+Figure 24: Kiwi-Sparkle as an effective foreground tracker by using the trigger phrase "a minimalist
+clean white space"-Part1.
+Replace the background with a minimalist clean white space, featuring a subtle gradient of soft light that gently shifts across the surface, and add 
+faint, slowly drifting white particles that float upward, creating a serene and dynamic atmosphere.
+Source Video
+Kiwi-Sparkle
+Figure 25: Kiwi-Sparkle as an effective foreground tracker by using the trigger phrase "a minimalist
+clean white space"-Part2.
+Kiwi-Sparkle as an Effective Foreground Tracker. Beyond visual comparisons of the data and
+models, we demonstrate that Kiwi-Sparkle possesses strong foreground tracking capabilities inherited
+from the proposed BAIT algorithm, alongside robust instruction-following skills. We validate this
+by introducing a specific scene description, "a minimalist clean white space," as an editing category
+within the Style theme. By applying this trigger phrase, Kiwi-Sparkle accurately isolates foreground
+subjects from their original scenes onto a new white background. As illustrated in Figures 24,
+25, 26, and 27, even complex or large-scale foregrounds, such as the bicycle (Figure 24) and the
+car (Figure 25), can be seamlessly detached by Kiwi-Sparkle. This compelling application not
+only solidifies our BAIT contribution but also sheds light on a potential editing-oriented object
+segmentation paradigm, a promising direction we leave for future research.
+Place the subject in a minimalist clean white space background with soft, floating white particles drifting gently upward, creating a serene and 
+animated atmosphere.
+Source Video
+Kiwi-Sparkle
+Figure 26: Kiwi-Sparkle as an effective foreground tracker by using the trigger phrase "a minimalist
+clean white space"-Part3.
+Swap the background to a minimalist clean white space with soft, floating particles gently drifting upward and subtle light reflections shimmering 
+across the surface, maintaining a serene and animated atmosphere.
+Source Video
+Kiwi-Sparkle
+Figure 27: Kiwi-Sparkle as an effective foreground tracker by using the trigger phrase "a minimalist
+clean white space"-Part4.
+D
+License
+The proposed dataset (Sparkle), benchmark (Sparkle-Bench), and model (Kiwi-Sparkle) are all
+publicly released under the CC-BY-4.0 license. The code is released under the Apache-2.0 license.
+Please note that our use of source videos from OpenVE-3M strictly adheres to their original license,
+and the OpenVE-3M authors retain all original rights to those videos.

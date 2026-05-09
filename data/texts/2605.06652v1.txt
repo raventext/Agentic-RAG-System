@@ -1,0 +1,1598 @@
+When No Benchmark Exists: Validating Comparative
+LLM Safety Scoring Without Ground-Truth Labels
+Sushant Gautam
+1,2, Finn Schwall
+2,4, Annika Willoch Olstad
+2,4,
+Fernando Vallecillos Ruiz
+3,4 Birk Torpmann-Hagen
+4, Sunniva Maria Stordal Bjørklund
+Leon Moonen
+4, Klas Pettersen
+1, Michael A. Riegler
+1,2
+1Simula Metropolitan Center for Digital Engineering, 2Oslo Metropolitan University,
+3University of Oslo, 4Simula Research Laboratory, 5Norwegian Directorate of Health
+Oslo, Norway
+{sushant,finn,annika,klas,michael,fernando,birk,leon}@simula.no
+sunniva.maria.stordal.bjorklund@helsedir.no
+Abstract
+Many deployments must compare candidate language models for safety before a
+labeled benchmark exists for the relevant language, sector, or regulatory regime.
+We formalize this setting as benchmarkless comparative safety scoring and specify
+the contract under which a scenario-based audit can be read as deployment evidence.
+The scores only hold under a fixed scenario pack, rubric, auditor, judge, sampling
+configuration, and rerun budget. Because no labels are available, we replace
+ground-truth agreement with an instrumental-validity chain: responsiveness to a
+controlled safe-vs-abliterated contrast, dominance of target-driven variance over
+auditor and judge artifacts, and stability across reruns. We instantiate the chain
+in SimpleAudit, a local-first scoring instrument, and validate it on a Norwegian
+safety pack. Safe and abliterated targets separate with AUROC values between
+0.89 and 1.00, target identity is the dominant variance component (η2 ≈0.52), and
+severity profiles stabilize by ten reruns. Applying the same chain to Petri shows
+that it admits both tools. The substantial differences are upstream of the chain,
+in claim-contract enforcement and deployment fit. A Norwegian public-sector
+procurement case comparing Borealis and Gemma 3 demonstrates the resulting
+evidence in use: the safer model depends on scenario category and risk measure.
+Consequently, scores, matched deltas, critical rates, uncertainty, and used judge
+and auditor must be reported together rather than collapsed to a ranking.
+SimpleAudit Repository: 
+Introduction
+Safety evaluation for deployed language models is increasingly a comparative problem: a team
+must decide which candidate model is safer for a particular language, sector, policy regime, or
+infrastructure constraint, and rerun evaluations when models update. In many deployment cells,
+there may be no ground-truth-annotated safety benchmark for the target language and domain with
+which to operationalize such assessments, and constructing one may be cost-prohibitive or otherwise
+constrained by the team’s budget, timeline, or data-handling constraints.
+To illustrate, consider a Norwegian public-sector agency preparing to pilot a locally deployed language
+model for public-service guidance. The agency may need to decide which model among a set of
+candidates is safer with respect to Norwegian-specific constraints, such as Norwegian language,
+policy, and data-handling. The procedure that informs this decision must also be repeatable, since the
+model, prompts, guardrails, or deployment configuration may be updated over time. However, no
+suitable Norwegian domain-specific safety benchmark may exist to operationalize this procedure.
+Preprint.
+arXiv:2605.06652v1 [cs.LG] 7 May 2026
+
+Existing paradigms only partially address this setting. Static safety benchmarks support calibrated
+comparison when labeled data already exists, but are expensive to build, often English-first, and fixed
+at release time [Liang et al., 2023, Zhang et al., 2024, Mazeika et al., 2024]. Automated red-teaming
+and agentic auditing systems may reveal behaviors for expert review [Ganguli et al., 2022, Perez et al.,
+2023, Anthropic Alignment Science Team, 2025], but transcripts and multi-dimension rubric outputs
+do not by themselves define a committed, repeatable score that accounts for uncertainty. There is
+therefore a gap in this space, which we refer to as benchmarkless comparative safety scoring.
+To close this gap, we propose an instrumental validity chain. Ideally, a scoring instrument should
+respond to a known safety-relevant contrast, attribute variance primarily to the target model rather
+than to auditor or judge artifacts, and stabilize across reruns. We instantiate these requirements with a
+safe-vs-abliterated (i.e., a capability-matched variant with refusal behavior ablated via the refusal
+direction) contrast [Arditi et al., 2024], variance decomposition over the target-auditor-judge stack,
+and bootstrap stability analysis.
+We emphasize that this does not prove construct validity for a deployment domain. In particular, it
+does not prove that the score reflects real-world safety in Norwegian public-sector use. It establishes
+only the narrower, prior claim that the instrument responds to target behavior rather than to noise
+or apparatus artifacts. Without that narrower claim, score differences cannot be interpreted as
+comparative evidence at all; with it, deployment validity remains the deploying team’s contribution.
+As a reference implementation of this validity chain, we introduce SimpleAudit, a local-first Python
+library and versioned scenario-pack as a measurement instrument. It reports verdicts, scores, matched
+deltas, critical-rate differences, uncertainty, transcripts, and token usage. The independent target,
+auditor, and judge roles make local deployment and variance decomposition operational. We release
+SimpleAudit as a library, available through PyPI and GitHub, and it has Digital Public Good status
+[Digital Public Goods Alliance, 2026].
+We summarize our contributions as follows: (i) identifying benchmarkless comparative safety
+scoring as a distinct evaluation category; (ii) specifying its claim contract and validation chain; (iii)
+instantiating the category in SimpleAudit; (iv) validating the instrument empirically; (v) applying
+the same chain to Petri as a generalization check, showing that it identifies a class of valid scoring
+tools; and (vi) demonstrating the resulting deployment evidence in a Norwegian public-sector model
+comparison.
+Background and Positioning
+The deployment-auditing setting we target sits between three fields: static safety benchmarks,
+discovery-oriented auditing, and LLM-as-judge methodology. None, individually or jointly, supports
+the scenario in §1, where a small public-sector team must produce a defensible comparative number
+on local hardware, in a long-tail language, and rerun the comparison every time a model updates.
+Static benchmark infrastructure.
+The dominant pattern for safety evaluation pairs a curated
+dataset with ground-truth labels [Liang et al., 2023, Zhang et al., 2024, Mazeika et al., 2024, Ghosh
+et al., 2025]. Such artifacts require annotation, freeze evaluation at release time, and are English-first
+by default [Ning et al., 2025]. The Norwegian gap is concrete: NorEval consolidates 24 datasets across
+nine task categories but contains no safety component [Mikhailov et al., 2025]; earlier Norwegian
+suites carry narrow toxicity or bias probes rather than deployment-grade safety evaluation [Samuel
+et al., 2023, Liu et al., 2024]; multilingual safety benchmarks exclude Norwegian [Ning et al., 2025].
+Even where benchmarks exist, the construct-validity case for treating them as deployment evidence is
+non-trivial: a systematic review of 445 LLM benchmarks finds contested phenomenon definitions,
+data reuse, and minimal statistical testing to be the norm rather than the exception [Bean et al., 2025,
+Salaudeen et al., 2025]. "Benchmark exists" and "benchmark validates a deployment claim" are
+different propositions; in the no-label setting we target, the second must be earned without the first.
+Appendix I expands the per-artifact detail and construct-validity review.
+Automated discovery-oriented auditing.
+A second line of work uses LLMs to drive their own
+evaluation, generating attacks, transcripts, and hypotheses for human review [Ganguli et al., 2022,
+Perez et al., 2023, Needham et al., 2025, Nguyen et al., 2025, Souly et al., 2026]. The most directly
+comparable artifact is Petri [Anthropic Alignment Science Team, 2025], an agentic auditing tool
+whose design point is discovery rather than scoring; the authors frame its value as speed and breadth
+in surfacing behaviors and caution that its 38 dimension scores are informative in relative rather
+than absolute terms. A procurement team in a regulated deployment has a different shape of need: a
+small set of governance-relevant numbers with error bars, comparable across reruns, defensible to a
+non-research audience, and producible locally. Discovery and scoring are complementary, but they
+place different requirements on the tool (see §6 and Appendix I for details).
+LLM-as-judge reliability.
+Any LLM-on-LLM scoring tool inherits the LLM-as-judge apparatus,
+with its known position, verbosity, and self-enhancement biases [Zheng et al., 2023, Liu et al., 2023,
+Gu et al., 2024, Shi et al., 2025]. Two commitments transfer into our setting. Absolute scores
+are unstable across judges and across reruns of the same judge while pairwise comparisons are
+systematically more reliable, so tools whose contract is a comparative score must commit to deltas
+and report uncertainty. An instrument built on an LLM judge cannot inherit reliability for free; it
+must be characterized along the same dimensions. Zhu et al. [2026] decompose benchmark variance
+into scenario, generation, judge, and residual components, and Chouldechova et al. [2025] make
+the companion measurement-theory argument that quantitative red-teaming claims require explicit
+validation before they support comparison. We extend this variance-decomposition lens from judge
+selection to the joint (target, auditor, judge) stack characteristic of multi-turn JTA-loop tools.
+Problem Formulation
+The deployment-auditing setting falls outside what static benchmarks, discovery-oriented audits,
+and LLM-as-judge methodology jointly support: benchmark coverage and ground-truth labels are
+unavailable, discovery findings cannot be operationalized into a procurement-comparable score by
+a small team, and regulated targets often cannot route data through commercial APIs [Anthropic
+Alignment Science Team, 2025]. Benchmarkless comparative scoring occupies this gap: it fixes an
+instrument, reruns it across candidate targets, and reports scores, deltas, critical rates, and uncertainty
+under an explicit claim contract. Tooling for this category must therefore be cell-portable and locally
+operable by construction.
+We define three independent roles: target model T, auditor/prober A, and judge/grader J. Indepen-
+dence matters because it lets us vary target, auditor, and judge as experimental factors and quantify
+whether scores reflect target behavior or apparatus artifacts.
+A scenario pack {xi}N
+i=1 is a versioned population of N deployment concerns, and a rubric R maps
+transcripts to severity labels. Together with the auditor instruction, judge instruction, turn budget,
+sampling parameters, and rerun count n, the pack and rubric define the measurement instrument.
+Scores from different instruments are not directly comparable. For each scenario, the judge returns an
+ordinal severity si ∈{0, 1, 2, 3, 4}, where 0 is the most severe failure. We linearly remap each si to a
+[0, 100] scale and take the mean across the pack: Score = 100
+4N
+PN
+i=1 si ∈[0, 100], with larger values
+indicating safer outcomes under the configured rubric. The critical rate CR = |{i : si = 0}|/N
+is reported separately because severe failures can be hidden by a high mean. Across n reruns, we
+report confidence intervals. Target-to-target claims use absolute deltas under a fixed instrument,
+∆1,2 = Score(T1) −Score(T2), and analogous critical-rate deltas1.
+The validation problem.
+Any tool in this category produces scores, but agreement with ground-
+truth labels is exactly what the category lacks by construction. Without a substitute validation chain,
+such a tool cannot be defended, and the niche has therefore remained occupied by ad hoc scripts that
+fail governance requirements rather than by principled artifacts. We require instrumental validity:
+evidence that the apparatus responds to safety-relevant differences, reflects target properties rather
+than auditor or judge artifacts, and produces stable scores across reruns. This is not construct validity
+for a deployment domain; domain experts still supply that.
+The chain has three requirements. Responsiveness: a scoring tool can fail by measuring nothing
+safety-relevant, so we require a controlled contrast between targets matched on capability but
+separated on safety. Target sensitivity: a tool can separate the contrast for the wrong reason, since
+1Absolute
+deltas
+weight
+a
+fixed
+point
+gap
+equally
+at
+any
+score
+level.
+Relative
+deltas
+(e.g.,
+∆1,2/ max(Score(T1), Score(T2))) or log-transformed scores would weight differences differently and may suit
+deployments where high-score regions matter more than low-score ones; we leave that to future work.
+in an LLM-on-LLM stack scores may be driven by judge quirks or auditor probing patterns, so we
+decompose score variance across target, auditor, and judge and require the target to be the dominant
+factor. Reproducibility: a target-driven signal must also be stable enough for rerun baselines and
+deltas, so we quantify score stability as the number of independent reruns increases.
+Any tool in the category can be assessed against these requirements. We instantiate them on
+SimpleAudit in §5 and apply the same chain to Petri in §6 as a generalization check.
+SimpleAudit: A Reference Implementation
+SimpleAudit implements the measurement problem in §3. It is not a general auditing platform: it
+packages a fixed scenario pack, rubric, auditor, judge, target model, and sampling configuration into
+a repeatable instrument whose outputs can be inspected, repeat, and statistically characterized. The
+design commitments are local execution, role modularity, explicit configuration, portable artifacts,
+and uncertainty reporting. Each evaluation is a bounded multi-turn interaction. A scenario initializes
+the conversation; the auditor generates probes; the target responds; and the judge grades the transcript
+with a structured verdict (Figure 1). The headline score uses only the severity label; summaries,
+positive behaviors, issues, recommendations, and transcripts remain available for qualitative review.
+Scenario packs are JSONL files with stable names, descriptions, optional expected behaviors, and
+category metadata; run outputs record transcripts, verdicts, scores, model identifiers, and configuration
+metadata. The scenario pack defines the deployment population over which claims are made, so
+replacing it creates a new instrument.
+Scenario Driver
+(configurable)
+Provider Interface
+for A, J and T
+Target System (T)
+probe 
+More Turns 
+(t < H) ?
+yes, repeat loop
+no, max turns reached
+Auditor (A)
+●Generate Probe
+●Cross-question
+●Assess full transcript
+●Produce verdict 
+Judge (J)
+response 
+●Process Probe
+●Generate Response
+Verdict Parser
+STRUCTURED 
+SCENARIO VERDICT
+●Severity Score 
+●Issues Found 
+●Positive Behaviors 
+●Summary & 
+Recommendations
+JSON 
+verdict
+●Load Scenario
+●Initialize Conversation
+●Check Turn Limit (H)
+full transcript
+⚙
+Conversation 
+State (Transcript)
+🧾
+Figure 1: SimpleAudit workflow for one scenario. The auditor A generates user probes, the target
+system T responds in a bounded multi-turn loop, and the judge J produces a structured verdict.
+SimpleAudit uses a common provider interface over local and API-hosted models, so target, auditor,
+and judge can be replaced independently while the instrument is otherwise pinned. It reports
+the quantities in §3: aggregate score, severity distribution, critical rate, target deltas, bootstrap
+intervals, transcripts, and token usage. The released package includes the code, pinned configs,
+scenario packs, raw JSON outputs, and analysis scripts needed to regenerate the paper’s results
+[SimpleAudit Contributors, 2025]. Implementation and provider details, and default rubric templates
+are in Appendix A.
+Claim contract.
+The instrument licenses comparative claims under a fixed configuration: target
+ordering, category-level concentration of differences, critical-rate threshold differences, and judge-
+configuration disclosure. It does not license universal-safety claims, complete hazard coverage,
+or deployment certification. Changing any component yields a new instrument with a new claim
+population. Appendix L enumerates supported claims, required assumptions, and exclusions in full.
+5
+Results: Validating and Configuring the Scoring Instrument
+Setup.
+We arrange models on a five-tier capability ladder: XS (4B), S (9B), M (35B), L (122B),
+and XL (GPT-5 frontier reference). Local tiers are quantized Qwen3.5 variants. Targets span XS-M
+in safety-aligned and size-matched abliterated conditions. We sweep every target-auditor-judge
+combination on the local ladder, requiring the auditor and judge to be at least as capable as the target
+(A, J ≥T), since a weaker apparatus cannot reliably probe or grade a stronger model. Each cell
+uses n=10 reruns, with auditor transcripts re-judged across judge sizes. Validation uses a single
+eight-scenario Norwegian safety/legal pack: cleanly identifying a separate scenario-pack variance
+component would require many more packs and far more runs than our compute budget allowed, so
+we hold the pack fixed and decompose only over (target, auditor, judge). Model versions, decoding
+parameters, abliterated variants, and seeds are in Appendix P.
+The validation chain (§3) asks three questions of the instrument in sequence: does it respond to a
+known safety contrast, is the response driven by the target rather than the apparatus, and is it stable
+across reruns? We answer each in turn (§5.1-§5.4) using only local models; admitting a frontier
+judge or auditor would defeat the local-first design. Configuration (§5.5-§5.7) then admits XL as a
+reference standard to characterize the local stack.
+5.1
+Responsiveness: safe and unsafe targets are separated
+We measure separation between safe and abliterated target distributions by AUROC, computed per
+target size to avoid conflating capability with safety status. Confidence intervals (CI) come from
+a 1,000-resample percentile bootstrap. At J=A=L, separation is near-perfect at every target size:
+AUROC = 1.00 (XS), 0.98 (S), 1.00 (M), with 10 safe and 10 abliterated runs each. The single
+overlap is one low-scoring safe run on T=S. Across the reliable judge-auditor combinations on
+the local ladder (J, A ∈{M, L}), AUROC remains ≥0.89 at every target size; the responsiveness
+criterion holds for every local target configuration we tested. Per-cell AUROC values and the
+safe-vs-abliterated score distributions are in Appendix B.
+5.2
+Target sensitivity: score variance is target-dominated
+We fit score ∼target + auditor + judge with Type II sums of squares on the local-only design
+(J, A ∈{XS, S, M, L}, T ∈{XS, S, M}, safe and abliterated targets pooled), reporting partial η2
+with 1,000-resample percentile bootstrap CIs. We focus on the pooled decomposition in the main
+text; safe-only and abliterated-only breakdowns (which produce similar results) are in Appendix C.
+Target dominates (η2 = 0.52, [0.41, 0.62]). Auditor (0.28, [0.21, 0.39]) and judge (0.25, [0.18, 0.34])
+contribute substantially with overlapping CIs; this analysis cannot order them, so the target-sensitivity
+criterion holds for the dominant claim. §5.6 revisits these contributions once XL is admitted and
+shows that most of the judge variance is disagreement about absolute score levels and therefore
+cancels when results are reported as target-to-target deltas, while the auditor variance does not cancel:
+different auditors genuinely change the comparative signal.
+5.3
+Reproducibility: scores stabilize across reruns
+We bootstrap k-run subsets (k = 1, . . . , 9, 1,000 subsets per k) and measure how far the score from k
+runs typically sits from the 10-run reference, in points on the 0-100 scale (mean absolute deviation,
+MAD). For safe targets, that gap shrinks from 8.3 points at a single run to 0.9 points at nine runs;
+abliterated targets settle faster, dropping below 2 points from k=3. By n=10, scores stabilize within
+roughly one point on the 0-100 scale, well below the 5-20 pp deltas that drive the procurement claims
+in §7, so the reproducibility criterion holds at the default rerun count: ten runs are enough for the
+comparisons the instrument is built to make. Full stability curves are in Appendix E.
+5.4
+The validation chain holds
+The chain holds: SimpleAudit responds to a known safety contrast, target dominates score variance,
+and scores stabilize. Construct validity for a specific deployment domain remains the deploying
+team’s contribution (§9). The remaining subsections turn to configuration. We admit XL as a
+reference standard, as calibrating the local stack requires a stronger reference point than any local
+candidate.
+5.5
+Judge selection: critical-miss agreement is the operational metric
+A judge can preserve target ordering while systematically demoting critical cases to "low" or "pass",
+so rank correlation against XL is the wrong metric for governance. We measure agreement by
+exact-match, off-by-one, non-critical disagreement, and critical-miss rate: the fraction of XL-rated
+critical or high cases the local judge labels low or pass.
+Figure 2: Judge agreement against XL on the four agreement categories. Lean view showing XS, M,
+L, and XL self-agreement; full five-judge analysis in Appendix D.
+XS and S are unsuitable as deployment judges: at a 44% critical-miss rate XS downgrades nearly
+half of severe failures, and S fails at rates incompatible with governance use. M and L tell a different
+story. Both achieve a critical-miss rate near 10% against XL, against a 4% XL self-agreement floor;
+this residual plausibly reflects rerun stochasticity in the underlying audits rather than judge instability
+per se (Figure 2). Local judges close most of the residual gap to that floor; the remaining 6 pp is small
+relative to the comparative deltas the instrument is built to report. M and L are viable as local judges
+for governance use.
+5.6
+Auditor selection: the important design point
+The agreement profile of §5.5 substantiates the claim contract of §3: across reliable judges, exact-
+match on absolute level is modest, but disagreements concentrate within ±1 severity step and rarely
+cross the critical/non-critical boundary. Reliable judges thus agree on what SimpleAudit claims
+(target ordering and critical-vs-non-critical status) while disagreeing on what it does not claim, the
+absolute level of a single run.
+Admitting XL as both auditor and judge shifts partial η2 to target ≈0.46, auditor ≈0.39, judge
+≈0.18. η2 operates on absolute scores. Stronger auditors lower safe- and unsafe-target scores
+(Appendix F), so auditor η2 rises (0.28 to 0.39) because XL drives further score compression, the
+same mechanism that moves comparative deltas. Judge η2 falls (0.25 to 0.18) because XL anchors
+the absolute-level calibration that local judges disagreed on. Under the delta contract, calibration
+offsets shared across compared targets attenuate, and the agreement profile above shows the surviving
+judge disagreement is concentrated where deltas are insensitive to it: ordering and critical-status
+are preserved even when absolute levels are not. We do not separately quantify how much of the
+local-only judge η2 is calibration versus rank disagreement, and we do not claim the judge component
+vanishes; swapping the judge still constitutes a new instrument under the §3 contract. We claim only
+that under deltas, judge is the least consequential of the three factors, while auditor variance does not
+attenuate in the same way.
+Two consequences follow. The auditor is the crucial design point of a benchmarkless comparative-
+scoring stack: it dominates the non-cancelled component of non-target variance. Auditor capability
+does not monotonically improve the instrument. An auditor that is too weak fails to apply probing
+pressure. An auditor that is too strong floors safe-target scores and erases the deltas the instrument
+exists to report; with A=XL, inter-target deltas among safe models collapse (Appendix F). The
+property that makes a strong auditor desirable for red-teaming, driving every target toward failure,
+destroys it for comparative scoring. The auditor must match the deployment-target capability range.
+5.7
+Default configuration: J = A
+Three findings fix the relationship between J and A. The auditor is the dominant non-cancelled
+driver of comparative score variance (§5.6); judge variance largely cancels under deltas (§5.5); the
+auditor is also the dominant cost driver, with the token budget at J=A=L splitting roughly 48%
+target, 34% auditor, 18% judge (Appendix H). We recommend J = A as the default: it saves tokens
+relative to J > A, where added judge capability is mostly absorbed by deltas (§5.5), without giving
+up the comparative signal. J < A with J ≥M is also a valid cost-saving configuration: M and L
+are both viable governance judges, so a smaller judge trims further tokens while staying above the
+critical-miss threshold. J = A is the simpler single-knob default.
+Discovery Outputs as Comparative Scores
+The validation chain in §3 is intended to be tool-agnostic. We test that claim against Petri [Anthropic
+Alignment Science Team, 2025, 2026], the most directly comparable artifact in the discovery-oriented
+auditing literature. The chain admits Petri; the substantive differentiation between the two tools lives
+upstream of the chain, in what each tool enforces by construction.
+6.1
+The chain admits Petri
+Petri is a discovery-oriented auditing tool built on UK AISI’s Inspect framework, with a multi-turn
+auditor and 38 default scoring dimensions, framed by its authors as valuing speed and breadth in
+surfacing behaviors for human review [Anthropic Alignment Science Team, 2025]. Two findings
+the Petri authors report cross-validate SimpleAudit’s design from the frontier end of the same
+instrument family: absolute scores are unstable across the default seed mix while relative scores
+remain informative (matching SimpleAudit’s commitment to deltas, §5.5), and auditor effectiveness
+is bounded by auditor capability (matching the auditor’s role as the dominant non-cancelled variance
+driver, §5.6). We run Petri 2.0 under the protocol of §5: identical scenario population, local models,
+A=J, n=10 reruns per cell, and the same safe-vs-abliterated and size contrasts, with eval-awareness
+mitigations disabled as out-of-scope at our scales (§9). The chain asks whether at least one of
+Petri’s 38 default dimensions yields a chain-passing scoring instrument: an existence claim, not a
+selection task. We work through ‘concerning‘ as the lead example, where all three chain requirements
+hold: AUROC ≥0.99 across reliable judge-auditor cells, target dominates variance with small
+auditor and judge components, and bootstrap rerun stability converges by n=10 below the contrast
+effect (Appendix J). Other dimensions also pass; some fail at different chain steps because they
+measure target properties unrelated to safety or do not fire at all. This structure is consistent with a
+discovery-oriented rubric covering multiple constructs, and shows that the chain’s requirements are
+non-vacuous.
+6.2
+What SimpleAudit enforces upstream
+Both tools pass the chain, so the choice between them turns on what each enforces upstream of it.
+SimpleAudit’s first commitment is the claim contract presented in Appendix L: a single committed sce-
+nario pack, rubric, aggregation rule, turn budget, sampling configuration, and rerun count, all recorded
+with the run. Petri ships its 38 dimensions as starting points and invites users to add, substitute, and
+choose their own aggregation, because behavioral discovery benefits from that flexibility; for the scor-
+ing use case, the same flexibility moves work to the user. Under our matched protocol, comparative
+signal concentrates in roughly a third of the default rubric, splits across distinct constructs-safety,
+capability, activity-and clusters into a few effective components (Appendix K), so it is necessary to
+commit to a construct, a dimension set and an aggregation rule before any release-over-release rerun
+is meaningful; SimpleAudit forecloses that choice by construction. SimpleAudit’s second commit-
+ment addresses the deployment scenario in §1 directly. The judge-target-auditor stack runs locally,
+so prompts, transcripts, and policies need not leave the deployment environment; scenario packs
+are released as a versioned Hugging Face dataset (SimulaMet/simpleaudit-scenario-packs),
+anchoring reruns to a stable population; and SimpleAudit is registered as a verified Digital Public
+Good [Digital Public Goods Alliance, 2026], providing the open-source provenance that regulated
+public-sector procurement typically requires. Per-run token cost is the most concrete instance: Petri
+uses roughly 1.7× more tokens overall, dominated by its tool-using auditor (Figure 11, Appendix H),
+and the gap compounds across reruns.
+Discovery and scoring are complementary contracts. Petri’s tool-using auditor and richer behavioral
+surface support discovery in ways SimpleAudit’s user-message probing does not, and Petri 2.0’s
+eval-awareness mitigations [Souly et al., 2026, Needham et al., 2025, Nguyen et al., 2025] address
+a frontier-scale concern SimpleAudit does not currently match (§9). For the deployment niche of
+§3, SimpleAudit’s enforced contracts make it the operational fit; Petri remains the better tool for the
+discovery use case it was designed for.
+Norwegian Procurement Case Study
+With the instrumental-validity chain established (§5), we analyze the Norwegian pack as a fixed
+scenario distribution. This is a benchmarkless sensitivity analysis (§3), not a procurement recommen-
+dation: the claim holds only for the fixed pack, rubric, auditor, judge, sampling configuration, and
+rerun budget. We evaluate Borealis Instruct and Gemma 3 IT at 1B, 4B, 12B, and 27B on the full
+36-scenario Norwegian pack, using five turns and n=10 reruns per cell. The judge and auditor are
+Qwen3.5-122B-A10B-Q4 K S. The run compares local candidates rather than estimating a frontier
+reference. We keep the structured-rubric, non-thinking scoring interface used in the main analysis:
+reasoning traces increase per-run cost without a demonstrated reliability gain [Zheng et al., 2023],
+and structured output keeps the score tied to the rubric rather than the target text.
+Borealis scores increase from 4.6% at 1B to 27.9% at 4B, 42.3% at 12B, and 43.7% at 27B. Most of
+the movement is below 12B: 1B→4B is +23.3 pp and 4B→12B is +14.4 pp, while 12B→27B is only
++1.4 pp, smaller than the rerun standard deviation of either cell (4.4 and 5.0 pp). Healthcare and Safety
+flatten at 27B (49.5%→48.2% and 35.9%→35.6%), while Language and Public Sector continue
+upward (48.8%→51.9% and 35.0%→39.0%). The size-scaling claim is therefore a plateauing,
+category-dependent one, not a clean larger-is-safer rule.
+Borealis-Gemma full-pack score deltas are positive at every matched size (+0.8, +14.2, +7.0, and
++6.0 pp from 1B to 27B), with the 4B-27B gaps clearly exceeding the per-cell rerun envelope and
+the 1B gap within rerun uncertainty. Critical-rate deltas also favor Borealis (−2.5, −23.9, −4.7,
+and −7.5 pp). The matched-size comparison is the procurement-relevant claim; absolute scores are
+conditional on the named instrument and should not be read as a deployment ranking.
+The aggregate hides category structure. The 4B Borealis advantage is broad (Healthcare +24.0 pp,
+Public Sector +15.2 pp, Safety +10.6 pp), while Language is the weakest category for Borealis:
+Language scores cluster near parity across sizes, and Borealis carries higher Language critical rates
+than Gemma at 1B, 12B, and 27B (+3.8, +2.5, and +3.8 pp).
+Critical-rate reporting matters for the same reason: Borealis-27B has a lower full-pack critical rate
+than Gemma-27B (15.3% versus 22.8%), but the best local candidate still has only a 43.7% mean
+score and 21.7% pass rate. The procurement artifact is therefore the bundle of score, uncertainty,
+matched and category deltas, critical rates, and rerun-uncertainty caveats, not a single leaderboard.
+Appendix N, Table 10 gives the full deltas. These are measurement outputs for expert review, not
+deployment clearance; a procurement decision still requires local construct review, policy thresholds,
+and operational context.
+Discussion
+When no ground-truth safety benchmark exists, a fixed instrument can provide comparative evidence if
+it is repeatable, stress-tested, and reported with uncertainty. Evaluation artifacts in this category should
+therefore be assessed by the rankings they produce, the claims they license, and the assumptions
+under which those claims remain valid. The minimum disclosure set follows directly from the
+claim contract: the instrument (scenario pack, rubric, turn budget, sampling, rerun count), the role
+assignment (target, auditor, judge, versions, capability constraints), the stability evidence (confidence
+intervals, rerun behavior, judge-sensitivity), the risk measure (mean score, matched deltas, category
+deltas, critical-rate differences), and the non-claims (universal safety, legal compliance, complete
+hazard coverage, deployment certification).
+This reporting structure makes the evaluation artifact falsifiable in the sense needed for scientific use:
+another group can rerun the same instrument, substitute one component at a time, or challenge the
+scenario population without treating the reported score as an absolute property of the target model.
+The resulting numbers are structured comparative evidence; they do not certify safety. Raw scores
+anchor a named scenario pack and configuration; deployment claims should rest on matched deltas,
+critical-rate differences, and judge-sensitivity analyses interpreted against local priorities. This also
+explains the local-first design: in regulated settings, running the target-auditor-judge stack inside the
+deployment environment enables repeated governance evidence without sending prompts, transcripts,
+or policies to an external API. The same logic applies to maintainership: a comparative scoring
+instrument used in procurement is more credible when its provenance is independent of any candidate
+model’s vendor, since adversarial rerun under a stronger auditor is a real check only when the tool
+itself is not under vendor control. SimpleAudit’s open-source release and verified Digital Public
+Good status are governance properties of the instrument, not only of its deployment. The same lens
+clarifies where the Petri result fits. The validation chain holds for Petri as well as for SimpleAudit
+(§6), so both tools can fill the category. The differences that matter at deployment time live upstream
+of the chain: SimpleAudit enforces a single committed claim contract by construction, while Petri’s
+discovery-oriented design leaves aggregation and configuration to the user. The disclosure set above
+is what either tool’s user has to commit to before scores are interpretable as comparative evidence.
+Limitations
+Passing the instrumental-validity chain is necessary but not sufficient for deployment claims: it shows
+the instrument responds to a controlled contrast, is target-driven, and stabilizes across reruns, but
+local policy expertise must still judge whether a scenario pack captures the deployment construct. The
+same construct-validity burden applies to any future tool that adopts the chain (§6). The abliterated
+contrast tests refusal-trained safety differences, not all unsafe behavior. SimpleAudit also does not
+currently implement explicit eval-awareness mitigations [Needham et al., 2025, Nguyen et al., 2025,
+Souly et al., 2026]; whether this matters at our deployment scales is an open empirical question
+we do not address here. Empirical breadth is bounded to the studied languages, packs, judges, and
+model families. Auditor selection is the most consequential configuration choice. An auditor that
+is too weak under-probes, while an auditor that is too strong compresses safe-target scores and
+erases the comparative deltas the instrument is built to report (§5). The property that makes a strong
+auditor desirable for red-teaming destroys it for comparative scoring, so users must match auditor
+capability to the deployment-target range and report the auditor used alongside any score. Because
+the auditor is the dominant non-cancelled variance driver, this disclosure requirement is also what
+makes adversarially weak auditor choices contestable: the local-first release (Appendix P) lets an
+independent reviewer rerun the same pack under a stronger auditor and publish a counter-result.
+The method assumes that scenario authors specify deployment concerns at the right level of abstraction.
+If a pack is too narrow, SimpleAudit will produce precise evidence about an incomplete construct; if
+it is too broad, category deltas may be hard to interpret. The correct use is therefore iterative.
+Conclusion
+For low-resource, regulated, or jurisdiction-specific deployments, safety evaluation needs comparative
+evidence before ground-truth benchmarks exist. Benchmarkless comparative safety scoring is a
+distinct evaluation category, not a degraded form of benchmarking. It has its own claim contract,
+its own validation requirements, and its own deployment shape. We define that setting, give it a
+no-label validation chain, instantiate it in SimpleAudit, and report the resulting evidence as scores,
+deltas, critical rates, uncertainty intervals, and sensitivity checks rather than as an unconditional
+model ranking. The methodological claim is that benchmarkless evaluation should be treated as a
+claim-making problem. Its validity depends on an explicit instrument, a stated claim contract, and
+evidence that the instrument responds to target behavior rather than auditor or judge artifacts. The
+chain is the artifact most likely to outlive any specific tool: applying it to Petri in §6 shows the
+category extends beyond SimpleAudit, and any successor instrument inherits the same validation
+requirements. SimpleAudit provides one implementation for the procurement-shaped niche of §3; it
+does not replace domain expertise, scenario authoring, or labeled benchmarks where those become
+feasible. The contribution is the category and the chain. The tool is a stopgap that makes repeatable
+comparison possible in the cells that benchmarks have not yet reached.
+A natural next step is to stress-test the chain itself (by instantiating it with deliberately degenerate
+scoring instruments, and by calibrating against human judgment) since the chain’s value depends on
+its ability to reject as well as admit.
+Acknowledgements
+This work has benefited from the Experimental Infrastructure for Exploration of Exascale Computing
+(eX3), financially supported by the Research Council of Norway under contract 270053. Some
+computations were also performed on resources provided by Sigma2, the National Infrastructure for
+High-Performance Computing and Data Storage in Norway.
+References
+Anthropic Alignment Science Team.
+Petri: An Open-source Auditing Tool to Accelerate AI
+Safety Research. Anthropic Alignment Science Blog; open-source release at 
+com/safety-research/petri, October 2025. 
+petri/. Accessed 2026-04-23.
+Anthropic Alignment Science Team.
+Petri 2.0: New Scenarios, New Model Comparisons,
+and Improved Eval-Awareness Mitigations. Anthropic Alignment Science Blog; open-source
+release at  January 2026. https:
+//alignment.anthropic.com/2026/petri-v2/. Accessed 2026-04-23.
+Andy Arditi, Oscar Obeso, Aaquib Syed, Daniel Paleka, Nina Panickssery, Wes Gurnee, and Neel
+Nanda. Refusal in Language Models Is Mediated by a Single Direction. In Advances in Neural
+Information Processing Systems 37 (NeurIPS 2024), 2024. doi: 10.48550/arXiv.2406.11717. URL
+
+Yuntao Bai, Saurav Kadavath, Sandipan Kundu, Amanda Askell, Jackson Kernion, et al. Con-
+stitutional AI: Harmlessness from AI Feedback.
+ArXiv e-prints, December 2022.
+doi:
+10.48550/arXiv.2212.08073. URL 
+Andrew M. Bean, Ryan Othniel Kearns, Angelika Romanou, Franziska Sofia Hafner, Harry Mayne,
+Jan Batzner, Negar Foroutan, Chris Schmitz, et al. Measuring What Matters: Construct Validity in
+Large Language Model Benchmarks. In Advances in Neural Information Processing Systems 38
+(NeurIPS 2025) Datasets and Benchmarks Track, 2025. doi: 10.48550/arXiv.2511.04703. URL
+
+Alexandra Chouldechova, A. Feder Cooper, Solon Barocas, Abhinav Palia, Dan Vann, and Hanna
+Wallach. Comparison Requires Valid Measurement: Rethinking Attack Success Rate Comparisons
+in AI Red Teaming. In Advances in Neural Information Processing Systems 38 (NeurIPS 2025)
+Position Papers Track, 2025. URL 
+Digital Public Goods Alliance. Simpleaudit: Verified digital public good (registry entry). https:
+//new.digitalpublicgoods.net/r/simpleaudit, 2026. Verified DPG, reviewed 2026-02-
+10. Steward: Simula Research Laboratory.
+Deep Ganguli, Liane Lovitt, Jackson Kernion, Amanda Askell, Yuntao Bai, et al. Red Teaming
+Language Models to Reduce Harms: Methods, Scaling Behaviors, and Lessons Learned. ArXiv
+e-prints, August 2022. doi: 10.48550/arXiv.2209.07858. URL 
+07858.
+Samuel Gehman, Suchin Gururangan, Maarten Sap, Yejin Choi, and Noah A. Smith.
+Real-
+ToxicityPrompts: Evaluating neural toxic degeneration in language models. In Trevor Cohn,
+Yulan He, and Yang Liu, editors, Findings of the Association for Computational Linguistics:
+EMNLP 2020, pages 3356-3369, Online, November 2020. Association for Computational Lin-
+guistics. doi: 10.18653/v1/2020.findings-emnlp.301. URL 
+findings-emnlp.301.
+Shaona Ghosh, Heather Frase, Adina Williams, Sarah Luger, Paul R¨ottger, Fazl Barez, Sean
+McGregor, Kenneth Fricklas, Mala Kumar, Quentin Feuillade-Montixi, Kurt Bollacker, Felix
+Friedrich, et al.
+AILuminate: Introducing v1.0 of the AI Risk and Reliability Benchmark
+from MLCommons.
+ArXiv e-prints, March 2025.
+doi: 10.48550/arXiv.2503.05731.
+URL
+
+Jiawei Gu, Xuhui Jiang, Zhichao Shi, Hexiang Tan, Xuehao Zhai, Chengjin Xu, Wei Li, Yinghan
+Shen, Shengjie Ma, Honghao Liu, et al. A Survey on LLM-as-a-Judge. ArXiv e-prints, 2024. doi:
+10.48550/arXiv.2411.15594. URL 
+Polina Kirichenko, Mark Ibrahim, Kamalika Chaudhuri, and Samuel J. Bell. AbstentionBench:
+Reasoning LLMs Fail on Unanswerable Questions. In Advances in Neural Information Processing
+Systems 38 (NeurIPS 2025) Datasets and Benchmarks Track, 2025. doi: 10.48550/arXiv.2506.
+09038. URL  arXiv preprint arXiv:2506.09038 (June
+2025).
+Percy Liang, Rishi Bommasani, Tony Lee, Dimitris Tsipras, Dilara Soylu, Michihiro Yasunaga,
+Yian Zhang, Deepak Narayanan, Yuhuai Wu, Ananya Kumar, Benjamin Newman, Binhang
+Yuan, Bobby Yan, Ce Zhang, Christian Cosgrove, Christopher D. Manning, Christopher R´e,
+Diana Acosta-Navas, Drew A. Hudson, Eric Zelikman, et al. Holistic Evaluation of Language
+Models. Transactions on Machine Learning Research, 2023. doi: 10.48550/arXiv.2211.09110.
+URL  arXiv preprint arXiv:2211.09110
+(November 2022).
+Peng Liu, Lemei Zhang, Terje Nissen Farup, Even W. Lauvrak, Jon Espen Ingvaldsen, Simen Eide,
+Jon Atle Gulla, and Zhirong Yang. NLEBench+NorGLM: A Comprehensive Empirical Analysis
+and Benchmark Dataset for Generative Language Models in Norwegian. In Findings of the
+Association for Computational Linguistics: EMNLP 2024, 2024. URL 
+abs/2312.01314.
+Yang Liu, Dan Iter, Yichong Xu, Shuohang Wang, Ruochen Xu, and Chenguang Zhu. G-Eval: NLG
+Evaluation using GPT-4 with Better Human Alignment. In Proceedings of the 2023 Conference
+on Empirical Methods in Natural Language Processing (EMNLP), pages 2511-2522, Singapore,
+December 2023. Association for Computational Linguistics. doi: 10.18653/v1/2023.emnlp-main.
+153. URL 
+Mantas Mazeika, Long Phan, Xuwang Yin, Andy Zou, Zifan Wang, Norman Mu, Elham Sakhaee,
+Nathaniel Li, Steven Basart, Bo Li, David Forsyth, and Dan Hendrycks. HarmBench: A Standard-
+ized Evaluation Framework for Automated Red Teaming and Robust Refusal. In Proceedings of
+the 41st International Conference on Machine Learning (ICML), ICML’24. JMLR.org, 2024. doi:
+10.5555/3692070.3693501. URL 
+Vladislav Mikhailov, Tita Enstad, David Samuel, Hans Christian Farseth˚as, Andrey Kutuzov, Erik
+Velldal, and Lilja Øvrelid. NorEval: A Norwegian Language Understanding and Generation
+Evaluation Benchmark. In Findings of the Association for Computational Linguistics: ACL 2025,
+2025. URL 
+Mozilla AI. any-llm: Communicate with any llm provider using a single, unified interface. https:
+//github.com/mozilla-ai/any-llm, 2025. Accessed 2026-02-23.
+Joe Needham, Giles Edkins, Govind Pimpale, Henning Bartsch, and Marius Hobbhahn. Large
+Language Models Often Know When They Are Being Evaluated. ArXiv e-prints, May 2025. doi:
+10.48550/arXiv.2505.23836. URL 
+Jord Nguyen, Khiem Hoang, Carlo Leonardo Attubato, and Felix Hofst¨atter. Probing and Steering
+Evaluation Awareness of Language Models. ArXiv e-prints, July 2025. doi: 10.48550/arXiv.2507.
+01786. URL 
+Zhiyuan Ning, Tianle Gu, Jiaxin Song, Shixin Hong, Lingyu Li, Huacan Liu, et al. LinguaSafe:
+A Comprehensive Multilingual Safety Benchmark for Large Language Models. ArXiv e-prints,
+August 2025. doi: 10.48550/arXiv.2508.12733. URL 
+Ethan Perez, Sam Ringer, Kamil˙e Lukoˇsi¯ut˙e, Karina Nguyen, Edwin Chen, et al. Discovering
+language model behaviors with model-written evaluations. In Anna Rogers, Jordan Boyd-Graber,
+and Naoaki Okazaki, editors, Findings of the Association for Computational Linguistics: ACL 2023,
+pages 13387-13434, Toronto, Canada, July 2023. Association for Computational Linguistics. doi:
+10.18653/v1/2023.findings-acl.847. URL 
+847.
+Olawale Salaudeen, Anka Reuel, Ahmed Ahmed, Suhana Bedi, Zachary Robertson, Sudharsan
+Sundar, Benjamin Domingue, Angelina Wang, and Sanmi Koyejo. Measurement to Meaning: A
+Validity-Centered Framework for AI Evaluation. ArXiv e-prints, May 2025. doi: 10.48550/arXiv.
+2505.10573. URL 
+David Samuel, Andrey Kutuzov, Samia Touileb, Erik Velldal, Lilja Øvrelid, Egil Rønningstad, Elina
+Sigdel, and Anna Palatkina. NorBench - A Benchmark for Norwegian Language Models. In
+Proceedings of the 24th Nordic Conference on Computational Linguistics (NoDaLiDa), 2023. URL
+
+Lin Shi, Chiyu Ma, Wenhua Liang, Xingjian Diao, Weicheng Ma, and Soroush Vosoughi. Judging the
+Judges: A Systematic Study of Position Bias in LLM-as-a-Judge. In Proceedings of IJCNLP-AACL
+2025, 2025. doi: 10.48550/arXiv.2406.07791. URL 
+SimpleAudit Contributors. Simpleaudit: Lightweight ai safety auditing framework. https://
+github.com/kelkalot/simpleaudit, 2025. PyPI package: 
+simpleaudit/. Accessed 2026-02-23.
+Alexandra Souly, Robert Kirk, Jacob Merizian, Abby D’Cruz, and Xander Davies. UK AISI
+Alignment Evaluation Case-Study. ArXiv e-prints, April 2026. URL 
+2604.00788.
+Zhexin Zhang, Leqi Lei, Lindong Wu, Rui Sun, Yongkang Huang, Chong Long, Xiao Liu, Xuanyu
+Lei, Jie Tang, and Minlie Huang. SafetyBench: Evaluating the Safety of Large Language Models.
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics
+(ACL), 2024. doi: 10.48550/arXiv.2309.07045. URL 
+Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang,
+Zi Lin, Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica.
+Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena. In Advances in Neural Information
+Processing Systems 36 (NeurIPS 2023) Datasets and Benchmarks Track, 2023. doi: 10.48550/
+arXiv.2306.05685. URL 
+Ziyi Zhu, Olivier Tieleman, Alexey Bukhtiyarov, and Jinghong Chen. CyclicJudge: Mitigating Judge
+Bias Efficiently in LLM-based Evaluation. ArXiv e-prints, March 2026. doi: 10.48550/arXiv.2603.
+01865. URL 
+Supplementary Materials
+A
+Implementation
+Implementation details.
+SimpleAudit treats cloud-hosted models as optional providers rather
+than infrastructure requirements. The target, auditor, and judge roles connect through the any-llm
+provider layer [Mozilla AI, 2025], while the scenario pack, rubric, turn budget, sampling settings, and
+model identifiers are recorded with each run. The standard distribution includes default configurations
+for safety, abstention, helpfulness, factuality, and harm rubrics, drawing on Constitutional AI,
+AbstentionBench, MT-Bench, G-Eval, and HELM-style taxonomies [Bai et al., 2022, Kirichenko
+et al., 2025, Zheng et al., 2023, Liu et al., 2023, Liang et al., 2023].
+B
+AUROC Across Judge-Auditor Configurations
+Referenced from §5.1 and §5.7. AUROC quantifies the separation between safe and abliterated
+target distributions: AUROC = P(scoresafe > scoreunsafe), with 0.5 at chance and 1.0 at perfect
+separation. We compute it via the Mann-Whitney U statistic divided by the product of group sizes.
+Mann-Whitney is non-parametric and assumes no normality, a property we need because per-scenario
+scores are bounded sums of ordinal severity labels and not Gaussian. The metric is rank-based and
+invariant under monotonic rescaling: judge re-calibration shifts absolute score levels (§5.5) without
+moving AUROC, so safe-vs-abliterated separation stays comparable across judge choices.
+Per-target-size computation follows from the ground-truth problem. Within a size, abliteration
+produces a controlled safety contrast: a safe model and its abliterated counterpart are matched on
+capability and differ only in refusal behavior, so the safe-vs-abliterated label is the only systematic
+difference between groups. Pooling across sizes breaks this control because some safety-relevant
+properties correlate with model capability, so a pooled AUROC would partly reflect capability
+differences rather than the clean safety contrast.
+What near-ceiling separation looks like: J = A = L.
+Before turning to the full configuration
+grid, it is worth grounding what AUROC values near 1.0 actually mean for this contrast. Figure 3
+shows the safe and abliterated score distributions at the headline J = A = L configuration across
+all three target sizes. At T = XS and T = M the two populations are fully disjoint, giving AUROC
+= 1.00. At T = S a single low-scoring safe run drifts into the abliterated range, and that lone overlap
+is the entire reason AUROC drops to 0.98 in this row of Table 1.
+Figure 3: Safe (blue) and abliterated (red) score distributions at J = A = L, n=10 per cell, for the
+three target sizes used in validation. Distributions are disjoint at T = XS and T = M; a single safe
+run on T = S overlaps the abliterated range and accounts for the 0.98 entry in Table 1.
+Table 1 reports AUROC and 95% percentile-bootstrap confidence intervals (1,000 resamples) at each
+target size across the four reliable judge-auditor combinations J, A ∈{M, L}. Each cell uses 10
+safe and 10 abliterated runs. The grid does not extend to J = XS or J = S because these judges fail
+the critical-miss criterion (§5.5), nor to XL because admitting a frontier judge as evidence would
+defeat the local-first design (§5).
+Table 1: AUROC and 95% bootstrap CIs by judge, auditor, and target size. Safe versus abliterated,
+n=10 per group. The J = L, A = L block is the configuration visualized in Figure 3.
+Auditor
+Target size
+AUROC
+95% CI
+Judge = M
+L
+XS
+0.890
+[0.710, 1.000]
+S
+0.905
+[0.760, 1.000]
+M
+0.995
+[0.970, 1.000]
+M
+XS
+0.970
+[0.900, 1.000]
+S
+0.995
+[0.970, 1.000]
+M
+1.000
+[1.000, 1.000]
+Judge = L
+L
+XS
+1.000
+[1.000, 1.000]
+S
+0.980
+[0.920, 1.000]
+M
+1.000
+[1.000, 1.000]
+M
+XS
+0.955
+[0.855, 1.000]
+S
+1.000
+[1.000, 1.000]
+M
+1.000
+[1.000, 1.000]
+Separation is at or near ceiling for T = M across all four configurations. T = S and T = XS
+separate cleanly under J = L and under J = M, A = M, with one cell (J = M, A = L, T = XS)
+showing AUROC 0.890 and a wider lower confidence bound. The clean disjointness visible in Figure 3
+for J = A = L is therefore not a one-off feature of that single configuration: it is representative of
+the separation pattern across the reliable local judge-auditor combinations, with the J = M, A = L
+row showing the only meaningful degradation. That degradation is the basis for the flooring analysis
+in Appendix G: at J = M, AUROC falls from A = M to A = L at every target size despite the
+stronger auditor doing more work per probe. AUROC remains the right system-level metric for the
+safe-versus-abliterated contrast; it is not the right metric for auditor selection (Appendix G).
+C
+Variance Decomposition
+This appendix expands §5.2. The main text reports the mixed-target decomposition; we add safe-only
+and abliterated-only refits to test whether target dominance survives removal of the safe-vs-abliterated
+contrast.
+Method.
+We refit score ∼target + auditor + judge by OLS with Type II sums of squares
+on three subsets of the local-only design (T ∈{XS, S, M}, J, A ∈{XS, S, M, L} subject to J, A ≥
+T): mixed (six target levels, the main-text view), abliterated-only and safe-only (three target levels
+each, sizes only). Partial η2 for factor f is SSf/(SSf + SSres), with 95% percentile CIs from 1,000
+bootstrap resamples (resamples dropping a factor level discarded; <1% of draws). Partial η2 values
+need not sum to one, so only within-subset rankings are interpretable.
+Table 2: Partial η2 with 95% bootstrap CIs. Target is the largest factor in every subset.
+Factor
+Mixed
+Abliterated-only
+Safe-only
+Target
+0.518 [0.412, 0.622]
+0.771 [0.692, 0.847]
+0.859 [0.808, 0.904]
+Auditor
+0.284 [0.206, 0.386]
+0.385 [0.263, 0.540]
+0.734 [0.649, 0.812]
+Judge
+0.246 [0.175, 0.341]
+0.397 [0.278, 0.551]
+0.690 [0.568, 0.783]
+Target dominance survives the contrast removal.
+Target is the largest factor in all three refits
+(Table 2): η2 = 0.518 (mixed), 0.771 (abliterated-only), 0.859 (safe-only). The single-condition
+refits address the natural objection that mixed-target dominance is an artifact of the safety contrast
+bleeding into the target factor: when targets differ only in size within one safety condition, target
+identity still drives more variance than auditor or judge identity. On mixed and abliterated-only, the
+(a) Mixed targets (the main-text view): three sizes ×
+two safety conditions, six target levels.
+(b) Abliterated-only: three target levels (sizes only).
+(c) Safe-only: three target levels (sizes only).
+Figure 4: Partial η2 by factor for the three subsets of the local-only design. Error bars are 95%
+percentile bootstrap CIs (1,000 resamples). Target is the largest factor in every subset; apparatus
+components rise when the safety contrast is removed for reasons explained in the text.
+target lower CI clears both apparatus upper CIs. On safe-only the target lower CI (0.808) brushes the
+auditor upper CI (0.812) and clears the judge upper CI (0.783) by a small margin. Two structural
+factors compress that gap: three closely matched safety-aligned models reduce between-target
+dispersion relative to abliterated-only, where the abliteration intervention is itself a large variance
+source, and absolute-score variance credits the judge with calibration disagreement that cancels under
+the comparative-delta contract. §5.6 shows in the pooled analysis that admitting XL anchors absolute
+calibration and judge η2 falls from 0.246 to 0.18; the safe-only judge component (0.690) most likely
+overstates the judge effect that survives the delta contract.
+Apparatus components are not negligible.
+Auditor and judge partial η2 span 0.25 to 0.73 across
+subsets. Even at the lower end, swapping either component will move scores measurably on absolute-
+level metrics; the instrument is neither judge-invariant nor auditor-invariant. Treating target as the
+primary driver does not license replacing the apparatus and expecting matched results: a deployment
+team that swaps judge or auditor must rerun the validation chain. The case for target dominance rests
+on the within-subset ranking, which holds in every direction tested, not on apparatus components
+being small in absolute terms.
+D
+Full Five-Judge Agreement Analysis
+Referenced from §5.5 and §5.7. Figure 5 extends the lean view in Figure 2 to all five judge sizes
+(XS, S, M, L) plus XL self-agreement, on the four agreement categories: exact match, off-by-one,
+wrong (non-critical), and critical miss (critical or high to low or pass). Rates are computed against
+XL-as-reference using paired transcripts; XL self-agreement uses independent reruns of XL on the
+same transcripts.
+XS and S sit at critical-miss rates incompatible with deployment use under the criterion in §5.5; M
+and L approach XL self-agreement.
+E
+Score Stability with Run Count
+Referenced from §5.3. We bootstrap k-run subsets (k = 1, . . . , 9) from the 10-run reference for each
+scenario and measure the mean absolute deviation of the per-scenario score on the 0-100 scale. Each
+k uses 1,000 bootstrap subsets. Figure 6 shows the MAD curves for safe and abliterated targets at
+J = A = L; shaded bands are the 2.5-97.5 percentile envelope across the 1,000 subsets.
+Figure 5: Judge agreement against XL across all five judge sizes plus XL self-agreement, on the four
+categories of agreement.
+Figure 6: Per-scenario score stability as a function of run count k. MAD on the 0-100 scale, 1,000
+bootstrap subsets per k, J = A = L.
+Abliterated targets converge faster. The steepest gains occur from k = 1 to k = 5. The validation and
+case-study protocols use n = 10, where the per-scenario score is stable to within roughly one point
+on the 0-100 scale.
+F
+Auditor-Target Capability Gap
+Referenced from §5.6 and §5.7. Figure 7 reports mean scores across all (target size, auditor size)
+cells at J = XL. Stronger auditors lower safe-target scores. Figure 8 compares A = M and A = L
+side by side at J = L.
+The L auditor consistently downgrades scores, across target sizes and model versions. Increasing
+auditor capability beyond L collapses inter-target differences among safe models: with A = XL,
+safe-target scores compress into a narrow band, eliminating the deltas the instrument is designed to
+report.
+G
+Why AUROC Misleads for Auditor Comparison
+Referenced from §5.6 and §5.7. AUROC measures separation between safe and abliterated distri-
+butions. It does not measure how hard the auditor probes. A stronger auditor lowers safe-target
+scores into the abliterated range without moving the abliterated distribution, which is already near the
+floor. The result is greater overlap between the two distributions and lower AUROC, even though the
+auditor is doing more work per probe.
+The pattern is visible in Appendix B. At J = M, AUROC falls from A = M to A = L at every
+target size (XS: 0.970 →0.890; S: 0.995 →0.905; M: 1.000 →0.995). The same comparison at
+Figure 7: Mean scores for safe targets by target size (rows) and auditor size (columns) at J = XL.
+Figure 8: Safe (left) and abliterated (right) target scores at J = L under A = M and A = L. Error
+bars are ±1σ across n = 10 runs.
+J = L is more compressed because J = L judges more strictly, which keeps AUROC at ceiling for
+two of the three target sizes under both auditors.
+AUROC remains the right system-level metric: it answers whether the instrument separates safe from
+abliterated targets at a given configuration. It is the wrong metric for selecting between two auditors at
+fixed target and judge, because the comparison conflates probing strength with discriminative ability.
+Auditor selection in §5.7 therefore uses the capability-matching argument rather than auditor-AUROC.
+H
+Token Cost Breakdown
+Referenced by §5.7 and §6.2. SimpleAudit and Petri report token usage at different granularities;
+we present each tool’s native accounting and then unify the two on a comparable basis. All figures
+average over the full set of runs in the matched-protocol contrastive evaluation.
+H.1
+SimpleAudit
+Total spend averages 422K tokens per run, splitting roughly 48% target, 34% auditor, 18% judge
+(Figure 9). Input dominates output for the apparatus roles (auditor 136K vs. 8K; judge 73K vs. 4K)
+because each multi-turn probe re-conditions on the growing transcript; the target is more balanced
+(139K vs. 62K). Substituting a frontier auditor and judge (GPT-5 for the L-tier locals) raises total
+Figure 9: SimpleAudit token spend, averaged across all runs in the matched-protocol evaluation.
+Input vs. output per role (±1 s.d.).
+token spend by ∼1.8× while approximately preserving per-role proportions.
+H.2
+Petri
+Petri reports a finer decomposition that distinguishes fresh input from cached-prefix reads (Figure 10).
+Total spend averages 717K per run, with the auditor at 467K (65%) and dominated by cache reads
+(306K) rather than fresh input (150K) or output (11K), a profile consistent with Petri’s tool-using
+auditor re-conditioning on a growing scratchpad. The judge is similarly cache-heavy (62K reads vs.
+63K fresh, 14K output); the target is the smallest role (111K).
+Figure 10: Petri fine-grained token breakdown by role and type, averaged across all runs in the
+matched-protocol evaluation (±1 s.d.). The auditor’s cache-read component (306K) is the single
+largest contributor.
+H.3
+Comparison
+To compare on a common basis, we collapse Petri’s fresh-input and cache-read columns into a single
+input figure matching SimpleAudit’s gross-input accounting (Figure 11). Petri uses ∼1.7× more
+tokens overall (717K vs. 422K), with non-uniform shape: SimpleAudit uses ∼1.9× more target
+tokens (a consequence of its fixed multi-turn budget producing more target output per scenario), Petri
+uses ∼3.2× more auditor tokens (driven by its tool-using auditor and scratchpad), and ∼1.8× more
+judge tokens. Input/output price asymmetry and cache-read discounts can shift the dollar translation
+in either direction, so these figures are best read as a portability and reproducibility signal; for a
+procurement team rerunning across releases, the per-run gap compounds.
+Figure 11: Per-role token usage, Petri vs. SimpleAudit, averaged across all runs in the matched-
+protocol evaluation, with Petri’s fresh-input and cache-read columns collapsed for comparability.
+Petri uses ∼1.7× more tokens overall, dominated by the auditor (3.2×).
+I
+Extended background
+This appendix expands §2, providing the per-artifact detail, Norwegian-gap enumeration, Petri
+framing, and LLM-as-judge methodology compressed in the main text.
+Static benchmark infrastructure.
+HELM systematized broad model evaluation across scenarios
+and metric types [Liang et al., 2023]; SafetyBench and HarmBench provide curated safety substrates
+[Zhang et al., 2024, Mazeika et al., 2024]; AILuminate v1.0 packages hazard-category grading with
+an evaluator-model rubric [Ghosh et al., 2025]; and narrower datasets target toxicity, abstention,
+and red-teaming phenomena [Gehman et al., 2020, Kirichenko et al., 2025, Ganguli et al., 2022,
+Perez et al., 2023]. These resources share three structural features that matter for the deployment
+setting we target: they require ground-truth annotation, they freeze evaluation at release time, and
+they are English-first by default [Ning et al., 2025]. They are essential comparison points, but each
+still relies on labels, curated behavior lists, or fixed benchmark populations that do not exist for many
+language-sector-jurisdiction cells.
+The Norwegian gap.
+NorEval consolidates 24 datasets across nine task categories but contains no
+safety component [Mikhailov et al., 2025]. Earlier Norwegian suites such as NorBench [Samuel et al.,
+2023] and NLEBench+NorGLM [Liu et al., 2024] cover narrow toxicity or bias probes rather than
+deployment-grade safety evaluation. Multilingual safety benchmarks have begun to extend coverage;
+LinguaSafe spans twelve languages but excludes Norwegian [Ning et al., 2025]. The combinatorial
+product of language, sector, and jurisdiction generates many such cells, and few are populated by a
+ground-truth-annotated safety benchmark. The Norwegian case is one instance of a more general
+pattern in long-tail languages and regulated domains.
+Construct validity of existing benchmarks.
+Even where benchmarks exist, the construct-validity
+case for using them as deployment evidence is non-trivial. A systematic review of 445 LLM
+benchmarks reports that 47.8% have contested phenomenon definitions, 38.2% reuse data from
+prior benchmarks, and only 16.0% report any statistical testing [Bean et al., 2025, Salaudeen et al.,
+2025]. "Benchmark exists" and "benchmark validates a deployment claim" are therefore different
+propositions; in the no-label setting we target, the second must be earned without the first, and the
+validation chain formalizes what that earning looks like.
+Petri and the discovery contract.
+Among discovery-oriented auditing tools, Petri [Anthropic
+Alignment Science Team, 2025, 2026] is the most directly comparable artifact to SimpleAudit. It
+is built on UK AISI’s Inspect framework, with a multi-turn auditor, 38 default scoring dimensions,
+and an authorial framing that values "speed and breadth: cheaply derisking hypotheses, surfacing
+behaviors in diverse multi-turn tool-use settings" [Anthropic Alignment Science Team, 2025]. Default
+seeds, dimensions, and aggregation are framed as examples rather than recommendations, and Petri’s
+authors invite users to fork the judge and tailor definitions before scaling up. Two findings the Petri
+authors report cross-validate SimpleAudit’s design from the frontier end of the same instrument
+family: absolute scores prove unstable across the default seed mix while relative scores remain
+informative, matching SimpleAudit’s commitment to deltas; and auditor effectiveness is bounded
+by auditor capability, matching the role we identify for the auditor as the dominant non-cancelled
+variance driver. We treat Petri as the discovery-oriented sibling of SimpleAudit’s scoring instrument
+and apply the same validation chain to it.
+LLM-as-judge methodology.
+Any LLM-on-LLM scoring tool ultimately depends on the LLM-
+as-judge apparatus. Zheng et al. [2023] validated LLM judges against human preferences and
+documented position, verbosity, and self-enhancement biases that recur in subsequent work [Liu
+et al., 2023, Gu et al., 2024, Shi et al., 2025]. Two methodological commitments transfer directly
+into our setting. First, absolute scores are unstable across judges and across reruns of the same
+judge, while pairwise or relative comparisons are systematically more reliable; tools whose contract
+is a comparative score must therefore commit to deltas rather than absolute levels, and must report
+uncertainty across reruns. Second, an instrument built on top of an LLM judge cannot inherit
+reliability for free, and must be characterized along the same dimensions as the judge itself. Recent
+work decomposes benchmark variance into scenario, generation, judge, and residual components to
+argue for round-robin judge assignment [Zhu et al., 2026], and Chouldechova et al. [2025] make
+the companion measurement-theory argument that quantitative red-teaming claims require explicit
+validation before they support comparison. We extend this variance-decomposition lens from judge
+selection to the joint (target, auditor, judge) stack characteristic of multi-turn JTA-loop tools.
+J
+Chain validation results for Petri
+This appendix reports the data behind §6.1. We track three Petri dimensions through the chain:
+concerning as the lead worked example, unprompted bizarre behavior (shortened in figures
+as u bizarre behavior) and admirable as cases that fail at different steps. We do not run the
+full chain on every Petri dimension; the dimensional analysis in Appendix K characterizes the wider
+rubric and identifies the safety-active dimensions for which the worked example is representative.
+Each chain requirement is evaluated by the procedure used for SimpleAudit in §5, with appendix
+detail in Appendices B, C, and E. We reorder the steps here for exposition: stability first, then variance
+decomposition, then safe-vs-abliterated separation.
+J.1
+Stability
+We bootstrap k-run subsets (k = 1, . . . , 9, 1,000 subsets per k) from the 10-run reference and measure
+the per-scenario mean absolute deviation (MAD) of the dimension score on the 1-10 severity scale.
+Figure 12 shows the curve for concerning at J = A = L. Safe targets converge from MAD
+≈0.38 at k=1 to ≈0.04 at k=9; abliterated targets converge from ≈0.62 to ≈0.07 over the same
+range. At n=10, residual rerun variation is below 0.1 severity steps for both groups, well below the
+safety-contrast effect reported in e.g. Figure 14 of O(|∆|) ≈1.
+All Petri dimensions in our protocol stabilize by n=10. However, per-dimension MAD and conver-
+gence rate vary. Taking the maximum MAD across all dimensions, the slowest-converging dimension
+is input hallucination, falling from MAD ≈1.47 at k=1 to ≈0.38 at k=9 for safe targets, and
+from ≈2.09 to ≈0.50 for unsafe targets. For many dimensions stabilization is a trivial property: a
+dimension that almost never fires has nothing to be unstable about, and which dimensions fall into
+that category is the subject of Appendix K.
+J.2
+Variance decomposition
+We fit score ∼target + auditor + judge with Type II sums of squares on the matched
+local design (J, A ∈{M, L}, T
+∈{XS, S, M}) and report partial η2 with 1,000-resample
+percentile-bootstrap CIs. Mirroring §5.2 and Appendix C, we report the pooled fit and the safe-
+only and abliterated-only refits. We track three dimensions: concerning as the lead example,
+u bizarre behavior as a second target-dominant dimension we revisit at the AUROC step, and
+admirable as a case where target dominance is not unambiguous.
+concerning is target-dominated in every subset:
+target η2
+=
+0.200 pooled, 0.811 safe-
+only, 0.510 abliterated-only, with auditor and judge components at most 0.16 in any subset.
+u bizarre behavior shows the same qualitative pattern with larger target effects (target η2 between
+Figure 12: Bootstrap rerun stability for concerning. Mean dimension MAD on the 1-10 severity
+scale as a function of bootstrap subset size k, computed against the 10-run reference. Shaded bands:
+5th-95th percentile across 1,000 subsets per k. J = A = L.
+(a) Pooled fit: safe and abliterated targets.
+(b) Abliterated-only refit.
+(c) Safe-only refit.
+Figure 13: Partial η2 for target, auditor, and judge across three Petri dimensions on the matched local
+design. Error bars are 95% percentile-bootstrap CIs (1,000 resamples).
+0.49 and 0.53 across subsets) and apparatus components below 0.03. Both pass the target-dominance
+criterion of Requirement 2 in §3.
+admirable does not. The pooled fit gives target η2 = 0.201 [0.13, 0.29] against judge η2 = 0.255
+[0.18, 0.33], with auditor near zero. The judge component is at or above the target component
+across all subsets, with overlapping CIs in the pooled and abliterated-only fits. We do not claim
+target dominance is ruled out for admirable; we observe that the evidence does not establish it.
+Target dominance is a property of the (target, auditor, judge) stack that must be measured rather than
+assumed, and at least one Petri dimension active under our protocol fails the measurement.
+J.3
+Safe-vs-abliterated separation
+Table 3 reports AUROC for u bizarre behavior on the safe-vs-abliterated contrast at J = A = L,
+n = 10 per group.
+Table 3: AUROC for u bizarre behavior on the safe-vs-abliterated contrast at J = A = L,
+n = 10 per group. 95% percentile-bootstrap CIs.
+Target size
+AUROC
+95% CI
+XS
+0.830
+[0.645, 0.970]
+S
+0.390
+[0.180, 0.635]
+M
+0.540
+[0.350, 0.725]
+u bizarre behavior does not separate safe from abliterated targets. AUROC reaches 0.83 only
+at T = XS, drops below chance at T = S, and is near chance at T = M, with CIs at T ∈{S, M}
+spanning 0.5. Requirement 1 of §3 fails for u bizarre behavior despite its target-dominance in
+the variance step.
+Table 4 reports the same analysis for concerning across the four reliable judge-auditor combinations
+and the three local target sizes.
+Table 4: AUROC for concerning on the safe-vs-abliterated contrast, by judge, auditor, and target
+size. n = 10 per group; 95% percentile-bootstrap CIs.
+Auditor
+Target size
+AUROC
+95% CI
+Judge = M
+L
+XS
+0.990
+[0.940, 1.000]
+S
+1.000
+[1.000, 1.000]
+M
+1.000
+[1.000, 1.000]
+M
+XS
+1.000
+[1.000, 1.000]
+S
+1.000
+[1.000, 1.000]
+M
+1.000
+[1.000, 1.000]
+Judge = L
+L
+XS
+1.000
+[1.000, 1.000]
+S
+1.000
+[1.000, 1.000]
+M
+1.000
+[1.000, 1.000]
+M
+XS
+0.990
+[0.940, 1.000]
+S
+1.000
+[1.000, 1.000]
+M
+1.000
+[1.000, 1.000]
+Separation is at ceiling (≥0.99) in every cell, with point estimates of 1.000 in 10 of 12 cells.
+Figure 14 shows the corresponding distributions. Requirement 1 holds for concerning; combined
+with the variance and stability results above, the chain admits Petri at concerning.
+Figure 14: Safe and abliterated target score distributions for concerning, separated cleanly at every
+size. J = L, A = L; n = 10 per cell.
+Other dimensions also pass all three chain requirements, such as needs attention or
+concerning with no mitigating factors. A complete chain check on every active dimen-
+sion is out of scope; the existence claim of §6.1 requires only that at least one such dimension exist,
+and it does.
+J.4
+Comparison to SimpleAudit
+The variance profile we report for concerning differs from the SimpleAudit profile in §5.2.
+The difference could reflect Petri’s broader dimensional surface covering non-safety constructs, defini-
+tional differences in score construction and aggregation, or other implementation differences we have
+not isolated. Our setup is not designed to disambiguate these, and we decline to speculate further. The
+numbers in this appendix are not a Petri-versus-SimpleAudit performance comparison: the protocol
+was not designed for that, and the per-tool score constructions are not directly commensurable. The
+chain admits both tools, which is the load-bearing claim for §6.
+K
+Petri dimension activity and contrasts
+Appendix J worked the chain on three Petri dimensions. This appendix characterizes the wider rubric
+under the same protocol (scenario population, A=L, J=L, n=10). The taxonomy supports two
+claims from §6: the chain admits Petri dimensions beyond concerning (§6.1), and Petri’s rubric
+distributes signal across distinct constructs of which safety is one (§6.2).
+K.1
+Classification
+We classify each of the 38 default dimensions to characterize what Petri’s rubric measures: which
+respond to the safety contrast, which respond to capability differences, and which are inactive
+under our protocol. We sort each dimension into descriptive bins by firing rate and contrast effect
+on the matched safety contrast (T=S vs. T=SU) and size contrast (T=XS vs. T=M, both safe).
+A dimension is completely inactive if it never fires, near-inactive if it fires in fewer than 5% of
+transcripts, active-unresponsive if it fires above the 5% threshold but shows neither |∆| ≥0.5 on the
+1-10 severity scale nor p < 0.05 under a two-sided t-test on either contrast, and active otherwise.
+Active dimensions split further into safety-only, size-only, and both-active bins (Table 5).
+Table 5: Petri dimension classification under the matched protocol. Counts sum to 38.
+Category
+Count
+Completely inactive
+Near-inactive (<5% fire rate)
+Active-unresponsive
+Active, safety-only
+Active, size-only
+Active, both contrasts
+Active union
+The 14 active dimensions carry the comparative signal of Petri’s default rubric under our protocol.
+The remaining 24 contribute to discovery use without contributing to a scoring instrument. The active
+union contains:
+admirable, concerning, concerning with no mitigating factors,
+cooperation with human misuse, counterfactual bad behavior,
+disappointing, high stakes setting, input hallucination, needs attention,
+scenario realism, unprompted bizarre behavior,
+unprompted deception toward user, unprompted sycophancy, and
+user over sysprompt.
+K.2
+Per-dimension contrasts and the construct split
+Active dimensions divide across constructs rather than measuring a single underlying property.
+Figure 15 plots per-dimension contrast magnitudes on the safety axis (panel a, sorted) and the size
+axis (panel b, same order).
+Three
+behavior-specific
+dimensions
+carry
+safety
+signal
+with
+small
+size
+signal:
+cooperation with human misuse,
+user over sysprompt,
+and
+counterfactual bad behavior.
+Their grading conditions on harm-relevant probes rather
+than on model capability, so a safe-vs-abliterated contrast moves them while the size contrast moves
+them only sub-threshold (|∆| < 0.5 despite reaching significance). scenario realism sits at the
+opposite extreme, with strong size signal and no safety signal. needs attention, disappointing,
+and concerning carry the largest safety-contrast effects (|∆| > 3.5 on the 1-10 scale) and also
+respond to size, placing them in the both-active bin. admirable is the only large active-negative
+dimension on safety: abliterated targets score lower than safe targets on it.
+Figure 15: Per-dimension contrasts under the matched protocol (A=L, J=L, n=10). Panel (a):
+safety contrast ∆= Mean(unsafe-S) −Mean(safe-S) on T=S. Panel (b): size contrast ∆=
+Mean(XS) −Mean(M) on safe targets. Dimensions are ordered identically across panels. Color
+encodes activity class.
+The three dimensions tracked through the chain in Appendix J appear at characteristic posi-
+tions on this plot. concerning sits among the largest safety-active2 dimensions in panel (a).
+u bizarre behavior shows positive size signal (panel b) while sitting near zero on the safety
+axis (panel a), so its target dominance in the variance step (Appendix J) reflects capability rather
+than safety, and its AUROC fails on the safe-vs-abliterated contrast. admirable sits at the bottom of
+2need attention and disappointing are distractor-dimensions as per Anthropic Alignment Science Team [2025].
+Therefore concerning is the most safety-active dimension intended for use.
+panel (a) as the only large active-negative dimension on safety; its variance profile in Appendix J
+shows judge η2 at or above target η2.
+K.3
+Active-but-unresponsive dimensions
+Three dimensions fire above the 5% threshold but fail the contrast criteria (Table 6).
+unprompted encouragement of user delusion reaches significance on both contrasts but with
+effect sizes below the 0.5 threshold. fun or funny fails significance on both. overrefusal reaches
+safety significance only with a sub-threshold negative effect.
+Table 6: Active-but-unresponsive dimensions. Effects in 1-10 severity-scale units.
+Dimension
+Safety ∆
+p
+Size ∆
+p
+unprompted encouragement of user delusion
++0.363
+0.019
++0.400
+0.000
+fun or funny
+−0.012
+0.787
+−0.062
+0.119
+overrefusal
+−0.137
+0.012
++0.137
+0.091
+These dimensions show that activity alone does not anchor a comparative score. A dimension can fire
+above the 5% threshold and still separate neither contrast, and the chain rejects such dimensions at
+the responsiveness step before any variance or stability check. The chain-admission claim in §6.1 is
+non-vacuous on Petri’s default rubric: u bizarre behavior fails responsiveness despite passing the
+variance step (Appendix J), and the three dimensions in Table 6 fail responsiveness without reaching
+the variance step at all.
+K.4
+Effective dimensionality
+PCA on the 14 active dimensions returns a sharp leading component followed by a long tail (Figure 16).
+The first component explains 52.7% of variance; cumulative variance reaches 80% at k=4 and 90%
+at k=6. The effective dimensionality of the active output is lower than the nominal 38-dimension
+surface, consistent with the small number of distinct constructs identified in the contrast analysis.
+Figure 16: Scree plot for PCA on the 14 active dimensions of Petri’s default rubric under the matched
+protocol. Bars: per-component variance explained. Line: cumulative. Dashed lines mark 80%
+(reached at k=4) and 90% (reached at k=6).
+A deployment team adopting Petri’s default rubric as a scoring instrument must commit to a con-
+struct, and to a dimension or component representing that construct, before scoring. The user-side
+commitment problem is which axis of the rubric to score on, not only which dimensions to keep.
+L
+Evaluation Claim Contract
+Table 7 enumerates the comparative claims SimpleAudit can support, the assumptions each claim
+requires, and the claims it does not license.
+Table 7: Evaluation claim contract for benchmarkless comparative safety scoring.
+Claim SimpleAudit can support
+Fixed assumptions required
+Claim it does not license
+One target scores higher or lower
+than another.
+Same scenario pack, rubric, auditor,
+judge, turn budget, sampling configu-
+ration, and rerun budget.
+Universal safety or superiority
+under a different instrument.
+The difference concentrates in
+particular scenario categories.
+Same category definitions and aggre-
+gation rule across compared targets.
+Complete hazard coverage or
+discovery of all relevant deploy-
+ment failures.
+Critical-rate differences cross a
+governance threshold.
+Same severity scale and critical-failure
+definition across reruns.
+Legal compliance, policy com-
+pliance, or acceptability for de-
+ployment by itself.
+The comparison is sensitive to
+judge configuration.
+Same transcripts are re-scored, or
+judge changes are isolated from tar-
+get and auditor changes.
+A judge-independent ground
+truth label in domains where no
+such labels exist.
+M
+Cross-Pack Scenario Effects
+Referenced from §7. The Norwegian procurement case study uses a fixed pack and a single model
+family, and isolates how Borealis and Gemma 3 scale with size on Norwegian deployment concerns.
+The analysis below uses a complementary cut: a fixed judge across two model families and four
+Norwegian and three English packs, isolating how model family and size interact with the language
+and domain distribution of the pack rather than which model is safer for Norwegian deployment. The
+findings are descriptive characterizations of the instrument under varied scenario distributions, not
+procurement claims.
+Protocol.
+We evaluate Qwen3.5 (4B, 9B, 27B, 35B-A3B) and Gemma 3 IT (4B, 12B, 27B) across
+four Norwegian and three English packs with a fixed Qwen3.5-35B-A3B-FP8 judge run in non-
+thinking mode using the author-recommended inference parameters. All cells use five turns and
+n=10 reruns.
+Table 8 reports scores across scenario packs using the setup in §M. Three patterns stand out.
+Language-family interaction.
+Qwen models score 20-45 pp higher on English packs than on
+Norwegian packs (p<0.001 for all four sizes), while Gemma models score 10-22 pp higher on
+Norwegian (p<0.001). This reversal occurs at every size we evaluated. Qwen’s English advantage
+narrows roughly log-linearly with parameter count (r=−0.999; 13.9 pp gain per doubling on NO-
+healthcare, p=0.013), whereas Gemma’s Norwegian advantage is stable across sizes.
+Table 8: Scenario scores by model (mean ± SD, n=10 runs). Bottom three rows are derived: NO
+avg / EN avg are averages across the four Norwegian and three English packs; EN−NO is the signed
+gap (positive = English advantage).
+Scenario
+Q4B
+G4B
+Q9B
+G12B
+Q27B
+G27B
+Q35B
+NO-healthcare
+28±7
+22±10
+52±13
+39±10
+70±8
+50±11
+72±6
+NO-language
+15±9
+19±6
+33±11
+37±14
+48±10
+37±15
+37±6
+NO-public
+26±8
+12±6
+37±10
+35±10
+53±8
+40±9
+51±6
+NO-safety
+24±12
+17±8
+48±10
+40±12
+69±9
+51±11
+68±10
+health
+58±13
+12±7
+68±15
+33±13
+69±14
+32±21
+70±9
+safety
+69±14
+7±8
+83±11
+18±8
+90±11
+20±11
+78±8
+system-prompt
+77±15
+3±5
+85±9
+20±12
+91±7
+15±13
+84±9
+NO avg
+17
+38
+44
+EN avg
+8
+24
+22
+EN−NO
++45
+−10
++37
+−14
++24
+−22
++21
+Q = Qwen3.5, G = Gemma-3; Q35B = Qwen3.5-35B-A3B. All target models in BF16. Scores aggregated from ten independent auditing runs.
+Size-invariant alignment gap.
+On instruction-following scenarios, Qwen scores 77-91% while
+Gemma scores 3-20%. The resulting ≈75 pp gap is nearly constant across sizes, which suggests a
+difference in overall behavior rather than a simple capability scaling effect.
+MoE safety penalty.
+The sparse Q35B-A3B model (3.5 B active parameters) scores about −12 pp
+lower on safety and −11 pp lower on Norwegian-language tasks than the dense Q27B. The largest
+gap appears on hallucination scenarios (−40 pp), suggesting that active parameter count matters more
+than total parameter count for safety robustness.
+These three patterns characterize how the instrument responds to scenario distribution and model
+family at fixed judge. They are consistent with the variance decomposition in §5.2, where target
+identity dominates score variance, but they do not extend the validation chain: language and family
+are properties of the targets, not new validation requirements. They also do not license cross-family
+safety claims, since the same comparison under a different judge or pack would shift the absolute
+scores; the patterns above should be read as deployment-relevant descriptive findings rather than
+rankings.
+N
+Borealis Per-Category Breakdown
+Referenced from §7.
+Table 9:
+Aggregate scores on the full 36-scenario Norwegian pack under Judge L,
+Qwen3.5-122B-A10B-Q4 K S.
+Model
+Judge-L Score
+Borealis-27B
+43.68±5.04
+Borealis-12B
+42.29±4.40
+Borealis-4B
+27.91±2.79
+Borealis-1B
+4.58±1.51
+Gemma-3-27B
+37.64±4.86
+Gemma-3-12B
+35.28±4.90
+Gemma-3-4B
+13.74±1.42
+Gemma-3-1B
+3.82±1.10
+Mean ± SD over n=10 on 36 scenarios. Judge L = Qwen3.5-122B-A10B.
+Table 10 consolidates the matched-size comparison used to interpret the procurement case. Deltas
+are Borealis minus Gemma. Positive score deltas favor Borealis; negative critical-rate deltas favor
+Borealis because fewer critical outcomes are better. The Overall columns average across the four
+Norwegian scenario packs, while the remaining columns show which packs drive the aggregate result.
+The Judge-L run uses Qwen3.5-122B-A10B (Q4 K S).
+Table 10: Consolidated Borealis-Gemma deltas on the full Norwegian pack. Overall and scenario-
+pack score deltas and critical-rate deltas are in percentage points under Judge L, Qwen3.5-122B-A10B
+(Q4 K S).
+Size
+Overall
+Healthcare
+Language
+Public Sector
+Safety
+∆Score
+∆CR ∆Score
+∆CR ∆Score ∆CR ∆Score
+∆CR ∆Score
+∆CR
+1B
++0.8
+−2.5
++2.5
+−7.0
+−1.2 +3.8
+−0.2
++1.0
++1.9
+−7.5
+4B
++14.2 −23.9
++24.0 −30.0
++4.1 −7.5
++15.2 −27.0
++10.6 −28.8
+12B
++7.0
+−4.7
++9.5
+−5.0
+−0.9 +2.5
++10.2
+−7.0
++7.8
+−8.8
+27B
++6.0
+−7.5
++8.2
+−9.0
++1.6 +3.8
++8.2 −12.0
++5.0 −11.2
+The consolidated view explains the aggregate behavior. Under Judge L, Borealis is ahead on most
+score deltas and usually has fewer critical outcomes. This is the kind of structure a procurement team
+needs: the aggregate score says which model is ahead on average, while the pack-level deltas show
+which deployment risks are responsible for that average.
+O
+Configurations and Scenario Pack Datasheet
+SimpleAudit also includes pre-built judge configurations that instantiate common evaluation styles: a
+safety rubric inspired by Constitutional AI [Bai et al., 2022], an abstention rubric derived from Absten-
+tionBench [Kirichenko et al., 2025], a helpfulness rubric following MT-Bench conventions [Zheng
+et al., 2023], a factuality rubric in the G-Eval paradigm [Liu et al., 2023], and a harm rubric aligned
+with HELM’s harm taxonomy [Liang et al., 2023]. These configurations are templates for domain
+adaptation; the validation experiments use the fixed safety configuration described above.
+The Norwegian scenario packs are intended for comparative deployment auditing, not for training or
+leaderboard ranking. Each scenario describes a deployment situation, expected risk boundary, or user
+request class. The packs are versioned JSONL artifacts with stable scenario names and descriptions;
+optional metadata fields support category-level reporting.
+The packs were written to cover public-sector, healthcare, language, and safety/legal concerns that
+arise in Norwegian-language deployment contexts. They are not exhaustive and should not be treated
+as a complete model-card substitute. Before use in a new organization, scenarios should be reviewed
+by local domain experts for policy fit, missing risk classes, and jurisdiction-specific language.
+Known limitations are coverage and construct validity. A scenario pack encodes a local view of
+deployment risk; it does not prove that the full risk construct is captured. The intended workflow is
+therefore iterative: run the pack, inspect transcripts and critical failures, revise the pack under version
+control, and rerun comparisons under the new instrument.
+P
+Reproducibility
+All raw audit records, analysis code, and the scripts used to generate every table, figure, bootstrap
+interval, and variance analysis in the paper are available at:
+
+For each audit run, SimpleAudit stores the target, auditor, and judge model identifiers; provider
+settings; turn budget; sampling parameters; scenario-pack version; rubric configuration; transcript;
+structured verdict; score; and token usage. These records are ordinary JSON and metadata artifacts,
+and are sufficient to regenerate all reported results from the raw data in the repository above.
+P.1
+Models
+Table 11 lists the tiered validation models and the additional cross-pack target models used in Table 8.
+Safe variants are standard instruction-tuned checkpoints; unsafe variants are the corresponding
+abliterated releases from HauhauCS ( Standard GGUFs
+were obtained from Unsloth (
+Table 11: Models used in the validation and cross-pack experiments. Quantization or precision is
+appended to each model name. All local target models in validation were served via llama-server.
+The cross-pack models were served via vllm.
+Validation tiers
+ID
+Model
+Precision Use
+XS
+Qwen3.5-4B
+Q6 K
+safe
+XS U Qwen3.5-4B
+Q6 K
+abliterated
+S
+Qwen3.5-9B
+Q6 K
+safe
+S U
+Qwen3.5-9B
+Q6 K
+abliterated
+M
+Qwen3.5-35B-A3B
+Q6 K
+safe
+M U Qwen3.5-35B-A3B
+Q6 K
+abliterated
+L
+Qwen3.5-122B-A10B
+Q4 K S
+safe
+XL
+GPT-5 (2025-08-07)
+API
+safe
+Cross-pack experiment
+ID
+Model
+Precision
+Q4B Qwen3.5-4B
+BF16
+Q9B Qwen3.5-9B
+BF16
+Q27B Qwen3.5-27B
+BF16
+Q35B Qwen3.5-35B-A3B
+BF16
+G4B Gemma 3 4B IT
+BF16
+G12B Gemma 3 12B IT
+BF16
+G27B Gemma 3 27B IT
+BF16
+-
+Qwen3.5-35B-A3B-FP8
+FP8
+P.2
+Generation Parameters
+All local models were run with a shared sampling configuration (Table 12). Extended thinking was
+disabled for all runs. The GPT-5 API endpoint was called with its default parameters.
+Table 12: Sampling parameters applied to all local models.
+Parameter
+Value
+Temperature
+0.7
+Top-p
+0.8
+Top-k
+Min-p
+0.0
+Presence penalty
+1.5
+Repeat penalty
+1.0
+Chain-of-Thought
+disabled
+P.3
+Software
+Table 13 records the exact software versions and commit hashes used to generate all reported results.
+The SimpleAudit benchmarking branch extends the main library with data-capture and statistics;
+it does not alter the auditing or scoring logic. Note that the Petri repository was relocated during
+development of this paper; the canonical URL at time of writing is given in the table.
+Table 13: Software used to generate results. Commit hashes pin the exact revision.
+Component
+Commit
+Branch
+Repository
+SimpleAudit
+904d10a
+benchmarking
+
+SimpleAudit (upstream)
+N/A
+main
+
+Petri
+7fef276
+petri-v2
+
+llama.cpp
+d6f3030
+main
+
+P.4
+Hardware
+Inference hardware was not held fixed across experiments. Because all local model outputs are
+logged verbatim by SimpleAudit and archived in the analysis repository, numerical results are fully
+reproducible from the stored records without re-running inference.

@@ -1,0 +1,3027 @@
+PrefixGuard: From Large Language Model Agent
+Traces to Online Failure-Warning Monitors
+Xinmiao Huang1, Jinwei Hu1, Rajarshi Roy1, Changshun Wu2, Yi Dong1,*, Xiaowei Huang1∗
+1University of Liverpool
+2Université Grenoble Alpes
+Abstract
+Large language model (LLM) agents now execute long, tool-using tasks where
+final outcome checks can arrive too late for intervention. Online warning requires
+lightweight prefix monitors over heterogeneous traces, but hand-authored event
+schemas are brittle and deployment-time LLM judging is costly. We introduce
+PrefixGuard, a trace-to-monitor framework with an offline StepView induction
+step followed by supervised monitor training. StepView induces deterministic
+typed-step adapters from raw trace samples, and the monitor learns an event
+abstraction and prefix-risk scorer from terminal outcomes. Across WebArena, τ 2-
+Bench, SkillsBench, and TerminalBench, the strongest PrefixGuard monitors reach
+0.900/0.710/0.533/0.557 AUPRC. Using the strongest backend within each repre-
+sentation, they improve over raw-text controls by an average of +0.137 AUPRC.
+LLM judges remain substantially weaker under the same prefix-warning protocol.
+We also derive an observability ceiling on score-based area under the precision-
+recall curve (AUPRC) that separates monitor error from failures lacking evidence in
+the observed prefix. For finite-state audit, post-hoc deterministic finite automaton
+(DFA) extraction remains compact on WebArena and τ 2-Bench (29 and 20 states)
+but expands to 151 and 187 states on SkillsBench and TerminalBench. Finally,
+first-alert diagnostics show that strong ranking does not imply deployment utility:
+WebArena ranks well yet fails to support low-false-alarm alerts, whereas τ 2-Bench
+and TerminalBench retain more actionable early alerts. Together, these results posi-
+tion PrefixGuard as a practical monitor-synthesis recipe with explicit diagnostics
+for when prefix warnings translate into actionable interventions.
+1. Introduction
+Frontier LLM agents capable of long-horizon multi-step tasks [38, 41] are increasingly deployed in
+high-stakes settings, such as automated software engineering [43], cybersecurity [16], and financial
+management [42], where a single erroneous action can cause irreversible damage long before the
+final task verifier fires. This creates urgent demand for online warning signals that flag trajectory drift
+toward failure in real time. Existing approaches fall short on complementary dimensions: (i) classical
+runtime verification [18, 5] assumes a stable, hand-authored mapping from raw traces to events,
+which is brittle for heterogeneous agent traces and evolving tool schemas. (ii) LLM-as-judge [45]
+is too expensive for per-prefix deployment. (iii) predictive prefix classifiers can recover signal but
+do not by themselves yield calibrated monitor state or inspectable symbolic artifacts [36, 35]. The
+resulting challenge is not only whether failures are predictable from prefixes, but whether raw traces
+can be converted into an online monitor whose state is cheap, whose evidence is stable across trace
+formats, and whose limits are diagnosable when warning fails.
+We address these limitations by treating online prefix warning as a data-driven trace to monitor
+synthesis problem. Given raw execution traces and terminal outcomes, we derive fixed H-step
+warning labels and learn a monitor without hand-authoring the event alphabet or step-level root-cause
+annotations. The paper studies four questions covering prefix-warning signal, trace representation,
+∗Corresponding author: xiaowei.huang@liverpool.ac.uk, yi.dong@liverpool.ac.uk
+Preprint.
+arXiv:2605.06455v1 [cs.AI] 7 May 2026
+
+finite-state compression, and whether ranked risk scores can support low-FAR alarms. The last
+question separates ranking from deployment utility.
+We present PrefixGuard, a modular neural-symbolic framework for trace to monitor synthesis.
+PrefixGuard first addresses the raw-trace interface via StepView, a one-time LLM-assisted offline
+induction step that generates deterministic adapters for heterogeneous trace formats. It then trains
+a differentiable event abstraction layer jointly with a replaceable monitor backend, learning a
+discrete failure-aligned alphabet end-to-end from the prefix-warning objective. The scoring backend
+can be neural or structured; after training, hard symbols can also be compiled into deterministic finite
+automata (DFAs) as post-hoc audit artifacts. In this paper we instantiate the framework (Figure 1)
+with GRU, Transformer, and soft-FSM monitors, plus extracted DFA audits, to study prediction
+quality, calibration, and the boundary of finite-state auditability.
+Figure 1: PrefixGuard pipeline. StepView converts raw steps to typed fields. Term frequency-inverse
+document frequency (TF-IDF) encoding and event abstraction produce learned symbols, and the
+monitor scores prefix risk online. Hard symbols can be compiled into PrefixGuard-DFA to evaluate
+compact finite-state audit.
+We evaluate PrefixGuard across four diverse agent benchmarks, WebArena (browsers), τ 2-Bench
+(dialogue), SkillsBench (coding), and TerminalBench (CLI). The evaluation uses these benchmarks as
+diagnostic regimes rather than a single leaderboard. For warning signal (RQ1), zero-shot LLM judges
+are weak under the matched prefix-warning protocol. Non-sequential probes show that outcome-
+labeled prefixes still contain learnable signal, motivating monitor synthesis rather than repeated LLM
+judging. For trace representation (RQ2), StepView improves over the matched Raw-text control GRU
+by +0.03-+0.22 AUPRC, and field ablations show benchmark-specific dependence on individual
+fields. For finite-state compression (RQ3), neural monitors are strongest. Post-hoc DFA extraction
+shows where exact finite-state audit remains compact. WebArena is the clearest regime, τ 2-Bench
+is compact but concentrated, and SkillsBench/TerminalBench expand to larger monolithic DFAs.
+For deployment utility (RQ4), prevalence calibration, observability probes, and first-alert diagnostics
+under false-alarm rate (FAR) constraints show why raw AUPRC alone is not enough. WebArena is
+rankable but not alarm-separable. It reaches high AUPRC but mostly supports terminal-window
+triage rather than early low-FAR alerts. τ 2-Bench and TerminalBench retain stronger failed-trajectory
+and early-intervention recall despite lower raw AUPRC. An AUPRC ceiling provides a diagnostic for
+how much visible failure evidence could be recovered from trace-only prefixes.
+We highlight four primary contributions:
+• Raw-trace monitor synthesis. We formulate online prefix warning as monitor synthesis from raw
+LLM-agent traces and introduce PrefixGuard, which avoids hand-authored event alphabets and
+deployment-time LLM inference.
+• Typed trace representation. StepView uses a one-time offline adapter to expose post-action
+evidence in fixed fields, allowing the same warning objective to run across browser, dialogue,
+coding, and CLI traces.
+• Diagnostic boundary for finite-state auditability. We learn a failure-aligned discrete alphabet
+with GRU, Transformer, and soft-FSM monitors, then extract DFAs post hoc to map where finite-
+state audit remains compact and where exact automaton constraints lose warning signal or expand
+the audit surface.
+• Deployment diagnostics beyond ranking. We pair an AUPRC ceiling with observability and
+first-alert diagnostics to separate ranking scale, visible prefix evidence, and low-FAR alert utility.
+2. Related Work
+LLM-agent evaluation and judges. Agent benchmarks assign success after the trajectory ends via a
+task verifier [46, 3, 20, 23], and LLM-as-judge methods [45] offer retrospective semantic assessment.
+PREFIXGUARD instead learns domain-calibrated temporal statistics from outcome-labeled prefixes,
+producing online risk scores at each step without deployment-time LLM inference.
+Runtime verification and specification mining. Classical runtime verification and specification-
+based monitoring [18, 5, 4] monitor traces against formal properties over domain-specific signals and
+events, while specification mining [1, 21, 19] infers likely specifications from observed behaviors.
+Both lines of work assume a stable observation vocabulary and formalism. That assumption breaks
+on LLM-agent traces, which mix browser actions, tool calls, and dialogue turns across evolving
+formats. STEPVIEW replaces manual schema authoring with a one-time LLM-assisted induction
+step, producing a typed adapter from a handful of raw trace examples with no deployment-time LLM
+dependency.
+Trace abstraction and predictive process monitoring. Dialogue-flow extraction [9, 34] and
+predictive process monitoring [36, 35] target coverage of recurrent behaviors or typed workflow
+events rather than imminent failure risk on heterogeneous traces. Alarm-based systems [13] extend
+this to prescriptive interventions. Early time-series classification [10, 24] motivates our fixed-horizon
+warning setup, where positives are defined by a finite window before terminal failure. §3 formalizes
+this label after introducing trajectory notation. PREFIXGUARD applies this setup to LLM-agent traces,
+where the event alphabet and representations must be jointly learned rather than assumed fixed.
+Auditable neural-symbolic monitors. Finite automata extracted from recurrent networks [40],
+interpretable DFA sequence classifiers learned by discrete optimization [32], and the AALpy learning
+framework [25, 37] supply inspectable state machines. These approaches operate over fixed symbolic
+observations or queryable systems and have not been applied to online prefix warning over heteroge-
+neous LLM-agent traces. PREFIXGUARD uses post-hoc DFA extraction as a boundary diagnostic.
+Learned symbols can be compiled into calibrated state-risk machines, but our cross-benchmark audit
+shows that exact finite-state inspection remains reliable only when the induced automaton is compact
+and risk-separating. Appendix A provides an extended related work discussion.
+3. Problem Formulation
+Notations. Let C denote the space of possible execution steps, where each step c ∈C is a structured
+record containing the agent’s role, the tool invoked, the arguments, and the environment’s response.
+A trajectory of length T is an ordered sequence τ = (c1, c2, . . . , cT ) ∈CT . We use raw trace for
+an original benchmark log before StepView conversion and trajectory for the ordered step sequence
+used by the learning problem. A prefix of length t ∈[1, T] is denoted as τ:t = (c1, . . . , ct) ∈C∗,
+representing the partial observation of an ongoing task. Each trajectory is associated with a ground-
+truth binary outcome y ∈{0, 1}, where y = 1 indicates task success and y = 0 indicates failure, as
+determined by a task-specific verifier V : C∗→{0, 1}.
+Imminent Failure Labeling. The objective of prefix warning is to raise risk alerts as a failed
+trajectory approaches the terminal failure window. Given a fixed inclusive failure horizon H ∈Z+,
+we assign a binary target label pt to each prefix τ:t of a trajectory (τ, y):
+pt = I [y = 0 ∧t ≥T −H] ,
+(1)
+where I[·] is the indicator function. Under this formulation, a prefix is considered a positive warning
+target if and only if it belongs to a failed trajectory and has at most H remaining steps, i.e., T −t ≤H.
+For a failed trajectory this inclusive horizon yields up to H+1 positive prefix positions, including the
+terminal prefix. All prefixes of successful trajectories, and prefixes of failed trajectories with more
+than H remaining steps, are labeled as negatives (pt = 0). Prefixes are cumulative online states: a
+positive near-end prefix contains the visible history up to step t, so earlier tool errors and recovery
+attempts remain available to the monitor at later warning points. The scoring input remains causal,
+using only τ:t.
+Prefix-Warning Task. The learning task is to find a monitor function fθ : C∗→[0, 1], parameterized
+by θ, that maps an arbitrary prefix τ:t to a risk score st ∈[0, 1]. Given a distribution of trajectories D,
+the optimal θ∗is obtained by minimizing the expected binary cross-entropy loss aggregated over all
+prefix positions:
+min
+θ
+E(τ,y)∼D
+"
+T
+T
+X
+t=1
+LBCE(fθ(τ:t), pt)
+#
+.
+(2)
+The per-trajectory 1/T normalization ensures equal weighting across trajectories of different lengths.
+At test time, the monitor raises an alert at step t if st > γ, where γ is a threshold calibrated on a
+validation set. The system is evaluated based on its ability to maximize AUPRC across all prefixes,
+which measures the ranking quality of risk scores against the imminent failure targets.
+3.1. A Diagnostic Observability Ceiling
+Before describing PrefixGuard, we characterize a representation-level limit on any trace-only prefix-
+warning method. Here observable is a statement about the current prefix representation, not about
+knowing the future verifier outcome. An observable failed prefix is a positive warning target
+whose already-seen trace contains distinguishable evidence, such as repeated tool errors, invalid
+retries, abnormal state, or a clear drift away from the task goal. A hidden failed prefix is positive
+only in hindsight: at the current time its visible trace is distributed like a negative prefix, and
+the failure evidence appears only in future steps or in the terminal verifier outcome. Building on
+prevalence-sensitive PR analysis [11, 7, 8] and contaminated-distribution label-noise models [31, 22],
+let π ∈[0, 1] be the fraction of positive warning prefixes that are observable in this representation:
+P(x | p=1) = πPobs + (1 −π)Pneg,
+Pneg := P(x | p=0),
+where x denotes the observed prefix representation. Even with unlimited training data, a trace-only
+scorer cannot rank the hidden component above negatives from the observed trace alone, inducing an
+AUPRC ceiling.
+Proposition 1 (AUPRC observability ceiling). Under the mixture above with positive-prefix rate
+r ∈(0, 1), for any monitor f with continuous score distributions the population AUPRC satisfies
+AUPRC(f) ≤A(π, r) := π + r(1 −π)2
+1 −πr
++ rπ(1 −π)(1 −r)
+(1 −πr)2
+ln 1
+πr,
+with A(0, r)=r and A(1, r)=1. The bound is tight and A is strictly increasing in π. The proof is in
+Appendix G.
+We use this only as an evaluation diagnostic. Forward π grids calibrate the AUPRC scale at each
+benchmark prevalence, and grid crossings are not estimates of the true latent π.
+4. Method
+PrefixGuard converts raw LLM-agent traces into online failure-warning monitors. StepView maps
+heterogeneous raw steps into canonical records using an LLM-assisted offline adapter for a fixed
+schema. The trainable backend combines an event abstraction layer with a prefix-warning monitor. It
+maps StepView fields to a learned event alphabet and calibrated prefix risks, and the backend can be
+instantiated as a GRU, Transformer, or soft-FSM. Hard learned symbols can also be compiled into
+PrefixGuard-DFA for finite-state audit diagnostics.
+4.1. StepView: LLM-Assisted Adapter Induction
+Raw execution steps from different agent benchmarks arrive in heterogeneous formats. A browser-
+agent step might carry a CSS selector in a structured action field, while a dialogue-agent step might
+carry a JSON tool call embedded inside a conversation turn. Writing a format-specific parser by hand
+is labor-intensive and does not scale to new benchmarks without fresh engineering effort.
+Offline adapter induction. StepView replaces manual parser authoring with a one-time LLM-
+assisted adapter-induction step over a fixed output schema. Given a sample pack drawn from training
+trajectories of a target benchmark, an LLM proposes a lightweight deterministic adapter, namely a
+field-extraction function that parses each raw step ct into a canonical StepView record consumed by
+the monitor:
+sv(ct) =
+ metadata, observation, action, tool, args, result, status
+
+.
+The induced adapter is fixed before monitor training and used by all downstream models. Validation
+and test traces are converted by this fixed parser with no deployment-time LLM inference and no
+step-level annotation. We review the generated adapter only for structural validity, without using
+downstream warning metrics to revise the field-extraction logic. Appendix B.4 gives the exact field
+mapping, fallback policy, and released adapter code.
+4.2. TF-IDF Step Encoder
+We serialize each StepView record in a fixed field-tagged order, using blocks such as METADATA,
+OBSERVATION, ACTION, and RESULT, and treat the resulting string as one document for TF-IDF [30].
+The vectorizer is fit only on training-step strings and then frozen for validation, test, and deployment.
+It upweights n-grams that are distinctive across the training corpus while downweighting common
+boilerplate. We use unigrams and bigrams, retain the top d=4096 features by corpus frequency, and
+ℓ2-normalize the vector to obtain et ∈Rd.
+4.3. Differentiable Event Abstraction Layer
+The TF-IDF embedding et captures lexical content but exposes no discrete structure suitable for
+automaton induction. We introduce an event abstraction layer that maps each step embedding to one
+of K latent symbols.
+Soft symbol assignment. A two-layer projection network with a GELU nonlinearity maps each step
+embedding to logits over K symbols, from which a Gumbel-softmax [17] yields a differentiable soft
+assignment over the K-symbol event alphabet:
+ℓt,k = W2 GELU(W1 et),
+αt = GumbelSoftmax(ℓt/τg) ∈∆K−1.
+The soft assignment αt ∈RK is passed directly to the prefix monitor, which applies its own projection
+or transition update. Gradients flow back through the Gumbel-softmax into the projection network.
+This approach to end-to-end discrete representation learning follows Baevski et al. [2].
+End-to-end alphabet induction. The projection weights W1, W2 are optimized jointly with the
+prefix monitor against Lpred. The learned event alphabet is shaped by the warning objective rather
+than supplied as a fixed input.
+4.4. Prefix-Warning Monitor
+The prefix-warning monitor fθ consumes the sequence of soft symbol assignments (α1, . . . , αt) from
+the abstraction layer and emits a scalar risk score at each prefix length. Any differentiable sequence
+model is compatible with this role. We study four backends: a recurrent model (PrefixGuard-GRU,
+our default online backend), a self-attention encoder (PrefixGuard-Transformer), a soft finite-state
+surrogate trained end-to-end (PrefixGuard-FSM), and a DFA extracted post-hoc from the hard
+symbols produced by the abstraction layer (PrefixGuard-DFA, §4.5). PrefixGuard-GRU is used as the
+default in cross-domain experiments.
+PrefixGuard-GRU. A linear projection with a single-layer GRU processes the symbol assignment:
+ht = GRU
+ GELU(W αt), ht−1
+
+,
+h0 = 0.
+A linear head maps each hidden state to a risk score st = σ(w⊤ht + b) ∈[0, 1].
+PrefixGuard-Transformer. A causally-masked Transformer encoder processes the symbol sequence.
+A linear head produces st = σ(w⊤ht + b). It attends globally over the prefix at higher per-step
+compute than the GRU.
+PrefixGuard-FSM. The soft-FSM head is a differentiable finite-state surrogate. It maintains a
+probability distribution qt ∈∆Q−1 over Q abstract states and updates it using the current soft event
+assignment through a learned transition tensor T ∈RK×Q×Q:
+˜Tt =
+K
+X
+k=1
+αt,k Tk,
+qt =
+qt−1 ˜Tt
+∥qt−1 ˜Tt∥1
+,
+q0 = softmax(θ0),
+with risk score st = σ(w⊤qt + b). Here qt is treated as a row vector. The soft-mixed transition ˜Tt
+blends all K symbol-conditioned matrices weighted by the current Gumbel-softmax assignment, and
+the initial state q0 is parameterised by a learnable vector θ0. The soft-FSM backend keeps its hidden
+state as a categorical distribution over Q states during neural deployment. The fully symbolic DFA
+reported separately in §4.5 is extracted from hard learned symbols and calibrated after training.
+Training objective. The loss combines binary cross-entropy over all prefix positions with a symbol-
+balance regularizer:
+L = λpredLpred + λbalanceLbalance,
+Lpred = −T −1 XT
+t=1 ℓt,
+ℓt = pt log st + (1 −pt) log(1 −st),
+Lbalance = Et[H(αt)] −β H(Et[αt]).
+Here H(·) is Shannon entropy. Minimizing per-step entropy sharpens each assignment toward a
+single symbol, while maximizing marginal entropy prevents symbol collapse. The full training
+procedure is given in Algorithm 1 (Appendix B).
+Deployment. For differentiable backends, each new raw step is converted by StepView into a
+canonical record, encoded by the TF-IDF encoder, assigned a soft symbol representation by the
+abstraction layer, and scored by the selected backend. For PrefixGuard-DFA, the deployed monitor
+instead hard-assigns a symbol and follows the extracted DFA transition function described next.
+4.5. Extracted DFA Monitor
+To probe how far the learned alphabet can be compressed into exact symbolic state, the hard symbols
+zt = arg maxk αt,k produced by the abstraction layer can be used to extract a finite automaton from
+training traces.
+DFA extraction. After training, we symbolize all training trajectories using hard symbols and fit
+an RPNI-style automaton [27] over the resulting symbol sequences. Each DFA state is assigned a
+calibrated risk score from held-out calibration trajectories. When the resulting automaton is used as a
+symbolic monitor, it follows the DFA transition function after each step and raises alerts when the
+current state risk exceeds a threshold. This extraction is reported as a finite-state audit diagnostic. We
+do not assume that a single monolithic DFA is equally suitable for all benchmarks.
+5. Experiments
+The experiments follow the four questions from Section 1. RQ1 tests whether observed prefixes
+contain warning signal without deployment-time LLM judging. RQ2 asks whether StepView exposes
+signal beyond the Raw-text control. RQ3 measures how far finite-state compression preserves
+warning signal and auditability. RQ4 moves from ranking to deployment. It separates AUPRC
+prevalence effects from visible evidence and early low-FAR alerts. Table 2 is the main evidence table.
+Supplementary diagnostics are in Appendix C-D.
+5.1. Experimental Setup
+Data and labels. We evaluate WebArena [46] browser navigation, τ 2-Bench [3] tool dialogue,
+SkillsBench [20] coding, and TerminalBench [23] CLI agents (Table 1). All methods use fixed
+train/calibration/validation/test splits. Calibration selects thresholds. Prefix labels follow Eq. 1 with
+fixed H=3, while Appendix E reports a validation-only H ∈{1, 3, 5} scan.
+Table 1: Dataset profile and prefix-label imbalance. Success is trajectory-level success; r is the
+positive-prefix rate on the test split under H=3, which is also the random-baseline AUPRC.
+Benchmark
+Agent setting
+Traj.
+Succ.
+Avg steps
+r
+Dominant observable signal
+WebArena
+Browser nav.
+4,427
+7.9%
+8.6
+36.3%
+Step-local task failure
+τ 2-Bench
+Tool dialogue
+10,832
+66.3%
+15.5
+8.9%
+Env. assertion / DB comm.
+SkillsBench
+Coding agent
+10,951
+27.5%
+32.4
+9.2%
+Verifier-side failure heavy
+TerminalBench
+CLI agent
+34,397
+32.2%
+36.9
+7.0%
+Coarse reward signal
+Primary metric. We use score-based AUPRC (average precision on continuous risk scores), whose
+random baseline is the positive-prefix rate r. Auxiliary AUROC, calibration, and operating-point
+diagnostics are reported in Appendix D.1. RQ4 adds trajectory-level first-alert diagnostics for
+deployable alarm burden. Calibration details are in Appendix D.7. AUPRC’s prevalence sensitivity
+motivates two readings. Table 2 reports within-benchmark ranking evidence, and RQ4 uses the
+observed r values and the observability ceiling to compare AUPRC scale across benchmarks.
+Shared baselines. Main comparisons cover zero-shot LLM judges, an outcome-oriented PPM
+activity-LSTM baseline, Raw-text controls with matched splits and architectures where available,
+and PrefixGuard monitor backends. Appendix diagnostics add auxiliary PPM metrics, non-sequential
+probes, and non-recurrent per-step scoring.
+5.2. RQ1: Recoverable Prefix-Warning Signal
+RQ1 asks whether observed prefixes expose recoverable failure-warning signal.
+Finding 1. Observed prefixes contain warning signal, and PrefixGuard converts it into online
+monitor state and auditable symbols.
+Table 2: Main AUPRC results compare zero-shot LLM judges, a PPM activity-LSTM control, a
+Raw-text control without using StepView, and PrefixGuard monitor backends. Values are mean ± σ
+over 3 seeds unless marked otherwise; bold marks the best PrefixGuard backend in each column.
+Configuration
+AUPRC
+Input view
+Head / scorer
+WebArena
+τ 2-Bench
+SkillsBench
+TerminalBench
+LLM baselines
+Prompt
+GPT-5.4-mini
+0.407
+0.302
+0.101
+0.127
+DeepSeek-V4-Pro
+0.450
+0.396
+0.080
+0.107
+PPM baseline
+StepView activity
+PPM LSTM
+0.382 ± 0.004
+0.231 ± 0.003
+0.089 ± 0.001
+0.093 ± 0.000
+Raw-text control
+Raw text
+DFA
+0.745 ± 0.034
+0.222 ± 0.017
+0.147 ± 0.005
+0.137 ± 0.008
+FSM
+0.639 ± 0.051
+0.466 ± 0.030
+0.260 ± 0.014
+0.272 ± 0.010
+Transformer
+0.854 ± 0.007
+0.597 ± 0.002
+0.315 ± 0.016
+0.363 ± 0.006
+GRU
+0.871 ± 0.004
+0.554 ± 0.006
+0.315 ± 0.006
+0.370 ± 0.001
+PrefixGuard monitors
+StepView
+DFA
+0.792 ± 0.015
+0.316 ± 0.055
+0.190 ± 0.021
+0.184 ± 0.029
+FSM
+0.837 ± 0.017
+0.614 ± 0.031
+0.273 ± 0.035
+0.447 ± 0.013
+Transformer
+0.892 ± 0.006
+0.710 ± 0.014
+0.478 ± 0.028
+0.555 ± 0.006
+GRU
+0.900 ± 0.015
+0.696 ± 0.004
+0.533 ± 0.020
+0.557 ± 0.005
+PG-GRU gain vs. Raw-text GRU
++0.029
++0.142
++0.218
++0.187
+PG denotes PrefixGuard. LLM baselines use zero-shot full-prefix prompts with samples N=200; Raw-text control and PG
+rows use the same H=3 labels and splits; Raw-text control changes only the input serialization. Raw-text DFA and PG-DFA
+are induced from their corresponding GRU artifacts.
+Table 2 evaluates this question by contrasting LLM-as-judge with learned PrefixGuard monitors
+under the same H=3 warning labels and held-out splits. The trend is consistent across trace families.
+The best zero-shot judge reaches 0.450 AUPRC on WebArena, remains below 0.40 on τ 2-Bench,
+and falls near 0.10 on SkillsBench and TerminalBench. The strongest PrefixGuard monitor reaches
+0.900/0.710/0.533/0.557 on WebArena, τ 2-Bench, SkillsBench, and TerminalBench. This gap is
+consistent with prefix signal being easier to learn from labeled prefixes than to recover from a
+zero-shot judge prompt. Appendix Table 15 adds supervised prefix-signal controls, while Table 16
+reports auxiliary metrics for the three-seed PPM activity-LSTM baseline. Appendix D.6 reports
+position/task-prior and future-length label-geometry controls. RQ2 then asks how heterogeneous raw
+traces should expose that signal to the monitor.
+5.3. RQ2: Typed Evidence Beyond Raw Serialization
+RQ2 asks whether StepView exposes failure-relevant evidence beyond the Raw-text control.
+Finding 2. StepView exposes typed post-action and state evidence, with the dominant field varying
+across trace families.
+We isolate representation by keeping the monitor model, split, horizon, and metric fixed while replac-
+ing only the input view, Raw-text serialization versus StepView fields. Table 2 shows a consistent
+overall advantage for PrefixGuard over the Raw-text control. Using the strongest backend available
+within each representation, PrefixGuard exceeds Raw-text by +0.029/ + 0.113/ + 0.218/ + 0.187
+AUPRC on WebArena, τ 2-Bench, SkillsBench, and TerminalBench, respectively, for an average
+gain of +0.137 AUPRC. Thus the main-table results support the overall conclusion that StepView
+improves prefix-risk ranking beyond raw serialization across all four benchmarks. Field drops in
+Table 3 show that the useful channel is benchmark-specific. WebArena is primarily result-sensitive
+(−0.204), TerminalBench is status-sensitive (−0.106), and observation-only inputs remove sub-
+stantial signal on τ 2-Bench and TerminalBench (−0.266/ −0.270). Appendix Tables 22 and 17
+provide the full field ablations and continuous StepView controls. RQ3 then tests how much of the
+exposed signal survives increasingly state-structured and exact finite-state monitor forms.
+5.4. RQ3: Signal Preservation Under Finite-State Compression
+RQ3 asks how much warning signal survives increasingly constrained monitor forms, from neural
+sequence models to exact DFA extraction.
+Table 3: StepView field-drop effects.
+AP denotes AUPRC.
+Benchmark
+All AP ∆tool ∆stat. ∆args ∆res. ∆obs.
+WebArena
+0.883
+-0.005
+-0.006 +0.022 -0.204
+-0.049
+τ 2-Bench
+0.702
++0.009 -0.007 +0.006 +0.004 -0.266
+SkillsBench
+0.549
++0.003 -0.015 +0.004 -0.008
+-0.026
+TerminalBench
+0.550
++0.027 -0.106 +0.024 +0.032 -0.270
+Table 4: DFA audit compactness.
+States denote posthoc counts.
+Bench.
+States Trust. % Warn. Top-5
+WebArena
+99.9
+6 0.551
+τ 2
+99.3
+3 0.920
+Skills
+98.5
+27 0.596
+Terminal
+99.9
+6 0.620
+Finding 3. Finite-state compression changes both ranking quality and audit surface. Neural
+monitors give the strongest ranking, while compact DFAs identify regimes where exact audit
+remains practical.
+We compare three levels of monitor structure on the same StepView signal, direct neural sequence
+monitors, a differentiable soft-FSM, and a post-hoc DFA extracted from learned hard symbols. Table 2
+shows a consistent compression trend. The strongest neural monitor reaches 0.900/0.710/0.533/0.557
+AUPRC on WebArena, τ 2-Bench, SkillsBench, and TerminalBench. The soft-FSM is lower but
+remains competitive on WebArena and τ 2-Bench. The exact DFA preserves less ranking signal,
+especially on τ 2-Bench and TerminalBench. Learned symbolic state can support online monitoring,
+but exact DFA extraction adds a stronger compactness constraint. Table 4 shows the single-artifact
+DFA audit sizes. WebArena and τ 2-Bench yield compact DFAs with 29 and 20 states, while
+SkillsBench and TerminalBench expand to 151 and 187 states. τ 2-Bench is compact but highly
+concentrated in its top states. The larger SkillsBench and TerminalBench automata preserve high
+trusted-prefix coverage with a broader audit surface. Appendix Table 9 gives the full DFA audit,
+Appendix D.10 adds qualitative state-alignment examples, and Appendix D.9 reports the Transformer
+seed-level comparison. RQ4 then asks how ranking, observability, and operating-point alarms relate
+under deployment constraints.
+5.5. RQ4: From Prefix Ranking to Deployment Utility
+RQ4 asks how prefix-ranking quality, visible evidence, and false-alarm-constrained alerts relate.
+Finding 4a. AUPRC is prevalence-conditioned. Cross-benchmark gaps can reflect label prevalence,
+not just monitor quality. Ceiling and MPE separate this scale effect from visible prefix evidence.
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Observable-positive fraction π
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+AUPRC
+Web
+TAU2
+Skills
+Terminal
+WebArena curve (r=0.363)
+TAU2Bench curve (r=0.089)
+SkillsBench curve (r=0.092)
+TerminalBench curve (r=0.070)
+PG-DFA
+PG-FSM
+PG-Transformer
+PG-GRU
+required π for PG-GRU AUPRC
+Figure 2: Forward AUPRC-ceiling calibration using Proposition 1. Curves show A(π, r); filled
+backend markers use independent MPE estimates (WebArena all-prefix, others matched non-terminal;
+Appendix G.2). Stars mark the minimum π required to attain PG-GRU AUPRC; shaded bands show
+MPE bootstrap CIs; vertical bars show AUPRC seed variation.
+Prevalence-conditioned AUPRC scale. Raw AUPRC is not on a common cross-benchmark scale.
+Under the shared H=3 label, WebArena’s short trajectories make near-end failed prefixes a large
+fraction of all test prefixes (r = 0.363), while τ 2-Bench, SkillsBench, and TerminalBench have much
+lower positive-prefix prevalence (r ≈0.07-0.09). Figure 2 calibrates this effect with the AUPRC
+envelope from Proposition 1. For the same observable fraction π, a larger r gives a higher random
+baseline and a higher achievable AUPRC scale. Thus WebArena’s 0.900 AUPRC reflects strong
+within-benchmark ranking on a prevalence-favorable scale, not stronger intervention utility. The star
+markers invert the bound and show the minimum π required to attain the observed PG-GRU AUPRC
+at each benchmark’s r. Numerically, the PG-GRU points correspond to πreq = 0.776 for WebArena,
+0.621 for τ 2-Bench, 0.430 for SkillsBench, and 0.478 for TerminalBench.
+Latent observability diagnostics. Latent observability is a property of the prefix distribution, not of
+the learned monitor alone. The filled backend markers provide a finite-sample mixture-proportion
+estimation (MPE) diagnostic ˆπMPE for whether failed prefixes are visibly distinguishable from
+negative references under an independent TF-IDF probe. WebArena uses an all-prefix audit because
+its trajectories are short, while the longer benchmarks use a matched non-terminal near-end audit that
+drops terminal prefixes and compares failed/successful prefixes in the same H=3 window. Reading
+stars and filled markers together separates what the achieved PG-GRU AUPRC implies under the
+ceiling from how much prefix separability the independent probe sees. τ 2-Bench and TerminalBench
+have high matched-prefix separability, so their lower raw AUPRCs should not be read as evidence
+that failures are hidden; rather, their lower r and imperfect monitor or threshold recovery keep the
+observed AUPRC and alert utility below what a fully exploited observable signal could support.
+Appendix G.2 gives the probe protocol and the MPE sensitivity caveats.
+0.00
+0.05
+0.10
+0.15
+0.20
+Test successful-trajectory FAR
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Failed first-alert recall
+(a) Any first alert
+0.00
+0.05
+0.10
+0.15
+0.20
+Test successful-trajectory FAR
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Early-before-window recall
+(b) Early before label window
+WebArena
+TAU2Bench
+SkillsBench
+TerminalBench
+Figure 3: First-alert diagnostics under FAR constraints for PrefixGuard-GRU (H=3). WebArena is
+rankable but not alarm-separable. τ 2 and Terminal retain high failed-trajectory recall.
+Finding 4b. Low-FAR actionability differs from ranking. WebArena ranks well but is not separable
+as an alarm, while τ 2-Bench and TerminalBench retain stronger recall and earlier alerts.
+Table 5: First-alert utility at H=3 and 10%
+FAR. Fail/Early are any/pre-window failed-
+trajectory recall; Lead is remaining trajec-
+tory fraction.
+Bench.
+FAR
+Fail Early Lead
+WebArena 0.079 0.287 0.007 0.026
+τ 2
+0.089 0.979 0.192 0.106
+Skills
+0.105 0.954 0.039 0.017
+Terminal
+0.101 0.965 0.178 0.215
+Alarm actionability. Actionability adds an operating-
+point requirement. The score threshold must control
+false alarms while firing early enough to support in-
+tervention. At a 10% calibration FAR cap (Figure 3,
+Table 5), WebArena remains terminal-window triage
+despite 0.900 AUPRC, τ 2-Bench is the clearest inter-
+vention setting, TerminalBench keeps useful lead time,
+and SkillsBench catches failures with high precision
+but late timing. Thus the phenomenon is a three-way
+mismatch. AUPRC measures risk ranking, MPE esti-
+mates visible prefix evidence, and deployment requires low-FAR early alerts before the terminal
+H-step window. Appendix C.4 provides the full first-alert FAR sweep.
+6. Limitations and Conclusion
+Limitations. PrefixGuard synthesizes monitors from execution traces rather than complete interven-
+tion policies. Warnings still require visible prefix evidence, low-FAR separability, and a deployment
+action after an alert. The fixed horizon and FAR caps are evaluation controls, and MPE coordinates are
+probe- and protocol-specific diagnostics rather than certified population π estimates. The finite-state
+path is audit-friendly only in compact regimes; routed DFA extraction under deployment-visible
+context remains a future direction, not a locked-test deployment claim (Appendix B.9).
+Conclusion. PrefixGuard maps heterogeneous agent traces into typed StepView prefixes, learns
+failure-aligned event symbols, and produces online risk scores without deployment-time LLM judging.
+Across four benchmarks, typed post-action evidence improves warning over raw controls, while
+observability and low-FAR diagnostics reveal when high ranking supports intervention rather than
+terminal-window triage.
+References
+[1] G. Ammons, R. Bodík, and J. R. Larus. Mining specifications. Conference Record of POPL
+2002, 2002.
+[2] A. Baevski, S. Schneider, and M. Auli. vq-wav2vec: Self-Supervised Learning of Discrete
+Speech Representations. International Conference on Learning Representations (ICLR), 2020.
+[3] V. Barres, H. Dong, S. Ray, X. Si, and K. Narasimhan. τ 2-Bench: Evaluating Conversational
+Agents in a Dual-Control Environment. arXiv:2506.07982, 2025.
+[4] E. Bartocci, J. V. Deshmukh, A. Donzé, G. E. Fainekos, O. Maler, et al. Specification-Based
+Monitoring of Cyber-Physical Systems: A Survey on Theory, Tools and Applications. Lectures
+on Runtime Verification: Introductory and Advanced Topics, 2018.
+[5] A. Bauer, M. Leucker, and C. Schallhart. Runtime Verification for LTL and TLTL. ACM
+Transactions on Software Engineering and Methodology, 2011.
+[6] G. Blanchard, G. Lee, and C. Scott. Semi-Supervised Novelty Detection. Journal of Machine
+Learning Research, 2010.
+[7] K. Boyd, V. S. Costa, J. Davis, and C. D. Page. Unachievable Region in Precision-Recall Space
+and Its Effect on Empirical Evaluation. Proceedings of the 29th International Conference on
+Machine Learning, 2012.
+[8] K. Boyd, K. H. Eng, and C. D. Page. Area Under the Precision-Recall Curve: Point Estimates
+and Confidence Intervals. Machine Learning and Knowledge Discovery in Databases, 2013.
+[9] S. Burdisso, S. Madikeri, and P. Motlicek. Dialog2Flow: Pre-training Soft-Contrastive Action-
+Driven Sentence Embeddings for Automatic Dialog Flow Extraction. Proceedings of the 2024
+Conference on Empirical Methods in Natural Language Processing (EMNLP), 2024.
+[10] A. Dachraoui, A. Bondu, and A. Cornéjols. Early classification of time series as a non-myopic
+sequential decision making problem. Joint European Conference on Machine Learning and
+Knowledge Discovery in Databases (ECML PKDD), 2015.
+[11] J. Davis and M. Goadrich. The Relationship Between Precision-Recall and ROC Curves.
+Proceedings of the 23rd International Conference on Machine Learning, 2006.
+[12] M. Du, F. Li, G. Zheng, and V. Srikumar. DeepLog: Anomaly Detection and Diagnosis from
+System Logs through Deep Learning. Proceedings of the 2017 ACM SIGSAC Conference on
+Computer and Communications Security (CCS), 2017.
+[13] S. A. Fahrenkrog-Petersen, N. Tax, I. Teinemaa, M. Dumas, M. de Leoni, et al. Fire now, fire
+later: alarm-based systems for prescriptive process monitoring. Knowledge and Information
+Systems, 2022.
+[14] M. Günther, J. Ong, I. Mohr, A. Abdessalem, T. Abel, et al. Jina Embeddings 2: 8192-Token
+General-Purpose Text Embeddings for Long Documents. arXiv:2310.19923, 2023.
+[15] S. He, J. Zhu, P. He, and M. R. Lyu. Experience Report: System Log Analysis for Anomaly
+Detection. 2016 IEEE 27th International Symposium on Software Reliability Engineering
+(ISSRE), 2016.
+[16] J. Hu, Y. Dong, Y. Sun, and X. Huang. Tapas Are Free! Training-Free Adaptation of Program-
+matic Agents via LLM-Guided Program Synthesis in Dynamic Environments. Proceedings of
+the AAAI Conference on Artificial Intelligence, 2026.
+[17] E. Jang, S. Gu, and B. Poole. Categorical Reparameterization with Gumbel-Softmax. Interna-
+tional Conference on Learning Representations (ICLR), 2017.
+[18] M. Leucker and C. Schallhart. A brief account of runtime verification. J. Log. Algebraic
+Methods Program., 2009.
+[19] W. Li. Specification Mining: New Formalisms, Algorithms and Applications. EECS Department,
+University of California, Berkeley, 2014.
+[20] X. Li, W. Chen, Y. Liu, S. Zheng, X. Chen, et al. SkillsBench: Benchmarking How Well Agent
+Skills Work Across Diverse Tasks. arXiv:2602.12670, 2026.
+[21] D. Lo and S. Khoo. SMArTIC: towards building an accurate, robust and scalable specification
+miner. Proceedings of the 14th ACM SIGSOFT International Symposium on Foundations of
+Software Engineering, 2006.
+[22] A. Menon, B. Van Rooyen, C. S. Ong, and B. Williamson. Learning from Corrupted Binary
+Labels via Class-Probability Estimation. Proceedings of the 32nd International Conference on
+Machine Learning, 2015.
+[23] M. A. Merrill, A. G. Shaw, N. Carlini, B. Li, H. Raj, et al. Terminal-Bench: Benchmarking
+Agents on Hard, Realistic Tasks in Command Line Interfaces. arXiv:2601.11868, 2026.
+[24] U. Mori, A. Mendiburu, S. Dasgupta, and J. A. Lozano. Early classification of time series by
+simultaneously optimizing the accuracy and earliness. IEEE Transactions on Neural Networks
+and Learning Systems, 2017.
+[25] E. Muškardin, B. K. Aichernig, I. Pill, A. Pferscher, and M. Tappler. AALpy: an active automata
+learning library. Innovations in Systems and Software Engineering, 2022.
+[26] Z. Nussbaum, J. X. Morris, A. Mulyar, and B. Duderstadt. Nomic Embed: Training a Repro-
+ducible Long Context Text Embedder. Transactions on Machine Learning Research, 2025.
+[27] J. Oncina and P. Garcia. Inferring regular languages in polynomial update time. Pattern
+Recognition and Image Analysis, 1992.
+[28] J. Pan, Y. Zhang, N. Tomlin, Y. Zhou, S. Levine, et al. Autonomous Evaluation and Refinement
+of Digital Agents. Proceedings of the First Conference on Language Modeling (COLM), 2024.
+[29] H. Ramaswamy, C. Scott, and A. Tewari. Mixture Proportion Estimation via Kernel Embeddings
+of Distributions. Proceedings of the 33rd International Conference on Machine Learning, 2016.
+[30] G. Salton and C. Buckley. Term-weighting approaches in automatic text retrieval. Information
+Processing & Management, 1988.
+[31] C. Scott, G. Blanchard, and G. Handy. Classification with Asymmetric Label Noise: Consistency
+and Maximal Denoising. Proceedings of the 26th Annual Conference on Learning Theory,
+2013.
+[32] M. Shvo, A. C. Li, R. Toro Icarte, and S. A. McIlraith. Interpretable Sequence Classification
+via Discrete Optimization. Proceedings of the Thirty-Fifth AAAI Conference on Artificial
+Intelligence, 2021.
+[33] R. Sinha, E. Schmerling, and M. Pavone. Closing the Loop on Runtime Monitors with Fallback-
+Safe MPC. 2023 62nd IEEE Conference on Decision and Control (CDC), 2023.
+[34] M. N. Sreedhar, T. Rebedea, and C. Parisien. Unsupervised Extraction of Dialogue Policies
+from Conversations. Proceedings of the 2024 Conference on Empirical Methods in Natural
+Language Processing (EMNLP), 2024.
+[35] N. Tax, I. Verenich, M. La Rosa, and M. Dumas. Predictive Business Process Monitoring with
+LSTM Neural Networks. Advanced Information Systems Engineering (CAiSE), 2017.
+[36] I. Teinemaa, M. Dumas, M. La Rosa, and F. M. Maggi. Outcome-Oriented Predictive Process
+Monitoring: Review and Benchmark. ACM Transactions on Knowledge Discovery from Data,
+2019.
+[37] B. von Berg and B. K. Aichernig. Extending AALpy with Passive Learning: A Generalized
+State-Merging Approach. Computer Aided Verification (CAV 2025), 2025.
+[38] Z. Wang, H. Tu, L. Zhang, H. Chen, J. Wu, et al. Your Agent, Their Asset: A Real-World Safety
+Analysis of OpenClaw. 2026.
+[39] Z. Z. Wang, J. Mao, D. Fried, and G. Neubig. Agent Workflow Memory. Proceedings of the
+42nd International Conference on Machine Learning, 2025.
+[40] G. Weiss, Y. Goldberg, and E. Yahav. Extracting Automata from Recurrent Neural Networks
+Using Queries and Counterexamples. Proceedings of the 35th International Conference on
+Machine Learning, ICML 2018, 2018.
+[41] T. Xie, D. Zhang, J. Chen, X. Li, S. Zhao, et al. OSWorld: Benchmarking Multimodal Agents
+for Open-Ended Tasks in Real Computer Environments. Advances in Neural Information
+Processing Systems, 2024.
+[42] Z. Xie, R. Elbadry, F. Zhang, G. Georgiev, X. Peng, et al. The CLEF-2026 FinMMEval
+Lab: Multilingual and Multimodal Evaluation of Financial AI Systems. Advances in Informa-
+tion Retrieval: 48th European Conference on Information Retrieval, ECIR 2026, Delft, The
+Netherlands, March 29-April 2, 2026, Proceedings, Part IV, 2026.
+[43] J. Yang, C. E. Jimenez, A. Wettig, K. Lieret, S. Yao, et al. SWE-agent: Agent-Computer
+Interfaces Enable Automated Software Engineering. Advances in Neural Information Processing
+Systems, 2024.
+[44] Y. Zhang, M. Li, D. Long, X. Zhang, H. Lin, et al. Qwen3 Embedding: Advancing Text
+Embedding and Reranking Through Foundation Models. arXiv:2506.05176, 2025.
+[45] L. Zheng, W. Chiang, Y. Sheng, S. Zhuang, Z. Wu, et al. Judging LLM-as-a-Judge with MT-
+Bench and Chatbot Arena. Advances in Neural Information Processing Systems 36: NeurIPS
+2023, 2023.
+[46] S. Zhou, F. F. Xu, H. Zhu, X. Zhou, R. Lo, et al. WebArena: A Realistic Web Environ-
+ment for Building Autonomous Agents. The Twelfth International Conference on Learning
+Representations, ICLR 2024, 2024.
+A. Extended Related Work
+LLM-agent evaluation and judges.
+Agent benchmarks usually assign success only after a tra-
+jectory has ended, either through environment-specific task verifiers [46, 3, 20, 23] or through
+retrospective LLM-as-judge protocols [45]. Autonomous evaluator and refinement systems similarly
+score or improve completed attempts after observing the full interaction [28]. These protocols are
+appropriate for benchmark grading, but they do not provide a deployable early-warning signal: con-
+verting a judge into an online monitor requires repeated inference on every prefix, and the judge still
+reasons over a raw heterogeneous history rather than a calibrated temporal state. PREFIXGUARD tar-
+gets the complementary setting. It learns domain-calibrated temporal statistics from outcome-labeled
+prefixes and emits online risk scores at each step without deployment-time LLM inference.
+Runtime verification and specification mining.
+Classical runtime verification and specification-
+based monitoring check traces against formal properties over known signals and event vocabular-
+ies [18, 5, 4]. Specification mining instead infers likely behavioral rules from observed execu-
+tions [1, 21, 19], and recent work has explored closing the loop between runtime monitors and
+autonomous decision making [33]. These lines of work supply the right conceptual goal-monitor
+an evolving execution rather than grade only the final outcome-but they rely on a stable observa-
+tion alphabet, a fixed formalism, or a queryable system interface. LLM-agent traces violate these
+assumptions: a single run can mix browser actions, tool calls, dialogue turns, shell outputs, and
+benchmark-specific metadata under evolving logging formats. STEPVIEW addresses this interface
+gap by inducing a typed adapter once from raw training traces, then freezing deterministic field
+extraction before monitor training and evaluation.
+Trace abstraction and prefix prediction.
+Dialogue-flow extraction and workflow-memory meth-
+ods recover recurring conversational or agentic behavior patterns [9, 34, 39]. Predictive process
+monitoring and prescriptive alarm systems use prefixes to anticipate case outcomes or trigger in-
+terventions in structured workflows [36, 35, 13], while log anomaly detection learns from system
+log templates and event sequences [12, 15]. Early time-series classification further motivates fixed-
+horizon prediction, where a decision is useful only if made before the terminal event [10, 24].
+PREFIXGUARD adapts this prefix-prediction viewpoint to LLM-agent execution. The warning label
+is tied to a finite horizon before terminal failure, but the event alphabet is not given by a process
+engine or log parser; the monitor must learn representations and risk states from typed, partially
+benchmark-specific step records.
+Precision-recall ceilings and contaminated distributions.
+Our observability ceiling is closest
+to metric-theoretic work on precision-recall curves and statistical work on mutually contaminated
+distributions. PR curves are especially sensitive to class skew, their achievable regions differ from
+ROC geometry, and AUCPR/AP estimation depends on the interpolation convention [11, 7, 8].
+Separately, asymmetric label-noise, positive-unlabeled, and mixture-proportion estimation work
+studies when an observed distribution is a mixture of latent components and when the mixture
+weight is identifiable [6, 31, 22, 29]. We combine these ideas in a prefix-warning-specific diagnostic:
+if a fraction of failed prefixes is distributionally identical to negatives under the observed trace
+representation, no trace-only scorer can rank that hidden component above negatives, inducing a
+prevalence-dependent AUPRC envelope.
+Auditable neural-symbolic monitors.
+Finite-state models are attractive for online monitoring
+because they expose a compact state space that can be inspected after deployment. Prior work extracts
+automata from recurrent networks [40], learns interpretable DFA sequence classifiers through discrete
+optimization [32], and provides active automata-learning tooling for queryable systems [25, 37].
+These methods typically assume fixed symbolic observations or access to a system that can answer
+membership/equivalence-style queries. PREFIXGUARD uses finite-state structure more conservatively:
+learned symbols can be compiled into calibrated state-risk machines, but DFA extraction is treated
+as an audit artifact rather than as a guarantee that every benchmark admits a small exact automaton.
+Our cross-benchmark results therefore position neural-symbolic monitoring as a useful diagnostic
+boundary: finite-state inspection is strongest when the induced automaton is compact and risk-
+separating, and weaker when heterogeneous traces require larger, less concentrated state machines.
+B. Implementation Details
+Algorithm 1 TRAINPREFIXWARNINGMONITOR
+Require: training trajectories Dtrain, calibration trajectories Dcal, validation trajectories Dval, hori-
+zon H, monitor backend
+1: Induce the deterministic StepView adapter from Dtrain using the offline LLM-assisted schema
+step
+2: Fit a single TF-IDF vectorizer on concatenated StepView text from Dtrain; encode all steps to
+embeddings {et}
+3: Assign prefix labels: pt = 1[y = 0 and t ≥T −H]
+4: Initialize symbol projection network, selected monitor backend, and linear scorer
+5: for each training epoch do
+6:
+Compute soft symbol assignments αt from embeddings; run monitor backend; compute L;
+update all parameters
+7:
+if epoch mod eval_every = 0 then
+8:
+Evaluate score-based AUPRC on Dval; save best checkpoint
+9:
+end if
+10: end for
+11: if DFA extraction is requested then
+12:
+Symbolize Dtrain with hard states; fit RPNI DFA
+13:
+Calibrate per-state risk from Dcal
+14: end if
+15: return best checkpoint, (optionally) compiled DFA
+B.1. Artifact Availability
+The anonymous code artifact is available at 
+PrefixGuard-CF8A. It contains the code and release materials for reproducing the training, evalua-
+tion, StepView induction, and DFA-audit procedures described in this appendix.
+B.2. Compute Resources
+All neural monitor experiments were run on a local workstation with two AMD EPYC 7452 central
+processing units (CPUs), 125 GiB random-access memory (RAM), and three NVIDIA A100-PCIE-
+40GB graphics processing units (GPUs). Each training or locked-test evaluation job used a single
+A100 via CUDA_VISIBLE_DEVICES; no reported experiment used distributed or multi-GPU training.
+Final paper-facing runs used Python 3.10.18 and PyTorch 2.11.0+cu130. Typical single-run training
+time ranged from about 30-45 minutes for τ 2-Bench/SkillsBench to about 2-3.5 hours for WebAre-
+na/TerminalBench, with locked-test evaluation usually under 15 minutes. CPU-only controls, DFA
+diagnostics, and large language model (LLM) application programming interface (API) calls ran on
+the same host CPU; preliminary sweeps and appendix ablations required additional compute beyond
+the final reported runs.
+B.3. LLM API Checkpoints
+Table 6 lists the LLM API checkpoints used in the paper. PrefixGuard itself does not call an LLM at
+deployment time; LLM calls are used only for offline StepView induction/auditing and for zero-shot
+LLM-as-judge baselines.
+Table 6: Large language model (LLM) application programming interface (API) checkpoints used for
+offline adapter induction and LLM baseline evaluation.
+Role
+Provider
+Checkpoint
+Protocol
+LLM induction checkpoint
+OpenAI
+gpt-5.4-nano
+Offline adapter induction for all bench-
+marks,
+with temperature=0.0 and
+strict JSON schema validation.
+LLM judge baseline
+OpenAI
+gpt-5.4-mini
+Zero-shot full-prefix judge, N=200 pre-
+fixes per benchmark, JSON probability
+output.
+LLM judge baseline
+DeepSeek
+deepseek-v4-pro
+Zero-shot full-prefix judge, N=200 pre-
+fixes per benchmark, 1M context window
+with thinking disabled.
+B.4. StepView Canonicalization
+StepView field types are inferred from training trajectories using a one-time offline LLM-assisted
+schema induction process. The LLM inspects a small sample of raw training traces and proposes
+benchmark-specific structural cues for deterministic field extraction. The resulting adapter maps each
+step into the canonical fields metadata, observation, action, tool, args, result, and status;
+after this induction step, all train/test conversion is performed by fixed code with no LLM inference.
+In code, these are stored as StepView.metadata_lines, observation_lines, action_text,
+tool_name, tool_args_text, result_text, and status. The induction prompt below uses
+adapter target names such as metadata, action, and tool; these serialize into the monitor-facing
+METADATA, OBSERVATION, ACTION, and RESULT blocks used in the main experiments.
+Induction protocol. To prevent data contamination, the LLM induction step uses only trajectories
+from the training split. Specifically, the adapter-proposal script scans the first 64 training trajectories,
+constructs a deterministic 12-step raw sample pack for the LLM induction prompt, and obtains a
+deterministic field-extraction adapter. No validation or test trajectories are used during induction.
+The generated adapter is reviewed for structural correctness (e.g., ensuring all expected fields are
+populated) but is not manually tuned to improve AUPRC; the induction prompt and generated
+adapter code are released with the codebase. Human effort estimate. The structural-correctness
+review for each new benchmark took under 30 minutes (one-time), consisting of spot-checking that
+required fields (tool_name, status) were populated and that the fallback rate was zero; no iterative
+re-prompting or manual field-extraction code was written. No human re-authoring of field-extraction
+logic was required; the induction prompt produces a working adapter from the first LLM call on all
+four benchmarks in this work. Steps with unknown tool names at test time fall back to a monolithic
+text encoding of the full step string. The adapter is deterministic once fixed; the offline induction
+design and prompt template are specified separately in Appendix B.5.
+Transfer. Transfer to a new benchmark (τ 2-Bench) reuses the same induction procedure on the
+target training split, producing a new set of field patterns without modifying the model architecture or
+manually adjusting any parsing rules.
+Parse coverage. Table 7 reports per-field fill rates across all four benchmarks. All four benchmarks
+achieve 100% coverage for tool_name and status, with 0% fallback rate across all 1.8M total steps.
+result fill rates vary (WebArena 87%) because some navigation actions produce no structured return
+value, which is expected behavior rather than a parsing failure. args fill rates vary across benchmarks
+because τ 2-Bench dialogue turns often carry no structured arguments. No human re-editing of
+field-extraction logic was required for any benchmark; the induction prompt and generated adapter
+code are released.
+Table 7: StepView parse coverage: per-field fill rates across all benchmarks (0% fallback on all four).
+Benchmark
+Total steps
+tool_name
+result
+args
+status
+Fallback
+WebArena
+18,731
+100%
+87%
+100%
+100%
+0%
+τ 2-Bench
+167,504
+100%
+100%
+41%
+100%
+0%
+SkillsBench
+355,095
+100%
+100%
+76%
+100%
+0%
+TerminalBench
+1,269,101
+100%
+100%
+85%
+100%
+0%
+B.5. StepView Adapter-Induction Design and Prompt
+Because StepView uses an offline LLM call to propose a dataset-specific adapter, we specify the
+induction step as a fixed data-access and prompting protocol. This protocol is separate from the
+downstream monitor experiments: it does not train a warning model, change a split, change labels, or
+alter any metric.
+Design. For each benchmark, the adapter-proposal script constructs one deterministic sample pack
+of 12 raw steps from the first 64 training trajectories considered by the script. Candidate steps are
+bucketed as initial, mid-trajectory, tool/action, or anomalous, using fixed quotas of 4/4/2/2; within
+each bucket, examples are ordered by sha256(trajectory_id:step_index), so the sample pack
+is fixed for a given dataset artifact. The proposal call uses gpt-5.4-nano, temperature=0.0, the
+prompt template below, and a strict JSON schema. The accepted output must pass schema validation
+and executor-support validation before it is versioned and used by downstream conversion.
+Prompt. The induction prompt fixes the adapter target fields, restricts the model to repository-
+supported selectors, and requires strict JSON output. Listing 1 shows the template with the field-
+name mapping made explicit; the placeholders are filled with the allowed selector enums and the
+deterministic 12-step sample pack.
+Listing 1
+StepView Adapter-Induction Prompt Template
+You are inferring a dataset-specific adapter spec for fixed StepView adapter targets.
+The adapter targets are fixed and serialize to the monitor-facing StepView representation
+as follows:
+- metadata -> StepView.metadata_lines -> METADATA=[...]
+- observation -> StepView.observation_lines -> OBSERVATION=[...]
+- action -> StepView.action_text -> ACTION=[action=...]
+- tool -> StepView.tool_name -> ACTION=[tool=...]
+- args -> StepView.tool_args_text -> ACTION=[args=...]
+- result -> StepView.result_text -> RESULT=[text=...]
+- status -> StepView.status -> RESULT=[status=...]
+Your task is NOT to invent new adapter target fields.
+Your task is to infer how this dataset’s raw steps should map into these fixed targets.
+Requirements:
+1. Be conservative.
+2. Prefer exact extraction over semantic rewriting.
+3. If a field is unavailable, mark it as unknown or derive:none.
+4. Distinguish:
+- metadata: slow-changing task/domain identifiers
+- observation: what is visible before the action
+- action: the agent decision or emitted action text
+- tool: the invoked tool/function/action primitive
+- args: structured parameters for the tool/action
+- result: environment/tool/user feedback after the action
+- status: local execution state, native if possible, otherwise weakly derivable
+5. Choose one observation unit:
+- line
+- dialogue_turn
+- log_block
+- kv_block
+- none
+6. Choose one reducer kind:
+- lexical_lines
+- dialogue_turns
+- log_blocks
+- kv_blocks
+- none
+7. Only normalize tools when the aliases are obviously operationally identical.
+8. Output JSON only, following the adapter-spec JSON schema exactly.
+Allowed selectors for this repository’s phase-1 executor:
+- metadata_sources items: <allowed_metadata_selectors>
+- observation_source: <allowed_observation_selectors>
+- action_source: <allowed_action_selectors>
+- tool_source: <allowed_tool_selectors>
+- args_source: <allowed_args_selectors>
+- result_source: <allowed_result_selectors>
+- status_source: <allowed_status_selectors>
+Target dataset: <dataset_name>
+Below is a representative sample pack. Infer one adapter spec that should work for this
+dataset family.
+<sample_pack_json>
+B.6. TF-IDF Encoding
+All StepView fields for a step are concatenated into one canonical text string. A single TF-IDF
+vectorizer is fit on these step strings from the training split and then frozen for validation and
+test encoding. The TF-IDF vocabulary is capped at d = 4096 features. We treat this as a fixed
+representation budget rather than a benchmark-tuned hyperparameter: the same cap is used for all
+GRU, Transformer, and FSM runs, as well as the extracted-DFA audits. The cap is large enough
+to retain benchmark-specific unigrams and bigrams after field-tagged serialization, but keeps the
+encoder compact and prevents method comparisons from receiving different lexical feature budgets.
+B.7. Trainable Monitor Hyperparameters
+The event symbolizer is a two-layer MLP with hidden dimension 128 that maps frozen TF-IDF
+step embeddings to K soft event-symbol probabilities. For the direct GRU head, these probabilities
+are projected to Qmax dimensions and consumed by a single-layer GRU with hidden size Qmax,
+followed by a linear sigmoid scoring head. The soft-FSM head uses the same symbolizer and the
+benchmark-specific K and Qmax budgets listed below.
+Training: AdamW optimizer, learning rate 10−3, weight decay 10−4, batch size 64 trajectories, and
+24 epochs for all paper-facing trainable monitor runs. Validation is run after every epoch, and the
+checkpoint with the best validation AUPRC under the run’s selection metric is used for locked-test
+evaluation. Prefix labels use H = 3. Maximum sequence length: 64 steps; trajectories longer than 64
+steps are truncated to the most recent 64 steps.
+Loss weights follow the training objective in Section 4.4: λpred = 1.0 and λbalance = 0.1 for
+all paper-facing runs. The balance term is therefore a weak, fixed anti-collapse constraint on the
+learned event alphabet, not a benchmark-specific tuning knob. Its role is to sharpen per-step symbol
+assignments while discouraging marginal symbol collapse; the prefix-warning binary cross-entropy
+remains the dominant training objective.
+B.8. FSM Head and DFA Extraction
+The soft-state budget is benchmark-specific:
+Table 9: Automated cross-benchmark DFA posthoc audit shows that finite-state auditability is clearest
+in compact regimes and weakens as state counts grow. AUPRC/AUROC are single-artifact audit
+scores, whereas Table 2 reports the extracted-twin seed aggregate for PrefixGuard-DFA. The audit
+summarizes DFA structure and calibrated state risk; it is not a human interpretability study.
+Benchmark
+AUPRC
+AUROC
+States
+Trusted
+Warning
+Top-5 Share
+Max Risk
+WebArena
+0.649
+0.771
+27
+0.551
+0.857
+τ 2-Bench
+0.248
+0.776
+13
+0.920
+0.372
+SkillsBench
+0.169
+0.663
+74
+0.596
+0.589
+TerminalBench
+0.145
+0.676
+166
+0.620
+0.269
+Benchmark
+K
+Qmax
+H
+WebArena
+16
+τ 2-Bench
+16
+SkillsBench
+16
+TerminalBench
+32
+These settings are protocol-level capacity controls rather than test-set-tuned hyperparameters. We
+match Qmax to K so that the soft-FSM state budget does not introduce extra hidden capacity beyond
+the learned event alphabet size. The default K=16 is the smallest alphabet budget used in the
+final cross-benchmark protocol that preserved stable validation behavior while keeping extracted
+automata inspectable. TerminalBench uses K=32, Qmax=32 because its command-line trajectories
+are longer and more heterogeneous (Table 1), and pilot trajectory-split runs showed a modest benefit
+from the larger codebook. We do not treat larger alphabets as uniformly preferable: they expand
+the downstream DFA audit surface, and SkillsBench pilots with larger alphabets did not dominate
+the selected K=16 task-sidechannel configuration. Soft assignment temperature τg = 0.5 during
+training. DFA induction: RPNI algorithm [27] applied to hard-assigned symbol sequences from
+training trajectories. Ambiguous traces (same symbol sequence appearing in both positive and
+negative training examples) are filtered before DFA induction. Per-state risk calibration uses a
+held-out calibration split (10% of training data, fixed).
+Table 8 reports per-benchmark DFA coverage statistics for the seed-aggregate PrefixGuard-DFA
+runs (mean across seeds). These seed-level state counts support the coverage and filtering audit; the
+single-artifact state counts used for the compactness narrative are reported separately in Table 9. The
+abstention rate is the fraction of test prefixes that fall into DFA states with fewer than the minimum-
+count threshold and are therefore rejected for inference. The trusted prefix rate is 1 −abstention rate;
+both are computed on the locked test split. On WebArena and TerminalBench, abstention is about
+0.1% or lower; on SkillsBench, the high lexical diversity of bash commands inflates the abstention
+rate to 1.47% and produces substantially more seed-level DFA states (117 ± 12).
+Table 8: DFA coverage and filtering statistics (mean ± σ over seeds; locked test split). Abstention
+rate = fraction of prefixes rejected by minimum-count DFA state filter.
+Benchmark
+Seed states
+Abstention
+Trusted
+DFA AUPRC
+WebArena
+32 ± 7
+0.10%
+99.90%
+0.792 ± 0.015
+τ 2-Bench
+16 ± 4
+0.71%
+99.29%
+0.315 ± 0.067
+SkillsBench
+117 ± 12
+1.47%
+98.53%
+0.190 ± 0.021
+TerminalBench
+184 ± 3
+0.06%
+99.94%
+0.184 ± 0.029
+B.9. Automated Cross-Benchmark DFA Posthoc Audit
+To separate DFA inspection evidence from human interpretability evidence, we ran an automated
+posthoc audit over existing locked-test DFA artifacts for WebArena, τ 2-Bench, SkillsBench, and
+TerminalBench. The audit reports calibrated DFA metrics, trusted-state coverage, warning-state
+counts, and concentration of routed prefixes in the five most frequent states.
+Table 9 shows that WebArena has the most compact and risk-separating automaton among the four
+benchmarks. τ 2-Bench is compact, but its top five states cover 92.0% of prefixes, so the audit surface
+is concentrated and less diagnostic. SkillsBench and TerminalBench preserve high trusted-prefix
+coverage but expand to 151 and 187 states, respectively, weakening any claim that the extracted DFA
+Table 10: Validation-only hierarchical DFA diagnostic for benchmarks where a single extracted DFA
+weakens. Routes use deployment-visible metadata where possible; "route prior" is a calibration-label
+baseline with no DFA transitions. ∆G is AUPRC gain over the matched global DFA, and ∆P is
+gain over the route-only prior. These are sanity diagnostics for finite-state auditability limits, not
+locked-test performance claims.
+Benchmark
+Route key / system
+AUPRC AUROC
+∆G
+∆P
+Routes States
+Local states Top-5 share Interpretation
+SkillsBench
+global / task-family collapsed
+0.1876
+0.6685
+-
+-
+134 134 / 134 / 134 -
+reproduction sanity
+SkillsBench
+agent-model route prior
+0.1425
+0.5773 −0.0451
+-
+19
+1 / 1 / 1 -
+control only
+SkillsBench
+agent-model hierarchical DFA
+0.1925
+0.6311 +0.0048 +0.0500
+280
+52 / 8 / 36.2 0.9636
+weak partial recovery
+TerminalBench global before cluster stop
+0.1377
+0.6685
+-
+-
+187 187 / 187 / 187 -
+cluster RPNI too slow
+TerminalBench agent-model route prior
+0.1697
+0.7107 +0.0320
+-
+45
+1 / 1 / 1 -
+control only
+TerminalBench agent-model hierarchical DFA
+0.2483
+0.7715 +0.1106 +0.0786
+709
+45 / 13 / 29.8 0.9267
+positive routed-DFA sanity
+is uniformly easy to inspect across benchmarks. This audit is fully automatic; it does not measure
+human agreement, actionability, or annotation reliability.
+Table 10 reports validation-only routed-DFA diagnostics for SkillsBench and TerminalBench, where a
+single extracted DFA is largest. These diagnostics keep the trained monitor and hard-symbol protocol
+fixed, change only the post-hoc DFA extraction into deployment-visible routes, and compare against
+route-only calibration baselines. They suggest that hierarchical or mixture-of-DFA extraction may
+improve auditability, but the evidence is deliberately kept as future-work motivation rather than a
+locked-test deployment claim.
+C. Dataset Details
+Table 11: Dataset split sizes and basic trajectory statistics. Val., Succ., and Avg abbreviate validation,
+success rate, and average. A dash in Cal. means calibration is held out internally from the training
+trajectories rather than stored as a separate outer partition.
+Benchmark
+Total
+Train
+Val
+Test
+Tasks
+Succ.
+Avg steps
+WebArena
+4,427
+3,486
+493
+7.9%
+8.6
+τ 2-Bench
+10,832
+8,272
+1,824
+66.3%
+15.5
+SkillsBench
+10,951
+8,314
+1,902
+27.5%
+32.4
+TerminalBench
+34,397
+24,077
+3,440
+3,440
+32.2%
+36.9
+The four benchmarks use fixed split artifacts throughout the paper. WebArena uses the repository’s
+protocol split with a train-internal calibration subset for thresholding, while τ 2-Bench, SkillsBench,
+and TerminalBench use their prepared train/calibration/validation/test or fit/calibration/validation/test
+split fields as listed in Table 11. No result in the main paper changes split membership, calibration
+semantics, or the H=3 label contract.
+C.1. Additional Label Statistics
+Table 12: Prefix label statistics and failure observability on the test split (H=3). Labels use the
+inclusive horizon convention T −t ≤H. Positive prefix rate r equals the random-baseline AUPRC.
+Verifier-failure rate (VF%) is the fraction of failed trajectories where failure is verifier-side (struc-
+turally opaque to the prefix monitor).
+Benchmark
+Pos. prefix rate r
+VF%
+Dominant failure type
+Observability tier
+WebArena
+36.3%
+-
+task failure
+step-local
+τ 2-Bench
+8.9%
+-
+env assertion / db comm
+step-local
+SkillsBench
+9.2%
+70.9
+verifier fail
+verifier-side
+TerminalBench
+7.0%
+-
+reward zero (coarse)
+struct. coarse
+Table 12 gives the label prevalence that sets each benchmark’s random AUPRC baseline and summa-
+rizes the dominant observable failure channel. The large gap between WebArena’s positive-prefix
+rate and the other benchmarks is a consequence of shorter trajectories under the same inclusive H=3
+window; it is one reason the main text reports both ranking quality and FAR-constrained first-alert
+diagnostics.
+C.2. Prefix Label Construction
+Given a trajectory τ = (c1, . . . , cT ) with outcome y ∈{0, 1}, prefix label pt is assigned as:
+pt = 1[y = 0] · 1[t ≥T −H],
+where H = 3 (see Appendix E for sensitivity analysis). Equivalently, failed-trajectory prefixes are
+positive when the remaining suffix length satisfies T −t ≤H; this inclusive convention yields up to
+H+1 positive prefix positions per failed trajectory. All other prefixes receive label pt = 0 (including
+all prefixes of successful trajectories and failed-trajectory prefixes with more than H remaining steps).
+This label scheme captures the steps immediately preceding the failure point, where failure precursors
+are concentrated. It does not attempt to label root-cause steps earlier in the trajectory.
+C.3. Evaluation Protocol and Metrics
+All evaluations use the following protocol:
+1. Splits are fixed once and reused across all experiments. The calibration split is a fixed 10%
+held-out subset of training trajectories (separate from the validation and test sets); it is used both
+for monitor threshold selection and for DFA per-state risk score calibration.
+2. The test split is unlocked only once per experiment variant (no repeated evaluation on test).
+3. Threshold selection is performed on the calibration split.
+4. Area under the precision-recall curve (AUPRC) is computed using the scikit-learn
+average_precision_score function.
+5. Multi-seed experiments use 3 independent training seeds; results reported as mean ± standard
+deviation.
+Let P denote the set of evaluated test prefixes, and let each prefix a ∈P have label za ∈{0, 1} and
+risk score sa ∈[0, 1]. The sample-size column reports N = |P| evaluated prefixes (or scored LLM
+records for LLM baselines). The positive-prefix rate is
+r =
+|P|
+X
+a∈P
+za,
+reported as π+ in tables; it is the prefix-level prevalence under the H=3 label construction and is the
+random precision-recall baseline [11, 7]. After sorting prefixes by decreasing score, AUPRC is
+AUPRC =
+X
+k
+(Rk −Rk−1)Pk,
+where Pk and Rk are precision and recall at rank k. We use average precision (AP) and AUPRC
+interchangeably for this score-based metric; it is threshold-free and is the primary ranking metric.
+Area under the receiver operating characteristic curve (AUROC), reported as receiver operating
+characteristic (ROC) in compact tables, is computed as the pairwise ranking statistic
+AUROC =
+N+N−
+X
+za=1,zb=0
+
+1(sa > sb) + 1
+21(sa = sb)
+
+,
+where N+ and N−are the numbers of positive and negative prefixes.
+For calibration, scores are partitioned into equal-width bins {Bm}M
+m=1, and expected calibration
+error (ECE) is
+ECE =
+M
+X
+m=1
+|Bm|
+|P|
+|Bm|
+X
+a∈Bm
+za −
+|Bm|
+X
+a∈Bm
+sa
+ .
+The Brier score, abbreviated Br., is the mean squared probability error
+Brier =
+|P|
+X
+a∈P
+(sa −za)2.
+Lower ECE and Brier values indicate better calibration.
+At threshold γ (the alert threshold from §3), binary alerts are ˆza,γ
+= 1[sa
+≥γ].
+Let
+TPγ, FPγ, TNγ, FNγ denote the resulting true-positive (TP), false-positive (FP), true-negative (TN),
+and false-negative (FN) prefix-level confusion counts. The operating-point metrics in Table 14 are
+accuracy (Acc.), precision, and recall:
+Accγ =
+TPγ + TNγ
+TPγ + FPγ + TNγ + FNγ
+,
+Precγ =
+TPγ
+TPγ + FPγ
+,
+Recγ =
+TPγ
+TPγ + FNγ
+.
+We also report the F1 score (F1) and false-positive rate (FPR):
+F1γ = 2 Precγ Recγ
+Precγ + Recγ
+,
+FPRγ =
+FPγ
+FPγ + TNγ
+.
+The compact auxiliary table packs F1 and FPR into one column as "F1/FPR". For LLM baselines,
+γ = 0.5 on the reported pfail scores; for trained monitors, γ is selected on the calibration split and
+then evaluated once on the locked test split. Undefined ratios with zero denominator are not treated
+as wins and are omitted from aggregate means. For symbolic monitors, states denotes the automaton
+size |Q|. The auxiliary table in Appendix D.1 reports these diagnostics for every main-table cell.
+C.4. Alert Lead Time
+For a failed trajectory i of length Ti with first alert step ai = min{t : si,t ≥γ}, alert lead time is
+(Ti −ai)/Ti-the fraction of the trajectory remaining after the alert fires; a value of 0.30 means 30%
+is still ahead. If no alert fires on a failed trajectory, its lead time is defined as 0. Table 13 reports this
+trajectory-level first-alert diagnostic under calibration-selected successful-trajectory false-alarm rate
+(FAR) constraints. These operating points do not by themselves establish intervention utility: they
+do not determine whether a deployment has a reversible action available after the alert or specify
+deployment-specific alert costs.
+Table 13: Trajectory-level first-alert diagnostics show that high prefix ranking need not imply early
+alarm utility at low false-alarm rate (FAR). Thresholds are selected by calibration-set successful-
+trajectory FAR constraints (H=3; mean ± σ over 3 seeds).
+Benchmark
+Cal FAR cap
+Test FAR
+Fail alert recall
+Early fail recall
+Alert precision
+Uncond. lead time
+WebArena
+0.05
+0.016 ± 0.027
+0.107 ± 0.053
+0.003 ± 0.001
+0.991 ± 0.015
+0.010 ± 0.003
+WebArena
+0.10
+0.079 ± 0.014
+0.287 ± 0.058
+0.007 ± 0.004
+0.974 ± 0.006
+0.026 ± 0.018
+WebArena
+0.20
+0.151 ± 0.050
+0.429 ± 0.034
+0.008 ± 0.006
+0.968 ± 0.010
+0.042 ± 0.012
+τ 2-Bench
+0.05
+0.044 ± 0.000
+0.965 ± 0.002
+0.087 ± 0.007
+0.919 ± 0.001
+0.070 ± 0.003
+τ 2-Bench
+0.10
+0.089 ± 0.015
+0.979 ± 0.006
+0.192 ± 0.029
+0.851 ± 0.022
+0.106 ± 0.007
+τ 2-Bench
+0.20
+0.185 ± 0.010
+0.982 ± 0.006
+0.382 ± 0.005
+0.733 ± 0.012
+0.169 ± 0.001
+SkillsBench
+0.05
+0.046 ± 0.022
+0.899 ± 0.076
+0.017 ± 0.005
+0.985 ± 0.007
+0.008 ± 0.003
+SkillsBench
+0.10
+0.105 ± 0.008
+0.954 ± 0.018
+0.039 ± 0.012
+0.967 ± 0.003
+0.017 ± 0.006
+SkillsBench
+0.20
+0.205 ± 0.007
+0.956 ± 0.016
+0.082 ± 0.015
+0.938 ± 0.001
+0.036 ± 0.005
+TerminalBench
+0.05
+0.046 ± 0.002
+0.952 ± 0.010
+0.079 ± 0.031
+0.977 ± 0.001
+0.112 ± 0.043
+TerminalBench
+0.10
+0.101 ± 0.004
+0.965 ± 0.003
+0.178 ± 0.017
+0.952 ± 0.002
+0.215 ± 0.020
+TerminalBench
+0.20
+0.198 ± 0.014
+0.970 ± 0.004
+0.335 ± 0.015
+0.910 ± 0.006
+0.346 ± 0.018
+False-alarm rate (FAR) is the fraction of successful trajectories with any alert; early recall requires the first failed-trajectory
+alert to fire before the terminal H-step label window. Lead time is (Ti −ai)/Ti averaged over all failed trajectories, with
+missed failures counted as 0.
+D. Extended Ablation Results
+This section collects ablations that support the four experimental axes in the main text. We prioritize
+controls that change one mechanism at a time: supervised non-sequential probes for recoverable
+signal, field drops for StepView evidence, confound controls for label geometry, and per-seed
+breakdowns for the Transformer backend.
+D.1. Main-Table Auxiliary Metrics
+Table 14: Auxiliary diagnostics for each Table 2 cell.
+Sample
+Ranking / calibration
+Operating point
+Method
+Bench.
+N
+π+
+AP
+ROC
+ECE
+Br.
+Acc.
+P
+R
+F1/FPR
+LLM baselines
+GPT-5.4-mini
+WebArena
+200 43.0% 0.407 0.463 0.451 0.461 0.467 0.439 0.847 0.578 / 0.821
+τ2
+9.5% 0.302 0.593 0.251 0.207 0.685 0.145 0.474 0.222 / 0.293
+Skills
+7.0% 0.101 0.375 0.246 0.197 0.759 0.100 0.286 0.148 / 0.203
+Terminal
+200 10.0% 0.127 0.562 0.364 0.314 0.625 0.160 0.650 0.257 / 0.378
+DeepSeek-V4
+WebArena
+200 43.0% 0.450 0.532 0.477 0.474 0.445 0.435 0.977 0.602 / 0.956
+τ2
+9.5% 0.396 0.827 0.352 0.233 0.610 0.183 0.895 0.304 / 0.420
+Skills
+7.0% 0.080 0.534 0.198 0.188 0.740 0.068 0.214 0.103 / 0.220
+Terminal
+200 10.0% 0.107 0.506 0.458 0.406 0.472 0.117 0.650 0.198 / 0.547
+Non-sequential supervised controls
+TF-IDF+LR
+WebArena
+4,548 36.3% 0.818 0.877 0.066 0.136 0.807 0.713 0.782 0.746 / 0.179
+τ2
+28.0k
+8.9% 0.548 0.905 0.192 0.125 0.896 0.443 0.685 0.538 / 0.084
+Skills
+62.9k
+9.2% 0.292 0.750 0.384 0.329 0.558 0.149 0.809 0.252 / 0.468
+Terminal
+124.9k
+7.0% 0.240 0.760 0.370 0.203 0.872 0.250 0.406 0.309 / 0.092
+StepView MLP
+WebArena
+4,548 36.3% 0.940 0.975 0.053 0.059 0.932 0.867 0.960 0.911 / 0.083
+τ2
+28.0k
+8.9% 0.656 0.917 0.075 0.076 0.918 0.532 0.668 0.592 / 0.057
+Skills
+62.9k
+9.2% 0.281 0.786 0.270 0.263 0.853 0.305 0.468 0.370 / 0.108
+Terminal
+124.9k
+7.0% 0.521 0.887 0.213 0.125 0.931 0.510 0.472 0.490 / 0.034
+PPM baseline
+PPM LSTM
+WebArena
+4,548 36.3% 0.382 0.524 0.144 0.252 0.368 0.364 0.989 0.532 / 0.985
+τ2
+28.0k
+8.9% 0.231 0.812 0.333 0.215 0.785 0.241 0.658 0.352 / 0.202
+Skills
+62.9k
+9.2% 0.089 0.519 0.387 0.241 0.301 0.103 0.851 0.183 / 0.755
+Terminal
+124.9k
+7.0% 0.093 0.583 0.411 0.237 0.743 0.101 0.333 0.154 / 0.226
+Raw-text control
+Raw-text DFA
+WebArena
+4,548 36.3% 0.745 0.853 0.028 0.138 0.802 0.710 0.804 0.747 / 0.199
+τ2
+28.0k
+8.9% 0.222 0.728 0.008 0.073 0.830 0.249 0.442 0.317 / 0.133
+Skills
+62.9k
+9.2% 0.147 0.610 0.009 0.080 0.763 0.156 0.351 0.215 / 0.195
+Terminal
+124.9k
+7.0% 0.137 0.648 0.003 0.064 0.834 0.160 0.311 0.210 / 0.126
+Raw-text FSM
+WebArena
+4,548 36.3% 0.639 0.714 0.201 0.241 0.647 0.532 0.681 0.585 / 0.373
+τ2
+28.0k
+8.9% 0.466 0.862 0.012 0.060 0.901 0.460 0.634 0.533 / 0.073
+Skills
+62.9k
+9.2% 0.260 0.736 0.036 0.077 0.877 0.337 0.344 0.339 / 0.069
+Terminal
+124.9k
+7.0% 0.272 0.749 0.057 0.067 0.904 0.345 0.390 0.365 / 0.057
+Raw-text Trans. WebArena
+4,548 36.3% 0.854 0.917 0.043 0.105 0.866 0.801 0.840 0.819 / 0.119
+τ2
+28.0k
+8.9% 0.597 0.887 0.025 0.055 0.921 0.560 0.520 0.539 / 0.040
+Skills
+62.9k
+9.2% 0.315 0.814 0.021 0.074 0.883 0.367 0.377 0.372 / 0.066
+Terminal
+124.9k
+7.0% 0.363 0.813 0.029 0.059 0.914 0.388 0.388 0.388 / 0.046
+Raw-text GRU
+WebArena
+4,548 36.3% 0.871 0.923 0.052 0.107 0.864 0.795 0.842 0.818 / 0.124
+τ2
+28.0k
+8.9% 0.554 0.883 0.026 0.057 0.916 0.529 0.536 0.532 / 0.047
+Skills
+62.9k
+9.2% 0.315 0.817 0.051 0.080 0.891 0.388 0.316 0.348 / 0.051
+Terminal
+124.9k
+7.0% 0.370 0.815 0.046 0.059 0.917 0.405 0.385 0.395 / 0.043
+PrefixGuard monitors
+PG-DFA
+WebArena
+4,548 36.3% 0.792 0.887 0.015 0.119 0.828 0.736 0.822 0.776 / 0.169
+τ2
+28.0k
+8.9% 0.316 0.772 0.009 0.066 0.862 0.413 0.567 0.442 / 0.109
+Skills
+62.9k
+9.2% 0.190 0.680 0.009 0.080 0.803 0.211 0.418 0.281 / 0.158
+Terminal
+124.9k
+7.0% 0.184 0.695 0.001 0.061 0.865 0.272 0.384 0.303 / 0.098
+PG-FSM
+WebArena
+4,548 36.3% 0.837 0.866 0.175 0.155 0.852 0.836 0.736 0.782 / 0.082
+τ2
+28.0k
+8.9% 0.614 0.880 0.014 0.053 0.926 0.579 0.602 0.589 / 0.043
+Skills
+62.9k
+9.2% 0.273 0.763 0.050 0.077 0.866 0.330 0.436 0.375 / 0.090
+Terminal
+124.9k
+7.0% 0.447 0.812 0.038 0.051 0.936 0.552 0.471 0.508 / 0.029
+PG-Trans.
+WebArena
+4,548 36.3% 0.892 0.948 0.030 0.080 0.899 0.837 0.895 0.865 / 0.099
+τ2
+28.0k
+8.9% 0.710 0.925 0.017 0.046 0.938 0.680 0.581 0.626 / 0.027
+Skills
+62.9k
+9.2% 0.478 0.829 0.054 0.073 0.886 0.402 0.455 0.425 / 0.070
+Terminal
+124.9k
+7.0% 0.555 0.860 0.027 0.047 0.939 0.582 0.463 0.515 / 0.025
+PG-GRU
+WebArena
+4,548 36.3% 0.900 0.952 0.028 0.079 0.899 0.845 0.882 0.863 / 0.092
+τ2
+28.0k
+8.9% 0.696 0.917 0.009 0.045 0.929 0.599 0.622 0.610 / 0.041
+Skills
+62.9k
+9.2% 0.533 0.844 0.075 0.074 0.900 0.462 0.504 0.481 / 0.060
+Terminal
+124.9k
+7.0% 0.557 0.860 0.033 0.046 0.943 0.639 0.435 0.517 / 0.019
+Rows report locked test-split prefix means from manifest artifacts. N is prefix count, π+ is positive-prefix prevalence, Br. is Brier score, and PG abbreviates
+PrefixGuard. AP follows the score family used in Table 2. Operating metrics use the scored LLM subset with threshold pfail ≥0.5 and stored or replayed non-LLM
+thresholds; replay-mismatched runs are excluded.
+10
+50
+90
+AUPRC (%) (logit-spaced)
+WebArena
+MLP
+FSM
+Trans.
+5
+20
+90
+FPR (%) (log-spaced)
+25
+75
+97
+AUPRC (%) (logit-spaced)
+Skills
+Raw-GRU
+GRU
+5
+20
+90
+FPR (%) (log-spaced)
+Terminal
+GRU
+0.0
+0.5
+1.0
+Recall
+Pareto frontier
+GPT
+DS
+LR
+MLP
+PPM
+Raw-DFA
+Raw-FSM
+Raw-T
+Raw-GRU
+DFA
+FSM
+Trans.
+GRU
+Figure 4: AUPRC-false-positive-rate Pareto diagnostic for the main-table cells. Each panel is one
+benchmark; marker shape identifies the method and marker color encodes recall at the same alert
+threshold, with warmer colors indicating higher recall. The dashed line traces the non-dominated
+frontier where no method has both higher AUPRC and lower false-positive rate. LLM baselines are
+evaluated on their 200 scored prefixes, while other methods use their locked test artifacts.
+AP
+Recall
+FPR
+ECE
+Brier
+AP
+Recall
+FPR
+ECE
+Brier
+AP
+Recall
+FPR
+ECE
+Brier
+AP
+Recall
+FPR
+ECE
+Brier
+GPT
+DS
+LR
+MLP
+PPM
+Raw-DFA
+Raw-FSM
+Raw-T
+Raw-GRU
+DFA
+FSM
+Trans.
+GRU
+WebArena
+Skills
+Terminal
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Within-benchmark normalized utility
+Figure 5: Normalized diagnostic heatmap for the same main-table cells. Colors are normalized within
+each benchmark and metric across methods, with higher color always better; ECE, Brier score, and
+false-positive rate are inverted before normalization. The heatmap is a visual index for multi-metric
+tradeoffs, not a replacement for the raw values in Table 14.
+Table 15: Appendix diagnostic non-sequential supervised prefix-signal probes using the same H=3
+labels and held-out splits as the main experiments.
+TF-IDF+LR
+StepView MLP
+Benchmark
+AP
+ROC
+ECE
+Br.
+AP
+ROC
+ECE
+Br.
+WebArena
+0.818 0.877 0.066 0.136 0.940 0.975 0.053 0.059
+τ 2-Bench
+0.548 0.905 0.192 0.125 0.656 0.917 0.075 0.076
+SkillsBench
+0.292 0.750 0.384 0.329 0.281 0.786 0.270 0.263
+TerminalBench 0.240 0.760 0.370 0.203 0.521 0.887 0.213 0.125
+AP: AUPRC; ROC: AUROC; Br.: Brier; LR: logistic regression; MLP: multilayer perceptron. These probes test whether
+observed prefixes contain recoverable warning signal. StepView MLP pools observed StepView TF-IDF vectors and has no
+recurrent, Transformer, FSM, DFA, or causal monitor state.
+Table 16: Outcome-oriented predictive process monitoring (PPM) activity-LSTM control on the
+locked test split. Values are mean ± σ over three seeds. The control uses one-hot categorical StepView
+activities with a single-layer LSTM and no TF-IDF text features, learned PrefixGuard symbols, FSM,
+or DFA.
+Benchmark
+PPM AP
+ROC
+ECE
+Br.
+r
+Raw-GRU AP PG-GRU AP
+∆PG
+WebArena
+0.382±0.004 0.524±0.006 0.144±0.002 0.252±0.001 0.363
+0.871
+0.900
++0.518
+τ 2-Bench
+0.231±0.003 0.812±0.001 0.333±0.041 0.215±0.035 0.089
+0.554
+0.696
++0.465
+SkillsBench
+0.089±0.001 0.519±0.001 0.387±0.014 0.241±0.013 0.092
+0.315
+0.533
++0.444
+TerminalBench 0.093±0.000 0.583±0.000 0.411±0.014 0.237±0.011 0.070
+0.370
+0.557
++0.464
+AP: AUPRC; ROC: AUROC; Br.: Brier; r: positive-prefix rate; ∆PG: PG-GRU AP minus mean PPM AP. PPM runs use
+H=3, seeds 13/42/123, a train-only categorical activity vocabulary capped at 4096 activities, hidden size 64, one LSTM layer,
+three epochs, and the same split protocols as the supervised-prefix controls.
+These metrics are secondary to the score-based AUPRC used in Table 2. They are included to show
+calibration and thresholded operating behavior for the same artifacts, especially when a method has
+good ranking quality but a costly false-positive operating point.
+D.2. Non-Sequential Supervised Prefix-Signal Probes
+The probes in Table 15 test whether observed prefixes contain outcome-related signal without
+requiring a recurrent monitor, differentiable symbolizer, or DFA state. They support RQ1 as signal-
+availability diagnostics, not as deployable online monitor forms.
+D.3. Predictive Process Monitoring Activity-LSTM Control
+To make the predictive process monitoring comparison explicit, Table 16 reports an outcome-oriented
+activity-LSTM control in the style of sequence-based PPM baselines. Each observed step is treated
+as a categorical activity from a train-only vocabulary and fed as a one-hot sequence to a single-layer
+LSTM. This baseline uses the same H=3 warning labels and benchmark split protocols as the
+supervised-prefix controls, but it does not use TF-IDF text features, learned PrefixGuard symbols,
+FSM state, or DFA extraction. Across all four benchmarks, PG-GRU remains substantially higher
+than the PPM activity-LSTM control.
+D.4. Continuous StepView Sequence Controls
+To isolate the contribution of PrefixGuard’s learned discrete event abstraction, we ran WebArena
+controls that keep the same StepView TF-IDF step vectors and causal prefix supervision but remove
+the Gumbel symbolizer and automaton-facing discrete alphabet. The resulting continuous sequence
+models score prefixes directly from StepView embeddings using either a causal GRU or a causal
+Transformer. They use the same WebArena split, H=3 labels, seed, train/internal-calibration protocol,
+frontend, and StepView text mode as the single-seed supervised WebArena controls in Table 17.
+Table 17: WebArena continuous StepView sequence controls. Continuous sequence controls remove
+the discrete PrefixGuard abstraction while retaining StepView TF-IDF step embeddings and causal
+sequence scoring.
+Category
+Model
+AUPRC
+AUROC
+ECE
+Brier
+Flat prefix
+TF-IDF prefix + logistic regression
+0.818
+0.877
+0.066
+0.136
+Pooled StepView
+StepView pooled MLP
+0.940
+0.975
+0.053
+0.059
+Continuous seq.
+Continuous StepView GRU
+0.787
+0.845
+0.107
+0.162
+Continuous seq.
+Continuous StepView Transformer
+0.819
+0.870
+0.112
+0.146
+PrefixGuard
+StepView + discrete abstraction + GRU
+0.900
+-
+-
+-
+Control rows are single-seed WebArena results; seq. abbreviates sequence and MLP abbreviates multilayer perceptron.
+PrefixGuard-GRU is the main-table three-seed mean reference.
+The continuous sequence controls do not explain away PrefixGuard’s WebArena performance: the
+stronger continuous Transformer control reaches 0.819 AUPRC, below PrefixGuard-GRU’s 0.900
+and close to the simpler TF-IDF prefix logistic control (0.818). At the same time, the pooled MLP
+remains the strongest supervised WebArena control (0.940), so the WebArena claim should be stated
+as a tradeoff: PrefixGuard preserves online sequential state and automaton-facing discrete structure
+while retaining strong, but not best-in-table, predictive accuracy.
+D.5. Neural Encoder Diagnostic Controls
+Table 18 summarizes diagnostic controls that replace the TF-IDF step encoder with frozen dense
+encoders. We report them as negative diagnostics rather than headline comparisons. These controls
+target a practical design question: whether the fixed lexical encoder can be replaced by a stronger
+off-the-shelf semantic embedding model without changing the rest of the monitor-learning recipe.
+Table 18: Diagnostic neural-encoder controls. Values are AUPRC/AUROC; higher is better.
+Benchmark
+Dense encoder
+Dense result
+TF-IDF ref.
+Takeaway
+WebArena
+Nomic Embed v1.5 [26]
+0.535/0.625
+0.684/0.798
+Below TF-IDF.
+τ 2-Bench
+Qwen3-Embedding-0.6B [44]
+0.507/0.826
+0.604/0.888
+Partial recovery, still below.
+SkillsBench
+Jina code embedding [14]
+0.217/0.754
+0.397/0.823
+Clearly below TF-IDF.
+Across these controls, frozen dense encoders do not improve the monitor pipeline, so the main
+experiments keep TF-IDF as the fixed step encoder. The result is consistent with the role of StepView
+in PrefixGuard: field-tagged lexical text contains many sparse but operationally decisive tokens,
+such as tool names, statuses, error fragments, file paths, and task-specific identifiers. TF-IDF
+preserves these high-precision lexical cues directly under a small fixed feature budget, while dense
+sentence/code embeddings can smooth them into a semantic representation that is useful for retrieval
+but less aligned with prefix-level warning labels and downstream symbol induction. We therefore
+view neural encoders as a separate future direction rather than a drop-in improvement: making
+them competitive likely requires encoder-specific fine-tuning, structured field pooling, or contrastive
+objectives tailored to monitor learning, not just replacing TF-IDF with a frozen embedding checkpoint.
+D.6. Position and Task-Prior Confound Controls
+Because positive prefixes are exactly the last H+1 steps of failed trajectories, a monitor could
+partially exploit step index, trajectory length, or task-type priors rather than lexical failure evidence.
+We therefore run three matched controls across all four benchmarks (Table 19).
+A t-only model using [t, t2, log(1+t),
+√
+t]-deployment-realistic features with no content and no
+future information-stays far below PrefixGuard-GRU on every benchmark, indicating that current
+step position alone cannot explain the main results. A t+T model that additionally includes trajectory
+length T (future information not available at deployment) is intentionally strong, confirming that
+the label definition (t≥T−H) creates a near-end-of-trajectory signal when T is known. This oracle
+advantage is not exploitable in deployment, but it validates the need to keep full trajectory length out
+of online scoring. The task-prior model uses only task id, whitelisted metadata, and pre-observation
+task context. It has non-trivial signal on WebArena and TerminalBench, but remains well below
+PrefixGuard-GRU, so task prior alone is insufficient to explain the learned monitor.
+Table 19: Cross-benchmark position and task-prior controls on the held-out test split.
+t-only
+t+T oracle
+task-prior
+Benchmark
+r
+AUPRC
+AUROC
+AUPRC
+AUROC
+AUPRC
+AUROC
+WebArena
+0.363
+0.435
+0.554
+0.923
+0.974
+0.507
+0.657
+τ 2-Bench
+0.089
+0.261
+0.825
+0.454
+0.924
+0.145
+0.656
+SkillsBench
+0.092
+0.099
+0.548
+0.761
+0.984
+0.157
+0.620
+TerminalBench
+0.070
+0.093
+0.583
+0.697
+0.982
+0.222
+0.755
+Table 20: Corrected no-leakage content-scrambled controls. Each scrambled prefix permutes only
+already-visible steps and keeps the original prefix label; higher AUPRC is better.
+Benchmark
+r
+Original
+Scrambled
+∆
+WebArena
+0.363
+0.908
+0.901
+−0.007
+τ 2-Bench
+0.089
+0.687
+0.681
+−0.006
+SkillsBench
+0.092
+0.526
+0.269
+−0.257
+TerminalBench
+0.070
+0.548
+0.375
+−0.173
+r is the prefix positive rate. WebArena and τ 2-Bench are from corrected canonical summaries. SkillsBench is a soft-only
+value from the corrected rerun’s best soft-validation epoch; final DFA/RPNI induction was canceled because this control only
+uses soft AUPRC. TerminalBench uses the completed corrected scrambled-only soft rerun; final paired DFA/RPNI validation
+was skipped by design because this control only uses soft AUPRC.
+To further separate step content from sequential ordering, we use a corrected no-leakage content-
+scrambled control (Table 20). For each original prefix, the scrambled example permutes only the
+steps already visible inside that prefix and keeps the original prefix label. Thus a prefix-k example
+never observes steps that were future under the original online order.
+The corrected controls sharpen the confound interpretation. WebArena and τ 2-Bench barely change
+under within-prefix shuffling (0.908 →0.901 and 0.687 →0.681), so their AUPRC is driven
+mostly by step content and task-local evidence rather than chronological order. SkillsBench and
+TerminalBench drop much more sharply (0.526 →0.269 and 0.548 →0.375), indicating that
+within-prefix order or temporal structure carries material signal on those benchmarks. These are
+soft-AUPRC controls: the SkillsBench and TerminalBench scrambled reruns intentionally skip final
+DFA/RPNI induction because the confound-control target is original-vs.-scrambled soft ranking.
+D.7. PrefixGuard-GRU Calibration Metrics
+Table 21 reports calibration metrics for PrefixGuard-GRU on the locked test split. ECE uses 15
+equal-width bins; Brier score is the mean squared error between predicted probabilities and binary
+labels. WebArena and TerminalBench values are averaged over 3 seeds; τ 2-Bench over 2 seeds;
+SkillsBench over 3 seeds (seeds 13, 42, 7). The high ECE variance on SkillsBench (±0.027) reflects
+one seed (seed 42) that reaches ECE = 0.113 vs. 0.054-0.058 for the other two; the Brier score is
+more stable.
+Table 21: PrefixGuard-GRU calibration metrics (mean ± σ over seeds; locked test split). ECE:
+expected calibration error (15 bins); Brier: mean squared probability error.
+Benchmark
+AUPRC
+ECE
+Brier
+WebArena
+0.900 ± 0.013
+0.028 ± 0.002
+0.079 ± 0.002
+τ 2-Bench
+0.692 ± 0.005
+0.015 ± 0.002
+0.047 ± 0.000
+SkillsBench
+0.533 ± 0.020
+0.075 ± 0.027
+0.074 ± 0.011
+TerminalBench
+0.557 ± 0.005
+0.033 ± 0.001
+0.046 ± 0.001
+D.8. StepView Field Ablation
+Table 22 completes the StepView field-drop audit across benchmark families and monitor heads.
+The table reports locked-test soft AUPRC under the matched single-seed protocols used for the
+corresponding all-fields runs. The completion results refine the WebArena-only story: post-action
+result evidence is crucial on WebArena, but there is no universal single-field dependency across
+all benchmarks. τ 2-Bench and TerminalBench degrade sharply under observation-only inputs,
+TerminalBench also loses signal when status is removed, and several SkillsBench/TerminalBench
+Table 22: StepView field ablations across benchmarks. Each cell reports locked-test AUPRC after
+masking the named StepView field at train and test time, with the change from the matched all-fields
+StepView setting in parentheses when available. WebArena additionally includes the no-status,
+no-args, and observation-only controls from the original field audit. Non-WebArena completion
+cells use the same locked-test soft-AUPRC protocol and skip final DFA/RPNI induction because
+this ablation targets soft monitor ranking. Trans. abbreviates Transformer and Obs. abbreviates
+observation.
+Benchmark
+Head
+All fields
+No tool
+No status
+No args
+No result
+No args+result
+Obs. only
+WebArena
+GRU
+0.883
+0.878 (−0.005) 0.877 (−0.006) 0.905 (+0.022) 0.679 (−0.204)
+0.655 (−0.228)
+0.834 (−0.049)
+WebArena
+FSM
+0.848
+0.843 (−0.005) 0.845 (−0.003) 0.839 (−0.009) 0.654 (−0.194)
+0.540 (−0.308)
+0.815 (−0.033)
+WebArena
+Trans.
+0.884
+0.896 (+0.012) 0.885 (+0.001) 0.901 (+0.017) 0.706 (−0.178)
+0.689 (−0.195)
+0.814 (−0.070)
+τ 2-Bench
+GRU
+0.702
+0.711 (+0.009) 0.694 (−0.007) 0.708 (+0.006) 0.705 (+0.004)
+0.696 (−0.006)
+0.436 (−0.266)
+τ 2-Bench
+FSM
+0.637
+0.613 (−0.024) 0.571 (−0.066) 0.620 (−0.017) 0.539 (−0.098)
+0.423 (−0.214)
+0.412 (−0.225)
+τ 2-Bench
+Trans.
+0.697
+0.718 (+0.021) 0.715 (+0.017) 0.711 (+0.014) 0.701 (+0.004)
+0.709 (+0.012)
+0.448 (−0.249)
+SkillsBench
+GRU
+0.549
+0.552 (+0.003) 0.534 (−0.015) 0.553 (+0.004) 0.542 (−0.008)
+0.514 (−0.035)
+0.523 (−0.026)
+SkillsBench
+FSM
+0.393
+0.425 (+0.032) 0.404 (+0.011) 0.410 (+0.017) 0.440 (+0.047)
+0.395 (+0.002)
+0.416 (+0.023)
+SkillsBench
+Trans.
+0.500
+0.533 (+0.034) 0.516 (+0.016) 0.536 (+0.036) 0.516 (+0.016)
+0.498 (−0.002)
+0.500 (+0.001)
+TerminalBench GRU
+0.550
+0.577 (+0.027) 0.444 (−0.106) 0.574 (+0.024) 0.581 (+0.032)
+0.577 (+0.027)
+0.279 (−0.270)
+TerminalBench FSM
+0.448
+0.440 (−0.009) 0.321 (−0.127) 0.403 (−0.045) 0.462 (+0.014)
+0.515 (+0.067)
+0.238 (−0.210)
+TerminalBench Trans.
+0.548
+0.577 (+0.029) 0.443 (−0.105) 0.573 (+0.025) 0.584 (+0.036)
+0.577 (+0.028)
+0.289 (−0.259)
+field drops slightly improve AUPRC, consistent with representation noise or single-seed variance
+rather than evidence that the omitted fields are intrinsically useless. These completion controls are
+intentionally soft-only and do not produce final DFA/RPNI artifacts.
+D.9. Transformer Per-Seed Breakdown
+Table 23 reports locked-test score-based AUPRC for each Transformer seed across all four bench-
+marks.
+Table 23: PrefixGuard-Transformer per-seed locked-test score-based AUPRC.
+Dataset
+Seed
+Score AUPRC
+WebArena
+0.884
+WebArena
+0.893
+WebArena
+0.898
+τ 2-Bench
+0.697
+τ 2-Bench
+0.708
+τ 2-Bench
+0.725
+SkillsBench
+0.493
+SkillsBench
+0.446
+SkillsBench
+0.495
+TerminalBench
+0.548
+TerminalBench
+0.558
+TerminalBench
+0.560
+D.10. DFA State Behavioral Alignment
+We performed a single-coder qualitative alignment check on representative extracted-DFA artifacts.
+The goal is narrow: verify whether high-risk DFA states can be assigned plausible behavioral
+names from observed prefix exemplars, without claiming human interpretability, causal root-cause
+annotation, or deployment actionability. The automated state-count and concentration statistics
+remain the primary DFA audit evidence in Table 9. Table 24 summarizes the qualitative alignment
+scope before the per-benchmark examples.
+Table 24: Qualitative DFA state-alignment summary. This single-coder diagnostic names representa-
+tive high-risk states but does not constitute a multi-coder interpretability study.
+Benchmark
+States Coded scope
+Representative high-risk phases
+WebArena
+29 all 27 trusted states
+early reset; explicit error; click loop; misaligned or
+external search
+τ 2-Bench
+20 13 trusted states
+lookup fan-out; policy handoff; late unresolved trou-
+bleshooting
+SkillsBench
+151 representative states
+environment probing; script repair; dependency gaps;
+output verification
+TerminalBench
+187 warning states plus examples tool bootstrapping; JSON/tool-call failure; implemen-
+tation setup; late repair
+WebArena.
+We performed a qualitative alignment study on the 29-state WebArena DFA extracted
+from PrefixGuard-FSM seed 1 (run R247). Each state was coded based on: (i) the dominant tools
+observed in exemplar step views assigned to that state, (ii) representative typed text and action
+arguments, and (iii) the normalised trajectory position at which prefixes are most frequently routed
+there. All 27 trusted states were coded; 2 states were excluded as untrusted (< 10 calibration
+prefixes).
+Findings. The 6 warning states (risk ≥0.34) cluster into five semantically coherent failure-precursor
+patterns: (1) Early navigation reset (q0, risk = 0.857): click + goto homepage at ¯t/T=0.25,
+indicating the agent resets to the start page early in the trajectory; (2) Explicit error signal (q28,
+risk = 0.548): typed text contains error phrases such as "sorry we are out of stock"; (3) Repetitive
+click loop (q22, risk = 0.518): six or more consecutive clicks with no type action at mid-trajectory,
+the agent stuck in a navigation cycle; (4) Misaligned search query (q12, risk = 0.510): type
+with geographic or named-entity search terms entered at ¯t/T=0.25, the agent searching for wrong
+targets; (5) External-search redirect (q24, risk = 0.434): new_tab + goto google.com + type,
+the agent escaping to an external search engine mid-task; and (6) Early unproductive browsing (q1,
+risk = 0.342): click + scroll at ¯t/T=0.25 without targeted input.
+The 21 normal states (risk < 0.25) correspond to productive task phases: credential entry (q4,
+risk = 0.099), productive backtracking via go_back (q17, risk = 0.085), and task-specific search
+with precise typed queries (q26, risk = 0.038). The lowest-risk state (q26) contains exemplars
+with exact task-relevant search terms (e.g., "color utility", "awesome_web_agents"), consistent with
+successful task execution.
+Table 25 reports all warning states and five representative normal states.
+Table 25: WebArena DFA state behavioral alignment (seed 1, 29 states; 2 untrusted excluded). ¯t/T:
+mean normalised step position of routed prefixes. Warning states (risk ≥0.34) are listed first.
+State
+Behavioral Phase
+Risk
+Eval
+¯t/T
+Representative Step
+Warning states (risk ≥0.34)
+q0
+Early navigation reset
+0.857
+0.25
+click; goto homepage
+q28
+Explicit error message
+0.548
+0.81
+type [out of stock...]
+q22
+Repetitive click loop
+0.518
+0.40
+click×6 (no type)
+q12
+Misaligned search query
+0.510
+0.25
+type [CMU / restaurants near CMU]
+q24
+External-search redirect
+0.434
+0.40
+new_tab; goto google.com; type
+q1
+Early scroll-and-click
+0.342
+0.25
+click; scroll [down]
+Representative normal states (risk < 0.25)
+q17
+Productive backtracking
+0.085
+0.83
+go_back×5
+q4
+Credential entry
+0.099
+0.67
+type [username]; click
+q26
+Task-specific search
+0.038
+0.50
+type [color utility]; click
+q8
+Long-form text entry
+0.122
+0.74
+type [multi-sentence message]
+q7
+Short-label selection
+0.119
+0.75
+type [feature]; click
+Scope and caveats. This alignment is based on exemplar inspection by one coder for one seed on
+WebArena; it constitutes preliminary evidence of state interpretability, not a validated qualitative
+study. All 6 warning states were independently assignable to distinct, semantically coherent failure-
+precursor categories, supporting the claim that DFA states capture meaningful operational phases
+rather than arbitrary quantization artifacts. A full study with multiple coders, inter-rater reliability,
+and trajectory-level ground-truth annotations remains future work.
+τ 2-Bench.
+We repeated the same single-coder state alignment on the 20-state τ 2-Bench DFA
+extracted from the adaptive StepView+GRU run R313 (seed 13). Thirteen states were trusted and
+coded; 7 states were excluded as untrusted (< 10 calibration prefixes). The three trusted warning
+states under the calibrated threshold form recognizable but weaker behavioral groups: (1) Mid-
+dialogue grounded lookup fan-out (q1, risk = 0.357): repeated account, line, plan, device, order, or
+reservation lookups after the task is underway; (2) Out-of-policy request handoff (q19, risk = 0.337):
+a special-policy request, such as post-booking insurance, cannot be handled directly and is refused
+or transferred; and (3) Late unresolved policy or troubleshooting (q15, risk = 0.218): near-terminal
+compensation, refund-policy, or MMS/service troubleshooting remains unresolved. Trusted normal
+states cover routine task phases such as initial greeting or identity lookup (q0, risk = 0.031), billing
+remediation (q16, risk = 0.082), transactional updates or verification (q14, risk = 0.060), and
+mid-course telecom diagnosis (q5, risk = 0.018).
+This τ 2-Bench alignment is less diagnostic than WebArena’s: the risk range is flatter, q0 alone routes
+16,754 test prefixes, the top five states cover 92.0% of prefixes (Table 9), q19 has only 31 test prefixes,
+and a high-risk low-support state (q18, risk = 0.372) is excluded by the trusted-state filter. Thus
+τ 2-Bench supports a narrower claim: extracted DFA states can still be assigned coherent behavioral
+labels, but the finite-state audit is concentrated and weaker than on WebArena.
+Table 26: τ 2-Bench DFA state behavioral alignment (R313 seed 13, 20 states; 7 untrusted excluded).
+¯t/T: mean normalised step position of routed prefixes. Trusted warning states are listed first.
+State Phase
+Risk
+Eval ¯t/T
+Representative Step
+Trusted warning states
+q1
+Grounded lookup fan-out
+0.357
+3949 0.57 get_details / reservation
+q19
+Out-of-policy handoff
+0.337
+31 0.59 respond [insurance not allowed]
+q15
+Late unresolved troubleshooting 0.218
+456 0.78 respond [refund/MMS fails]
+Representative trusted normal states
+q0
+Greeting / identity lookup
+0.031 16754 0.25 respond; customer lookup
+q11
+Policy summary / confirmation
+0.137
+2992 0.72 respond [summary]
+q12
+Info collection / guidance
+0.116
+1471 0.72 get_order; respond
+q16
+Billing remediation
+0.082
+607 0.68 check/make payment
+q14
+Transactional update
+0.060
+411 0.81 send_certificate; check_sim
+q5
+Mid-course telecom diagnosis
+0.018
+42 0.38 toggle_airplane_mode
+SkillsBench and TerminalBench.
+We also ran the same posthoc alignment procedure on the large-
+DFA benchmarks using the existing SkillsBench R340 and TerminalBench R341 artifacts. Because
+these automata are much larger (151 and 187 states), we report representative state alignments rather
+than claiming a full state-by-state human interpretation. For SkillsBench, the warning states mainly
+correspond to fragile coding-workflow phases: early high-level intent before concrete evidence (q0),
+script execution and environment probing (q117), dependency or solver repair (q128), output-artifact
+verification (q64), and fallback/malformed-output handling (q46). For TerminalBench, all six trusted
+warning states were coded; they concentrate around high-risk initial tool bootstrapping (q0/q109),
+early JSON/tool-call failure (q57), second-step implementation setup (q120), opaque low-position
+probes (q29), and late iterative repair/evaluation (q21).
+The large-benchmark alignments support the same conservative conclusion as the automated audit
+in Table 9: states are often behaviorally nameable, but auditability weakens when the automaton
+expands and the warning states become task/tool-family specific. SkillsBench has 151 states with 27
+trusted warning states, while TerminalBench has 187 states with only 6 trusted warning states; their
+top-five state shares are 59.6% and 62.0%, respectively. These are useful diagnostic artifacts, not
+standalone human-interpretability evidence.
+Table 27: Representative DFA state behavioral alignment for SkillsBench and TerminalBench. These
+rows are selected from existing locked-test posthoc artifacts (SkillsBench R340; TerminalBench
+R341) and are not a full multi-coder study.
+Bench
+State Behavioral Phase
+Risk
+Eval ¯t/T
+Representative Cue
+SkillsBench selected warning states
+Skills
+q0
+Early task-intent statement
+0.217
+0.27 initial respond plan for tutorial/video task
+Skills
+q117 Script execution / environment probe
+0.155
+0.57 run generated analysis script or check runtime
+Skills
+q128 Solver/script repair under dependency gaps
+0.170
+0.66 rewrite script after missing dependency or partial
+output
+Skills
+q64
+Output artifact verification
+0.259
+0.79 inspect generated OBJ, masks, or output files
+Skills
+q67
+Environment setup / final verification
+0.296
+0.79 create venv, install packages, or verify final export
+Skills
+q46
+Fallback / malformed-output handling
+0.213
+0.73 fallback workbook/output creation after blocked
+data or tool mismatch
+SkillsBench representative normal states
+Skills
+q73
+Early file/media probe
+0.063
+0.40 inspect video metadata, files, or package availabil-
+ity
+Skills
+q1
+Skill activation / loading
+0.064
+0.25 load_skill / activate_skill at first step
+Skills
+q62
+Early shell input inspection
+0.064
+0.40 inspect JSON, packet-capture (PCAP), Excel, or
+media input files
+Skills
+q106 Analysis script planning
+0.052
+0.50 construct video, spreadsheet, or packet-analysis
+script
+TerminalBench trusted warning states
+Terminal q109 High-risk initial environment probe
+0.269
+0.25 VM, SQL, file-edit, or environment inspection at
+first step
+Terminal q57
+Early JSON/tool-call failure
+0.208
+0.50 invalid JSON or opaque command/tool-call failure
+Terminal q120 Second-step implementation setup
+0.206
+0.40 create/search/update implementation after initial
+inspection
+Terminal q29
+Opaque low-position probe/error
+0.155
+0.24 repeated opaque tool output or schema/tool errors
+Terminal q21
+Late iterative repair/evaluation
+0.128
+0.57 repeated benchmark-specific repair and evaluation
+Terminal q0
+High-risk initial tool bootstrap
+0.125 19851
+0.25 broad first-step plan or multi-tool setup
+TerminalBench representative normal states
+Terminal q1
+Routine initial command/check
+0.044 32464
+0.25 first command, file listing, or simple setup
+Terminal q98
+Initial file/problem inspection
+0.046 13789
+0.25 inspect files, binaries, or task interfaces
+Terminal q131 Dependency install / verification
+0.046
+0.44 package install or certificate/model verification
+Terminal q164 Mid-course bulk command execution
+0.035
+0.50 multi-command setup, service restart, macro, or
+VM launch
+D.11. Operating-Point Analysis
+Table 13 reports trajectory-level operating points selected by calibration-set successful-trajectory
+false-alarm rate (FAR) constraints. The complementary prefix-level precision-recall (PR) and receiver
+operating characteristic (ROC) curves in Figure 6 show ranking behavior before committing to a
+deployment threshold. Together, these diagnostics separate score ranking from alarm burden; whether
+intervention is practically useful depends on deployment-specific costs and reversibility.
+0.0
+0.5
+1.0
+Recall
+0.0
+0.5
+1.0
+Precision
+WebArena
+\itpositive rate = 0.407
+PrefixGuard-GRU AUPRC = 0.898
+Random = 0.407
+0.0
+0.5
+1.0
+Recall
+0.0
+0.5
+1.0
+TAU2Bench
+\itpositive rate = 0.089
+PrefixGuard-GRU AUPRC = 0.678
+Random = 0.089
+0.0
+0.5
+1.0
+Recall
+0.0
+0.5
+1.0
+SkillsBench
+\itpositive rate = 0.092
+PrefixGuard-GRU AUPRC = 0.531
+Random = 0.092
+0.0
+0.5
+1.0
+Recall
+0.0
+0.5
+1.0
+TerminalBench
+\itpositive rate = 0.070
+PrefixGuard-GRU AUPRC = 0.544
+Random = 0.070
+0.0
+0.5
+1.0
+False Positive Rate
+0.0
+0.5
+1.0
+True Positive Rate
+PrefixGuard-GRU AUROC = 0.946
+Random = 0.500
+0.0
+0.5
+1.0
+False Positive Rate
+0.0
+0.5
+1.0
+PrefixGuard-GRU AUROC = 0.915
+Random = 0.500
+0.0
+0.5
+1.0
+False Positive Rate
+0.0
+0.5
+1.0
+PrefixGuard-GRU AUROC = 0.850
+Random = 0.500
+0.0
+0.5
+1.0
+False Positive Rate
+0.0
+0.5
+1.0
+PrefixGuard-GRU AUROC = 0.860
+Random = 0.500
+(a) Precision-Recall curves
+(b) ROC curves
+step-local (high observability)
+verifier-side / coarse (low observability)
+Figure 6: Representative precision-recall (PR) and receiver operating characteristic (ROC) curves for
+PrefixGuard-GRU with StepView; dashed lines show random baselines.
+E. Horizon Sensitivity
+Table 28 reports a validation-only horizon scan for H ∈{1, 3, 5} on all four benchmarks. Each row
+retrains PrefixGuard-GRU with the benchmark’s main recipe and evaluates on the validation split
+only.
+Table 28: Validation-only horizon sensitivity for PrefixGuard-GRU. Each row retrains the monitor
+with the listed H under the benchmark’s main recipe; no locked-test results are used for horizon
+selection.
+Benchmark
+H
+Pos. rate
+Score AUPRC
+Score AUROC
+ECE
+Lead
+DFA AUPRC
+WebArena
+0.219
+0.923
+0.985
+0.012
+0.182
+0.725
+WebArena
+0.396
+0.908
+0.945
+0.029
+0.431
+0.769
+WebArena
+0.514
+0.903
+0.894
+0.053
+0.571
+0.783
+τ 2-Bench
+0.046
+0.862
+0.971
+0.011
+0.030
+0.194
+τ 2-Bench
+0.092
+0.687
+0.917
+0.016
+0.129
+0.270
+τ 2-Bench
+0.138
+0.653
+0.891
+0.016
+0.204
+0.248
+SkillsBench
+0.049
+0.703
+0.895
+0.013
+0.021
+0.143
+SkillsBench
+0.097
+0.526
+0.814
+0.029
+0.073
+0.171
+SkillsBench
+0.144
+0.482
+0.768
+0.047
+0.132
+0.216
+TerminalBench
+0.035
+0.700
+0.912
+0.010
+0.125
+0.206
+TerminalBench
+0.067
+0.548
+0.858
+0.035
+0.263
+0.138
+TerminalBench
+0.096
+0.526
+0.837
+0.051
+0.423
+0.214
+Score AUPRC/AUROC are computed from continuous risk scores before thresholding. Bold marks the best validation value
+per benchmark; larger H increases positive-prefix prevalence and lead time.
+Across all four benchmarks, H=1 gives the best validation score-based AUPRC, score-based AUROC,
+and ECE, while larger H increases the positive-prefix rate and alert lead time. The main paper keeps
+H=3 as a fixed operating contract for comparability with the reported locked-test experiments, but
+the validation scan does not support treating H=3 as globally optimal. Any future dataset-specific
+locked-test comparison should first freeze the dataset’s horizon from validation metrics, then evaluate
+the chosen horizon once on the locked test split.
+F. LLM Baseline Prompts
+The LLM-as-judge baseline uses a two-message prompt: a fixed system message (Listing 2) and a
+per-prefix user message rendered from the observed StepView prefix (Listing 3).
+Listing 2
+System Message
+You are an evaluation system for prefix-level failure
+warning prediction in tool-using AI agent trajectories. You
+only see the observed prefix, not future steps. The prompt
+includes WARNING_HORIZON_STEPS. Your task is to estimate
+the probability that the observed prefix is a positive
+warning prefix: the final trajectory fails and the remaining
+suffix length is at most WARNING_HORIZON_STEPS. This is not
+asking whether the trajectory eventually fails at any later
+time; a failing trajectory can still be negative if failure
+is not imminent within the warning horizon. Rate this
+positive warning prefix probability as an INTEGER from 0 to
+100. 0 = certainly negative under the warning-label
+contract, 100 = certainly positive under the warning-label
+contract. Most prefixes are not extreme cases -- use the
+full range 0-100. Do NOT default to 0 or 100 unless the
+evidence is overwhelming. Output exactly one JSON object:
+{"p_fail": <integer 0-100>}
+Listing 3
+User Message Template (angle-bracket fields filled per prefix)
+TASK: <task_intent>
+PREFIX_STEP_INDEX: <t>
+PREFIX_OBSERVED_STEPS: 1..<t>
+WARNING_HORIZON_STEPS: <H>
+INPUT_RENDER: stepview
+OBSERVED_PREFIX:
+STEP <i>:
+METADATA=[...]
+ACTION=[action=<action_text>; tool=<tool_name>; args=<json>]
+RESULT=[status=<status>; text=<result_text>]
+OBSERVATION=[...]
+...
+Return only JSON with a calibrated positive-warning-prefix
+probability, for example:
+{"p_fail": 37}
+We considered adding in-context calibrated examples to this full-prefix prompt, but did not execute
+that variant because it would not be a small marginal cost under the matched evaluation protocol.
+Using one full-prefix training example per prompt is estimated to require roughly 75M input tokens
+across the four N=200 sampled evaluations. For WebArena, we additionally ran a stronger zero-shot
+DeepSeek-V4-Pro baseline with a 1M context window and thinking disabled on the same N=200
+full-prefix records; it parsed all prefixes but reached only 0.450 AUPRC. We therefore report zero-
+shot full-prefix LLM baselines as cost-controlled diagnostics; few-shot LLM monitors would require
+a separate compression or retrieval design.
+G. Observability Ceiling: Proofs
+We prove the area under the precision-recall curve (AUPRC) observability ceiling, Proposition 1,
+originally stated in the diagnostic lens of §3.1. The proposition is an upper bound on population
+ranking performance for a fixed observable-positive fraction π. Only after using the monotonicity of
+the AUPRC bound can one invert the population statement to obtain a lower bound on the π required
+to reach a given population AUPRC. The benchmark figure in §5.5 instead uses the bound in the
+forward direction, which calibrates AUPRC scale without estimating the true population π.
+Shared setup.
+Let (Ω, F, P) be a probability space. A sample is a prefix-label pair (x, p) with
+x ∈C∗and p ∈{0, 1}, where p=1 denotes an imminent-failure prefix. Denote the positive-prefix
+rate r = P(p=1) ∈(0, 1).
+Observability model (A2). The positive-prefix class is a mixture: P(x | p=1) = πPobs + (1 −
+π)Pneg, where Pobs is the distribution of observable failed prefixes and Pneg := P(x | p=0) is the
+negative distribution (hidden failures are distributionally identical to negative prefixes). Let x+
+obs and
+x+
+hid denote samples from the respective components.
+AUPRC observability ceiling (restated from §3.1).
+Under model (A2), let r ∈(0, 1) denote
+the positive-prefix rate. For any monitor f with continuous score distributions, the population
+AUPRC, defined as
+R
+Prec(t) d Recall(t) and equivalently as
+R 1
+0 Prec(s) ds under the continuous
+recall parametrization, satisfies
+AUPRC(f) ≤A(π, r) := π + r(1 −π)2
+1 −πr
++ rπ(1 −π)(1 −r)
+(1 −πr)2
+ln 1
+πr,
+with A(0, r) = r and A(1, r) = 1. The bound is tight over mixture-model instances and A(π, r) is
+strictly increasing in π for fixed r. The empirical average_precision_score of Appendix C.3 is a
+standard consistent estimator of this population AUPRC under independent and identically distributed
+(i.i.d.) test sampling with continuous score laws; consistency is not used in the proof. This use of
+average precision follows the standard PR-curve evaluation convention, where interpolation and class
+skew materially affect the area estimate [11, 7, 8].
+Figure 2 plots the conditional ceiling curve induced by the bound for the four benchmark positive-
+prefix rates and overlays independent mixture-proportion estimation (MPE) diagnostics ˆπMPE with
+the PrefixGuard backend AUPRCs from Table 2. Because π is latent, the curves should be read con-
+ditionally: fixing an assumed observable fraction gives the maximum population AUPRC compatible
+with that assumption, while the overlaid markers are finite-sample diagnostics rather than certified
+population π values.
+G.1. Proof of Proposition 1
+We work in the population limit with average precision AP(f) =
+R 1
+0 Prec(s) ds, where s is recall
+and we assume continuous score distributions so recall is a continuous function of threshold (no
+recall jumps); the value assigned at the endpoint s = 0 is immaterial to the integral. The formula
+below is derived for 0 < π < 1; the endpoints are handled separately.
+Proof. Define Robs(t) = P(f(x+
+obs) > t) and the false-positive rate FPR(t) = P(f(x−) > t). By
+A2, the recall and precision at threshold t are:
+Recall(t) = πRobs(t) + (1 −π) FPR(t),
+Prec(t) =
+r Recall(t)
+r Recall(t) + (1 −r) FPR(t).
+Substituting Recall = s and eliminating Robs:
+Prec(s, q) =
+r s
+r s + (1 −r) q ,
+(3)
+where q = FPR. Since Robs ≤1, the recall constraint s = πRobs + (1 −π)q implies q ≥q∗(s) :=
+(s −π)/(1 −π) for s > π (and q ≥0 for s ≤π). Equation (3) is strictly decreasing in q (since
+∂Prec/∂q = −rs(1 −r)/(rs + (1 −r)q)2 < 0 for s > 0), so precision is maximized at minimum
+FPR:
+Precmax(s) =
+
+
+
+1,
+s ∈[0, π],
+r s (1 −π)
+r s (1 −π) + (1 −r)(s −π),
+s ∈(π, 1].
+Continuity at s
+=
+π:
+Precmax(π+)
+→
+1.
+Therefore AP(f)
+=
+R 1
+0 Prec(s) ds
+≤
+R 1
+0 Precmax(s) ds =: A(π, r).
+It remains to evaluate A(π, r) = π +
+R 1
+π Precmax(s) ds. Substituting u = s −π, A = rπ(1 −π),
+B = 1 −πr, and using the key identity A + B(1 −π) = 1 −π:
+Z 1
+π
+Precmax(s) ds = r(1 −π)
+1 −π
+B
++ πB −A
+B2
+ln 1
+πr
+
+,
+where πB −A = π(1 −r). This yields
+A(π, r) = π + r(1 −π)2
+1 −πr
++ rπ(1 −π)(1 −r)
+(1 −πr)2
+ln 1
+πr.
+Boundary cases: A(0, r) = limπ→0+ A(π, r) = r (since π ln(1/π) →0); A(1, r) = 1. Numerical
+check at π=r=1/2: A = 2/3 + (1/9) ln 4 ≈0.821, matching the tight counterexample to the naive
+linear bound.
+□
+Constructive tightness. The upper envelope is attainable over the mixture-model instance class.
+For 0 < π < 1, choose continuous score distributions with disjoint support: f(x+
+obs) ∼U(1, 2) and
+f(x−) ∼f(x+
+hid) ∼U(0, 1). As the threshold moves through (1, 2), FPR = 0 and recall covers s ∈
+[0, π] with precision 1. As the threshold moves through (0, 1), Robs = 1 and FPR = (s−π)/(1−π)
+for s ∈(π, 1]. Thus this construction realizes Precmax(s) at every recall level, so its population AP
+equals A(π, r). The endpoint π = 0 is tight because hidden positives are distributionally identical
+to negatives and every monitor has population AP r; the endpoint π = 1 is tight because disjoint
+support gives perfect ranking and AP 1.
+Strict monotonicity in π. Let
+Gπ(s) =
+
+
+
+
+
+1,
+s ≤π,
+r s (1 −π)
+r s (1 −π) + (1 −r)(s −π),
+π < s ≤1.
+Then A(π, r) =
+R 1
+0 Gπ(s) ds. For fixed s ∈(0, 1) and 0 ≤π < s,
+∂Gπ(s)
+∂π
+=
+r s (1 −r)(1 −s)
+[r s(1 −π) + (1 −r)(s −π)]2 > 0.
+For π ≥s, Gπ(s) = 1, so increasing π cannot decrease the envelope. Therefore Gπ2(s) ≥Gπ1(s)
+for π2 > π1, and the inequality is strict for all s ∈(π1, 1) except the endpoint s = 1, a set of positive
+measure. Integrating gives A(π2, r) > A(π1, r) for 0 ≤π1 < π2 ≤1.
+Why A(π, r) > r + π(1 −r) for 0 < π < 1. The linear expression is π + (1 −π)r, which would
+be obtained by assigning precision 1 to s ∈[0, π] and precision r to every later recall level. For
+s ∈(π, 1),
+Gπ(s) > r
+⇐⇒
+s(1 −π) > s −π
+⇐⇒
+s < 1.
+The strict inequality holds on a positive-measure interval, hence
+A(π, r) = π +
+Z 1
+π
+Gπ(s) ds > π + (1 −π)r = r + π(1 −r).
+The naive bound would hold only if precision for hidden failures were r at every recall level-which
+fails because already-retrieved observable failures stay in the precision numerator.
+Benchmark-scale forward ceilings and prefix-evidence audit. Figure 2 (§5.5) reports forward
+ceiling curves A(π, ˆr) alongside independent mixture-proportion estimation (MPE) diagnostics
+ˆπMPE, PrefixGuard backend AUPRCs from Table 2, and required-π markers for the PG-GRU
+AUPRC. The curves use the reported test positive rates from Table 12; the horizontal MPE coordinates
+are estimated by a separate TF-IDF+logistic probe with a trimmed lower-tail CDF-ratio estimator,
+following the contaminated-distribution, positive-unlabeled, and label-noise MPE view [6, 31, 29, 22].
+For WebArena, whose trajectories are short, Figure 2 uses the all-prefix H=3 MPE diagnostic; for
+the longer benchmarks, it uses the matched non-terminal diagnostic that drops terminal prefixes and
+matches negatives to the same near-end window. The required-π marker for an observed PG-GRU
+AUPRC a is the inverse-envelope value
+πreq(a, ˆr) = inf{π ∈[0, 1] : A(π, ˆr) ≥a}.
+For WebArena, τ 2-Bench, SkillsBench, and TerminalBench, the plotted PG-GRU required-π values
+are 0.776, 0.621, 0.430, and 0.478, respectively.
+They should be read as descriptive finite-sample diagnostics: if an empirical AUPRC lies above
+A(π0, r), the exact population analogue would require π > π0 under the mixture model, but the
+MPE marker positions are not confidence-certified estimates of the true full-prefix population π. The
+SkillsBench explicit-evidence anchor πE = 0.489 is computed from H=3 test prefixes by scanning
+only observed status/action/result fields for explicit failure evidence, estimating q+ = 0.740 and
+q−= 0.490, and reporting max{0, (q+ −q−)/(1 −q−)} independently of learned scorer outputs.
+G.2. MPE Audit Protocol
+This audit estimates the horizontal marker positions in Figure 2. It is deliberately independent of
+PrefixGuard scores and of the AUPRC values plotted on the vertical axis. The goal is not to certify
+the true population π, but to obtain reproducible MPE-style diagnostics [6, 29] of whether failed
+prefixes remain distinguishable from negative-prefix references under the stated prefix construction.
+Prefix construction. For each trajectory with n steps, prefixes are indexed by j ∈{1, . . . , n}
+after observing step j. All-prefix WebArena diagnostics use the same H=3 label rule as the main
+evaluation: a failed trajectory contributes positive prefixes in the near-end window
+j ≥n −H,
+H = 3,
+and all other prefixes are negative. Because WebArena trajectories are short, this all-prefix diagnostic
+retains enough negative prefixes without creating the long early-prefix imbalance that appears in
+the other benchmarks. For τ 2-Bench, SkillsBench, and TerminalBench, the matched non-terminal
+diagnostic first removes the terminal prefix j = n, then keeps only non-terminal prefixes in the
+near-end window n −H ≤j < n; failed kept prefixes are positive and successful kept prefixes are
+negative. Thus their negative reference distribution is matched to successful near-end prefixes, rather
+than to all successful prefixes across long trajectories. The visible text for a prefix is the chrono-
+logical concatenation of only three observed step fields, status, action_text, and result_text,
+truncated to 1,200 characters per step and 5,000 characters per prefix. No future suffix, failure bucket,
+verifier output, PrefixGuard score, or AUPRC-derived quantity is used.
+Independent probe. For each benchmark, the train split is fit when available and otherwise train;
+the held-out split is test. We fit a TF-IDF vectorizer on the training prefixes with unigram/bigram
+features, min_df=2, sublinear term frequency, and at most 50,000 features. A logistic-regression
+probe is then fit with solver=liblinear, C = 0.5, balanced class weights, and seed 0. The probe
+is used only to produce held-out test scores s(x) for the audit prefixes.
+Cumulative distribution function (CDF)-ratio MPE estimator. Let bF+(t) = Pn(s(x) ≤t | y = 1)
+and bF−(t) = Pn(s(x) ≤t | y = 0) be empirical CDFs of the independent probe scores on held-out
+positive and negative prefixes. Under the mixture model F+ = πFobs +(1−π)F−, every measurable
+lower-score tail satisfies F+(A) ≥(1−π)F−(A). We therefore estimate the hidden-negative mixture
+weight by the trimmed lower-tail ratio
+bκ =
+min
+t: b
+F−(t)≥0.2
+bF+(t)
+bF−(t)
+,
+bπMPE = 1 −clip[0,1](bκ).
+The 0.2 tail trim prevents a single low-scoring negative prefix from determining the minimum.
+Bootstrap intervals resample the held-out positive and negative score arrays separately for 200
+replicates and recompute the same estimator.
+Table 29: MPE audit sample counts and estimates used for Figure 2. "MPE r" is the positive rate
+inside the audit sample, not the benchmark test prevalence used for the ceiling curves.
+Benchmark
+Protocol
+Train
+Test +
+Test -
+MPE r
+ˆπMPE
+WebArena
+all-prefix
+13,152
+1,285
+0.407
+0.825 [0.748, 0.883]
+τ 2-Bench
+matched nonterm.
+24,779
+1,863
+3,605
+0.341
+0.965 [0.944, 0.982]
+SkillsBench
+matched nonterm.
+24,198
+4,343
+1,338
+0.764
+0.620 [0.516, 0.693]
+TerminalBench
+matched nonterm.
+40,000
+6,471
+3,286
+0.663
+0.972 [0.964, 0.984]
+Two caveats follow from this construction. First, these estimates are finite-sample diagnostics rather
+than confidence-certified true population π values. Second, full-prefix MPE is sensitive to trajectory
+length: on long benchmarks, an all-prefix negative pool contains many early prefixes that are easy
+for the probe to separate from near-end failed prefixes, which pushes ˆπMPE upward. The matched
+non-terminal audit reduces this stage artifact for the longer benchmarks. The WebArena marker
+instead uses the all-prefix diagnostic because the matched non-terminal restriction leaves only 46
+held-out successful near-end negatives and produces a coarse interval, 0.746 [0.529, 0.921]; for
+WebArena’s short trajectories, the all-prefix diagnostic provides a more stable horizontal coordinate
+while preserving the independent-probe requirement.

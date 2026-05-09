@@ -1,0 +1,709 @@
+Topological Signatures of Grokking
+Yifan Tang
+Imperial College London
+yifan.tang23@imperial.ac.uk
+Qiquan Wang
+Queen Mary University of London
+qiquan.wang@qmul.ac.uk
+Inés García-Redondo
+University of Fribourg
+ines.garciaredondo@unifr.ch
+Anthea Monod
+Imperial College London
+a.monod@imperial.ac.uk
+Abstract
+We study the grokking phenomenon through the lens of topology. Using persistent
+homology on point clouds derived from the embedding matrices of a range of
+models trained on modular arithmetic with varying primes, we identify a clear and
+consistent topological signature of grokking: a sharp increase in both the maxi-
+mum and total persistence of first homology (H1). Persistence diagrams reveal the
+emergence of a dominant long-lived topological feature together with increasingly
+structured secondary features, reflecting the underlying cyclic structure of the task.
+Compared to existing spectral and geometric diagnostics-specifically, Fourier
+analysis and local intrinsic dimension-persistent homology provides a unified ge-
+ometric and topological characterization of representation learning, capturing both
+local and global multi-scale structure. Ablations across data regimes and control
+settings show that these topological transitions are tied to generalization rather than
+memorization. Our results suggest that persistent homology offers a principled
+and interpretable framework for analyzing how neural networks internalize latent
+structure during training.
+Introduction
+Deep neural networks can exhibit a striking training dynamic known as grokking, where models
+initially memorize training data before abruptly transitioning to near-perfect generalization after pro-
+longed optimization [16]. Despite growing interest in grokking and a range of proposed diagnostics,
+including Fourier analysis and geometric statistics [e.g., 8, 14], there remains limited understanding
+of the global structure that emerges in learned representations during generalization.
+In this work, we study grokking through the lens of topology. We apply persistent homology (PH) to
+point clouds derived from neural representations during training, enabling a multi-scale analysis of
+their geometric and topological organization.
+In the classical modular arithmetic setting, we identify a clear and reproducible topological sig-
+nature of grokking. Across a range of models and primes, the maximum and total persistence of
+first homology (H1) increase sharply during generalization, while persistence diagrams reveal the
+emergence of a dominant long-lived 1-cycle together with increasingly structured secondary features.
+These patterns are consistent with the cyclic structure underlying modular arithmetic and suggest that
+grokking coincides with the emergence of coherent topological organization in representation space.
+We further investigate the robustness and limitations of this phenomenon. Similar topological
+transitions arise across different model classes, including transformers and multilayer perceptrons
+(MLPs), indicating that the effect is not architecture-specific. In contrast, experiments on MNIST
+[10] produce more diffuse and less interpretable topological behavior, suggesting that the observed
+Preprint.
+arXiv:2605.06352v1 [cs.LG] 7 May 2026
+
+signatures are tied to the presence of underlying global structure rather than arising universally during
+training.
+We also compare PH with existing specral and geometric grokking diagnostics. While these methods
+capture aspects of the grokking transition, PH provides a unified geometric and topological perspective
+that captures both local and global multi-scale structure. Finally, through ablations varying training
+fraction and label randomization, we show that the observed PH signatures track generalization and
+disappear when grokking fails to occur.
+Our contributions are as follows.
+• We identify a robust topological signature of grokking using persistent homology.
+• We provide a geometric and topological interpretation of grokking in terms of emergent
+structure in representation space.
+• We demonstrate consistent behavior across model classes and analyze both synthetic and
+real-data settings.
+• We show through ablations and controls that the observed PH signatures are associated with
+generalization rather than memorization.
+Overall, our results suggest that persistent homology provides a principled and interpretable frame-
+work for studying representation learning, offering new insight into how neural networks internalize
+latent structure during training.
+Background
+In this section we introduce the relevant background on PH to facilitate the interpretation of our
+results, and position our work with respect to the existing literature.
+2.1
+Persistent Homology (PH)
+PH is a tool from topological data analysis that quantifies the multi-scale shape of data. Given a point
+cloud equipped with a distance metric, PH constructs a nested sequence of simplicial complexes,
+called a filtration, by progressively increasing a distance threshold ϵ ≥0. In this work we use the
+Vietoris-Rips filtration: at scale ϵ, points within distance ϵ are connected by edges, and higher-
+dimensional simplices are included whenever all pairwise distances among their vertices are below ϵ.
+As ϵ increases, topological features such as connected components and loops appear and disappear.
+These features are summarized in a persistence diagram, a multiset of points (b, d) recording the
+birth and death scales of each feature. Degree-0 points correspond to connected components, while
+degree-1 points correspond to loops or cycles. The persistence d −b measures how prominent a
+feature is across scales: points close to the diagonal are typically interpreted as noise, while long-lived
+features indicate meaningful geometric structure.
+In our setting, we apply PH to point clouds extracted from neural representations throughout training.
+The emergence of persistent degree-1 (H1) features indicates the formation of loop-like organization
+in representation space, which we interpret as a geometric signature of grokking.
+2.2
+Related Work
+Grokking was first observed by [16] in transformers trained on algorithmic tasks, and was later
+extended to non-algorithmic settings and broader architectures [12, 8]. Existing explanations largely
+frame grokking as a phase transition measurable through complexity or information-theoretic quan-
+tities [12, 13, 5, 4, 6]. Our work instead contributes to the line of research relating grokking to the
+emergence of structure in learned representations [22].
+Within this perspective, [15] used Fourier analysis to show that transformers trained on modular arith-
+metic learn representations consistent with circular structure, linking grokking to the emergence of
+latent geometric organization. Relatedly, [21] reduced grokking delay by constraining representations
+to lie on a sphere. Our approach is observational rather than interventional: using persistent homology,
+we detect the emergence of persistent 1-dimensional topological structure in representations learned
+during grokking. We also compare our approach with local intrinsic dimension (LID), another
+geometric diagnostic proposed for studying grokking dynamics [3, 17].
+Persistent homology has previously been used to analyze neural network representations and trans-
+former embeddings [20, 1, 19, 11, 9, 18]. To our knowledge, however, this is the first work applying
+persistent homology to characterize topological signatures of grokking and relate them to the latent
+cyclic structure of the training task.
+Experimental Setup
+Task and data. We study the modular addition task: given two integers a, b ∈{0, . . . , p−1}, predict
+(a + b) mod p. The full dataset consists of all p2 input pairs, represented as two-token sequences
+[a, b]. We use p ∈{113, 149, 197} as the modulus, following prior work on grokking [16]. Models
+are trained on a random subset of fraction α ∈{0.20, 0.25, 0.30} of all pairs, with the remainder held
+out as a test set. To test that the observed signals are not artifacts, as a control setting we additionally
+run experiments where training labels are independently permuted at random while the test set retains
+the original labels.
+Model architecture. We study two architectures on the same task.
+1. Transformer. We use a two-layer transformer encoder with pre-layer-norm. Token embed-
+dings and learned positional embeddings of dimension dmodel = 128 are summed and passed
+through two standard encoder blocks, each with h = 4 attention heads, key/query dimension
+dattn = 32 per head, and a two-layer MLP with hidden dimension dff = 256 and GELU
+activations. After the encoder processes both tokens via self-attention, only the hidden state
+at the second token position is extracted, passed through a layer norm, and projected linearly
+to produce logits over the p output classes. No dropout is applied.
+2. MLP. As a non-attention baseline, we use a feed-forward network with a shared token
+embedding of dimension dembed = 128. The embeddings of a and b are concatenated into
+a 2dembed-dimensional vector and passed through three hidden layers of width 512 with
+GELU activations, followed by a linear readout to p classes. No positional encoding or
+self-attention is used.
+Training. Models are optimized with AdamW (β1 = 0.9, β2 = 0.98, ϵ = 10−6, weight decay
+λ = 0.1) using a learning rate of 3 × 10−3. Training uses a brief linear warm-up over the first 10
+steps, after which the learning rate is held constant. Models are trained for 6×104 gradient steps with
+a fixed batch size of 512. Model weights, optimizer states, and train/test metrics are checkpointed
+every 500 steps. All experiments are run with fixed random seeds for reproducibility.
+Experiments were conducted on a local workstation equipped with a single NVIDIA GeForce RTX
+3070 Laptop GPU (8GB memory) and an AMD Ryzen 7 5800H CPU. The software environment
+used Windows Subsystem for Linux 2 (WSL2), configured with 10 CPU threads and 10GB system
+memory. Each experiment used a single GPU.
+For each prime and training fraction, models were trained over five random seeds (46-50). Training a
+single model required approximately 8-10 minutes for both transformer and MLP architectures. The
+CPU-based Vietoris-Rips PH and LID analyses required approximately 2 and 6 minutes per model,
+respectively.
+Analysis. We characterize the geometry of learned representations through three complementary
+lenses.
+1. Topological data analysis. At selected checkpoints we construct point clouds from (i) the
+rows of the token embedding matrix tok_emb.weight ∈Rp×dmodel, i.e. the p learned token
+vectors prior to the addition of positional embeddings, and (ii) the second-token hidden
+states after each encoder layer on the test set. Prior to computing PH, each point cloud is
+centered and normalized. We then compute Vietoris-Rips PH in dimensions 0 and 1 using
+RIPSER [2].
+2. Fourier analysis. Following Nanda et al. [15], we compute the 2-D discrete Fourier
+transform of the p × p logit tensor and measure the restricted and excluded accuracies. We
+also compute per-head 1-D Fourier spectra of the embedding, key, query, and value weight
+rows to identify the dominant frequencies learned at each layer.
+3. Local intrinsic dimension. We estimate the local intrinsic dimension (LID) of the same
+model checkpoints used for the TDA analysis, using the TwoNN estimator [7] as imple-
+mented in skdim. The point cloud is constructed from the layer-2 hidden states of both
+token positions on the test set, subsampled to 2,000 points, and we track how the mean
+LID and its distribution evolve across training checkpoints to characterize the progressive
+compression or expansion of learned geometry.
+Comparison with previous local intrinsic dimension studies [17]. Ruppik et al. [17] study LID
+dynamics during grokking on modular addition using a closely related setup, which we broadly
+follow but differ from in several respects. Their experiments use a single modulus p = 197 and
+train fractions ranging from 10% to 50%, whereas we vary p ∈{113, 149, 197} and focus on
+α ∈{0.20, 0.25, 0.30}. Both works train for 60,000 optimization steps, but the architectures and
+input representations differ: their setup uses four-token sequences of the form "a + b =", while ours
+uses only the two input tokens (a, b).
+For LID estimation, they subsample 3,000 points with a fixed neighborhood size of L = 64, whereas
+we subsample 2,000 points with the same neighborhood size. Additionally, their LID point clouds
+are constructed from all token positions in the sequence, whereas we restrict attention to the two
+input-token positions at layer 2.
+Results and Discussion
+We investigate the topological signatures of grokking across architectures, datasets, and training
+regimes, beginning with modular arithmetic and then considering ablations and MNIST as a contrast-
+ing real-data setting.
+4.1
+Transformer Grokking on Modular Arithmetic
+Grokking dynamics. Figure 3 summarizes training for the transformer on modular addition with
+p = 197, the same modulus studied by Ruppik et al. [17], across fractions α ∈{0.2, 0.25, 0.3},
+averaged over multiple seeds with ±1 standard deviation shading. The accuracy curves (top-left
+panel) confirm the grokking pattern: all fractions achieve near-perfect training accuracy within a
+few thousand steps, while test accuracy rises with a delay that grows as α decreases. For α = 0.3,
+generalization occurs around step 15,000-20,000; for α = 0.2 it is delayed to approximately step
+35,000-45,000.
+Topological grokking signatures. The maximum persistence value of a point in the degree-1 persis-
+tence diagram (H1 max persistence, bottom-left panel of Figure 3) exhibits a clear and reproducible
+transition: after remaining near its baseline of ≈0.075-0.08 throughout the memorization phase,
+it rises sharply with generalization and stabilizes at 0.20-0.25. The transition timing tracks the
+grokking step for each fraction, with larger fractions transitioning first. The sum of the persistences
+of all points in the degree-1 persistence diagram (total H1 persistence, bottom-right panel) shows
+a corresponding increase from a baseline of ≈20 to values in the range 30-50, consistently across
+all three fractions. Persistence diagrams across training further reveal the emergence of a dominant
+long-lived H1 feature that increasingly separates from the remaining topological features as grokking
+occurs (Figure 1). Together, these metrics indicate that grokking coincides with the emergence of
+coherent 1-dimensional topological structure in the token embedding space, consistent with the cyclic
+geometry underlying modular arithmetic.
+Comparison of PH with local intrinsic dimension. The LID curves (top-right panel of Figure 3)
+display a complementary but inverse pattern: LID rises to roughly 20-25 during memorization and
+then drops sharply at the grokking step, stabilizing near 5. The initial rise reflects the network
+assembling a high-dimensional, unstructured representation of the training data; the subsequent
+drop signals compression onto a low-dimensional manifold. PH captures the dual aspect that LID
+misses: the global loop structure that becomes geometrically apparent only after this compression.
+Neither metric alone characterizes the transition, but together they paint a coherent picture of a
+representational phase transition.
+Comparison with Fourier analysis [15]. To contextualize the PH results, we also examine the
+Fourier-based mechanistic analysis of grokking [15]. We study a representative training run with
+α = 0.3. As shown in Figure 2a, the Fourier spectrum of the token embedding matrix is initially
+(a) Step 1.
+(b) Step 20,000.
+(c) Step 30,000.
+(d) Step 50,000.
+Figure 1: Vietoris-Rips persistence diagrams computed from the learned representations of the
+Transformer model at different stages of training on the modular addition task with prime modulus
+p = 197 and training fraction 30%. Panels correspond to training steps 1, 20,000, 30,000, and 50,000,
+respectively. As training progresses and the model transitions into the generalized regime, a dominant
+long-lived H1 feature increasingly separates from the remaining topological features. This emergence
+of a highly persistent one-dimensional cycle is consistent with the formation of structured periodic
+organization in the learned representations following grokking.
+diffuse but progressively concentrates around a small number of dominant frequencies over the course
+of training. Figure 2b shows that the accuracies obtained by restricting to or excluding these dominant
+frequencies closely track the test accuracy, reflecting the onset of grokking.
+These observations provide a complementary spectral perspective on the emergence of structure
+during training. Whereas Fourier analysis identifies dominant frequency components associated
+with the learned modular arithmetic circuit, PH captures the evolving geometric and topological
+organization of the learned representations.
+(a) Evolution of the token-embedding Fourier
+spectrum over training.
+(b) Comparison of test accuracy with restricted and
+excluded accuracies.
+Figure 2: Fourier-based mechanistic analysis of grokking on modular addition (p = 197, α = 0.3).
+(a) Evolution of the token-embedding Fourier spectrum during training. (b) Test accuracy together
+with restricted and excluded Fourier accuracies, showing the emergence of dominant frequency
+components during grokking.
+Consistency across primes. Results for p = 113 and p = 149 are shown in Figures 7 and 8 in the
+Appendix. The H1 transitions remain aligned with the respective grokking steps across all fractions,
+and the LID inversion is consistently observed across all three primes.
+4.2
+MLP Grokking on Modular Arithmetic
+Grokking dynamics. Figure 4 shows training for the MLP on modular addition with p = 197, the
+same modulus studied by Ruppik et al. [17]. As with the transformer, all fractions memorize quickly
+while test accuracy generalizes with a fraction-dependent delay, confirming that grokking is not
+specific to the attention-based architecture.
+Topological signatures. H1 max persistence at the token embedding layer (layer 0, middle row of
+Figure 4) rises from a baseline near 0.08 to approximately 0.29-0.35 at grokking. The rise in H1 total
+persistence is even more striking: starting from a baseline of ≈20, it increases to the range 30-70
+for all three fractions at the grokking step. Both metrics rise for all fractions, including α = 0.2,
+indicating that the topological signal is robust across data regimes.
+Figure 3: Transformer on modular addition, p = 197, averaged across seeds (±1 std. shaded). Top
+row: train/test accuracy (left) and mean pointwise LID on the test set (right). Bottom row: H1 max
+persistence (left) and H1 total persistence (right), both computed on the token embedding matrix.
+Both H1 metrics rise while LID drops simultaneously at grokking, across all training fractions.
+Layer-wise behavior. At the third hidden layer (bottom row of Figure 4), H1 max rises even further
+(to 0.4-0.5), suggesting that the cyclic structure becomes more geometrically pronounced in deeper
+representations. Unlike the smaller primes p = 113 and p = 149 (see Appendix B), where H1 total at
+layer 3 decreases, reflecting a consolidation into fewer but stronger cycles, for p = 197 the H1 total at
+layer 3 shows a modest positive increase alongside the max. We attribute this difference to the larger
+group size: Z/197Z sustains more topological structure across all layers, rather than compressing
+it into a single dominant feature. The fact that the signal is visible as early as the embedding layer
+confirms that structure emerges at the very first stage of processing, consistent with the analysis of
+Nanda et al. [15].
+Consistency across primes. Results for p = 113 and p = 149 are shown in Figures 9 and 10 in the
+Appendix. The embedding-layer H1 max rise is present in both, and the layer-3 inversion (max up,
+total down) is clearly visible, particularly for p = 149.
+4.3
+Ablation Study: Label Permutation and Topological Robustness
+To assess whether the observed topological transitions are specifically associated with model gen-
+eralization, rather than reflecting generic optimization dynamics or memorization, we performed a
+label-permutation ablation study. By progressively corrupting the training objective through con-
+trolled label permutation, we create settings in which the underlying modular structure becomes
+increasingly difficult to recover. This allows us to identify the point at which grokking fails and, in
+turn, evaluates whether our PH measures continue to track the representational phase transition.
+The training configurations are as described in Section 3, with the Transformer model trained using
+a 0.3 training fraction and the MLP model using a 0.2 training fraction. For each architecture, we
+introduced a label permutation fraction, denoted Pfrac, corresponding to the proportion of training
+labels randomly permuted among the training samples and explored Pfrac ranging from 0% to 100%.
+All models were trained for a fixed budget of 60,000 optimization steps to capture both grokking and
+post-grokking dynamics.
+We focus on the label-permutation ablation results for the Transformer model, while the corresponding
+MLP results for modular arithmetic are provided in Appendix C.2. Consistent with the Transformer,
+the MLP exhibits qualitatively similar behavior, with improvements in generalization strongly coupled
+to the topological signatures captured by the PH statistics.
+Figure 4: MLP on modular addition, p = 197. Top: train/test accuracy. Middle row: H1 max (left)
+and H1 total persistence (right) at the token embedding layer (layer 0) - both rise at grokking for all
+three fractions, with H1 total showing the most dramatic increase across all settings. Bottom row:
+same metrics at the third hidden layer (layer 3) - H1 max rises further, and H1 total also increases
+modestly, suggesting topological structure strengthens through depth for this larger group.
+Topological signatures with grokking. For permutation levels up to Pfrac ≤10%, the Transformer
+model consistently exhibited grokking behavior. Within this regime, we observed strong and highly
+consistent associations between model generalization performance and the PH statistics, particularly in
+the embedding layer and first layer (Appendix Table 1). Across these early layers, H0-based statistics
+exhibited strong negative correlations with test accuracy, with Spearman coefficients reaching as low
+as ρ = −0.91 for total H0 persistence and remaining consistently below −0.49 across all grokking
+permutation levels. Conversely, maximum H1 persistence exhibited strong positive correlation
+with test accuracy, reaching ρ = 0.81 in layer 1 and remaining consistently positive across the
+same regimes. These results indicate that improved generalization is accompanied by increased
+connectivity together with the emergence of a dominant one-dimensional topological feature in the
+learned representation space. Figure 5 illustrates the evolution of these PH signatures over training
+under increasing label permutation, further illustrations can be found in the Appendix Section C.1.
+Breakdown under increased label corruption. At higher permutation levels (Pfrac ≥20%), the
+model was not able to generalize within the 60,000-step training window. Instead, the model remained
+in a memorization-dominated regime characterized by high training accuracy but poor out-of-sample
+performance.
+Crucially, under these conditions, the previously observed correlations between test accuracy and
+PH measures largely disappeared. This suggests that the topological signatures identified by our PH
+measures are not simply artifacts of training duration or loss minimization, but instead are specifically
+associated with the emergence of model generalization.
+Figure 5: Training dynamics under label permutation for the Transformer model. The top panel
+shows test accuracy across training for different label permutation fractions Pfrac. The remaining
+panels show the corresponding Vietoris-Rips PH statistics computed from the learned representations,
+with the left and right columns corresponding to the embedding layer (layer 0) and first layer (layer
+1), respectively. Rows 2 and 3 report H0 and H1 maximum persistence, respectively. For low
+permutation levels, successful grokking is accompanied by a pronounced decrease in H0 persistence
+and the emergence of a dominant H1 cycle, consistent with the formation of a structured periodic
+representation. As label corruption increases, both generalization and the associated topological
+transition progressively deteriorate.
+Temporal dynamics. To further characterize the relationship between predictive performance and
+topological reorganization, we analyzed the cross-correlation function (CCF) between the first-order
+differences of test accuracy and the PH measures.
+Across all grokking runs of the Transformer model, cross-correlation analysis revealed a consistent
+temporal lag centered around 1,000 training steps between changes in predictive performance and
+the corresponding topological transition. Changes in test accuracy consistently preceded shifts in
+the PH statistics (e.g., total H0 persistence), with the full set of cross-correlation plots provided in
+Appendix C.1. This suggests a two-stage learning dynamic in which the model first discovers a
+functionally correct input-output mapping, followed by a delayed geometric reorganization of the
+latent space into a more compact and topologically coherent representation.
+4.4
+Topological Behavior on MNIST
+To assess whether the observed topological signatures generalize beyond tasks with latent cyclic
+structure, we apply the same analysis to representations learned on MNIST, a classification task whose
+underlying geometry is substantially more heterogeneous and not naturally cyclic. Experiments
+follow the implementation of Liu et al. [12], with varying weight initialization scales. In this setting,
+α denotes the initialization scaling factor relative to the default PyTorch initialization rather than the
+training fractions used in the modular arithmetic experiments. Results are averaged over five random
+seeds. As shown in Figure 6, training accuracy on MNIST saturates quickly for all values of α, while
+test accuracy increases more gradually.
+Figure 6: MNIST results, layer 1 (after the first hidden layer). Top row: train/test accuracy. Bottom
+row, left to right: H1 max persistence and H1 total persistence. Unlike the modular arithmetic setting,
+H1 max persistence increases gradually without a sharp transition, while H1 total persistence peaks
+early and subsequently declines. No clearly dominant long-lived cycle emerges, consistent with the
+absence of a simple global cyclic structure in the MNIST task.
+H1 max persistence. The H1 max persistence (left panel in the bottom row of Figure 6) increases
+gradually throughout training across all conditions. Unlike the modular arithmetic setting, no sharp
+transition is observed: the increase is comparatively slow and noisy rather than concentrated around a
+distinct grokking step.
+H1 total persistence. The H1 total persistence (right panel in the bottom row of Figure 6) displays
+a qualitatively different trajectory from the modular arithmetic case. It rises early in training to a
+peak around steps 25,000-50,000, before gradually declining throughout the remainder of training.
+This behavior suggests an initial increase in distributed topological complexity during early fitting,
+followed by a progressive consolidation of the learned representations. In contrast to modular
+arithmetic, no sustained increase in total persistence is observed, and no clearly dominant long-lived
+H1 feature emerges.
+Conclusion: Limitations and Future Work
+We studied grokking through the lens of topology using PH on learned neural representations. Across
+modular arithmetic tasks, architectures, and training regimes, we identified a consistent topological
+signature of grokking characterized by increasing H1 persistence and the emergence of dominant
+long-lived topological features. Ablation studies further showed that these signatures disappear
+when grokking fails to occur, indicating that they are associated with generalization rather than
+memorization.
+Limitations. While the observed topological transitions are clear in modular arithmetic, the behavior
+on MNIST is substantially more diffuse, suggesting that interpretable global topological structure
+may depend strongly on the underlying geometry of the task. More broadly, PH provides descriptive
+geometric summaries rather than mechanistic explanations of learning dynamics.
+Overall, our results suggest that PH offers a useful framework for studying representation learning
+and the emergence of structure during training. Future work includes extending these analyses to tasks
+with richer latent geometry, larger-scale architectures, and more expressive topological summaries.
+References
+[1] R. Ballester, C. Casacuberta, and S. Escalera. Topological data analysis for neural network
+analysis: A comprehensive survey. arXiv preprint arXiv:2312.05840, 2023.
+[2] U. Bauer. Ripser: efficient computation of vietoris-rips persistence barcodes. Journal of Applied
+and Computational Topology, 5(3):391-423, 2021.
+[3] B. C. Brown, J. Juravsky, A. L. Caterini, and G. Loaiza-Ganem. Relating regularization and
+generalization through the intrinsic dimension of activations. In OPT 2022: Optimization for
+Machine Learning (NeurIPS 2022 Workshop).
+[4] B. W. Carvalho, A. S. Garcez, L. C. Lamb, and E. V. Brazil. Grokking explained: A statistical
+phenomenon. arXiv preprint arXiv:2502.01774, 2025.
+[5] K. Clauw, S. Stramaglia, and D. Marinazzo. Information-theoretic progress measures reveal
+grokking is an emergent phase transition. arXiv preprint arXiv:2408.08944, 2024.
+[6] B. DeMoss, S. Sapora, J. Foerster, N. Hawes, and I. Posner. The complexity dynamics of
+grokking. Physica D: Nonlinear Phenomena, page 134859, 2025.
+[7] E. Facco, M. d’Errico, A. Rodriguez, and A. Laio. Estimating the intrinsic dimension of datasets
+by a minimal neighborhood information. Scientific reports, 7(1):12140, 2017.
+[8] A. I. Humayun, R. Balestriero, and R. Baraniuk. Deep networks always grok and here is why.
+arXiv preprint arXiv:2402.15555, 2024.
+[9] L. Kushnareva, D. Cherniavskii, V. Mikhailov, E. Artemova, S. Barannikov, A. Bernstein,
+I. Piontkovskaya, D. Piontkovski, and E. Burnaev. Artificial text detection via examining the
+topology of attention maps. In Proceedings of the 2021 Conference on Empirical Methods in
+Natural Language Processing, pages 635-649, 2021.
+[10] Y. LeCun and C. Cortes. MNIST handwritten digit database. 2010. URL 
+com/exdb/mnist/.
+[11] J. H. Lee, T. Jiralerspong, L. Yu, Y. Bengio, and E. Cheng. Geometric signatures of composi-
+tionality across a language model’s lifetime. In Proceedings of the 63rd Annual Meeting of the
+Association for Computational Linguistics (Volume 1: Long Papers), pages 5292-5320, 2025.
+[12] Z. Liu, E. J. Michaud, and M. Tegmark. Omnigrok: Grokking beyond algorithmic data. In
+The Eleventh International Conference on Learning Representations, 2023. URL https:
+//openreview.net/forum?id=zDiHoIWa0q1.
+[13] W. Merrill, N. Tsilivis, and A. Shukla. A tale of two circuits: Grokking as competition of sparse
+and dense subnetworks. In ICLR 2023 Workshop on Mathematical and Empirical Understanding
+of Foundation Models, 2023. URL 
+[14] M. A. Mohamadi, Z. Li, L. Wu, and D. J. Sutherland. Why do you grok? A theoretical analysis
+of grokking modular addition. arXiv preprint arXiv:2407.12332, 2024.
+[15] N. Nanda, L. Chan, T. Lieberum, J. Smith, and J. Steinhardt. Progress measures for grokking
+via mechanistic interpretability. In The Eleventh International Conference on Learning Repre-
+sentations, 2023. URL 
+[16] A. Power, Y. Burda, H. Edwards, I. Babuschkin, and V. Misra. Grokking: Generalization beyond
+overfitting on small algorithmic datasets. arXiv preprint arXiv:2201.02177, 2022.
+[17] B. M. Ruppik, J. von Rohrscheidt, C. van Niekerk, M. Heck, R. Vukovic, S. Feng, H. chin Lin,
+N. Lubis, B. Rieck, M. Zibrowius, and M. Gasic. Less is more: Local intrinsic dimensions of
+contextual language models. In The Thirty-ninth Annual Conference on Neural Information
+Processing Systems, 2026. URL 
+[18] C. Tan, I. García-Redondo, Q. Wang, M. M. Bronstein, and A. Monod. On the limitations
+of fractal dimension as a measure of generalization. In A. Globerson, L. Mackey, D. Bel-
+grave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang, editors, Advances in Neural Information
+Processing Systems, volume 37, pages 60309-60334. Curran Associates, Inc., 2024. doi:
+10.52202/079017-1928. URL 
+2024/file/6f098c5618e4289f5a6b642c94199f34-Paper-Conference.pdf.
+[19] A. Uchendu and T. Le. Unveiling topological structures from language: A survey of topological
+data analysis applications in nlp. arXiv preprint arXiv:2411.10298, 2024.
+[20] S. Watanabe and H. Yamana. Topological measurement of deep neural networks using persistent
+homology. Annals of Mathematics and Artificial Intelligence, 90(1):75-92, 2022.
+[21] A. Yıldırım. The geometric inductive bias of grokking: Bypassing phase transitions via
+architectural topology. arXiv preprint arXiv:2603.05228, 2026.
+[22] X. Zheng, K. Daruwalla, A. S. Benjamin, and D. Klindt. Delays in generalization match
+delayed changes in representational geometry. In UniReps: 2nd Edition of the Workshop on
+Unifying Representations in Neural Models, 2024. URL 
+id=1ae108kHk2.
+A
+Additional Transformer Results
+Figures 7 and 8 show the full transformer results for p = 113 and p = 149, using the same layout as
+Figure 3 in the main text. The topological signature and LID inversion are reproduced in both cases
+across all training fractions.
+Figure 7: Transformer on modular addition, p = 113. Same layout as Figure 3: train/test accuracy
+(top-left), LID (top-right), H1 max persistence (bottom-left), H1 total persistence (bottom-right).
+Figure 8: Transformer on modular addition, p = 149. Same layout as Figure 3.
+B
+Additional MLP Results
+Figures 9 and 10 show the full MLP results for p = 113 and p = 149, using the same layout as
+Figure 4 in the main text. The layer-3 inversion (H1 max rising while H1 total falls) is most clearly
+visible here, particularly for p = 149. For p = 113, H1 total at the embedding layer rises clearly for
+α ∈{0.25, 0.3} but only modestly for α = 0.2.
+Figure 9: MLP on modular addition, p = 113. Same layout as Figure 4. H1 total at the embedding
+layer rises for α ∈{0.25, 0.3} but only modestly for α = 0.2. H1 total at layer 3 decreases, showing
+the inversion pattern.
+C
+Additional Ablation Results
+C.1
+Transformer Ablation Results
+In this section, we provide additional cross-correlation results and ablation analyses to supplement
+the analysis presented in the main text. Table 1 shows a comprehensive summary of Spearman
+correlations between PH measures and test accuracy across all layers and permutation levels for
+the Transformer model. This table provides a detailed breakdown of the relationships discussed
+in the main text. Figure 11 provides a further illustration of additional topological statistics across
+the training dynamics for different levels of permutation at layers 0 and 1. Figure 12 shows the
+relationship between the first order difference for the test accuracy and the total H0 persistence
+under varying levels of label permutation for the Transformer model. These results supplement the
+Figure 10: MLP on modular addition, p = 149. Same layout as Figure 4. All three fractions show a
+clear rise in both H1 metrics at the embedding layer. The layer-3 inversion is the most pronounced of
+the three primes: H1 total drops from ≈15 to 8-10 while H1 max rises.
+main finding that improvements in generalization consistently precede the corresponding topological
+transition.
+C.2
+MLP Ablation Results
+In this section, we analyse the MLP model under the same label-permutation ablation regime. The
+corresponding PH-accuracy correlations across all layers and permutation levels are reported in
+Table 2, with representative training dynamics and CCF analyses shown in Figure 13 and Figure 14.
+In contrast to the Transformer model, the MLP exhibits a markedly more distributed structure of
+correlations across layers. Early layers (embedding and first hidden layer) show weaker and more
+variable associations with generalization, with large variance and several non-significant pattern under
+increased permutation. In contrast, deeper layers (Hidden 2 and Hidden 3) consistently exhibit strong
+and statistically significant correlations across all PH statistics in the low-noise regime (Pfrac ≤10%),
+with H0 statistics reaching correlations as strong as ρ = −0.86 and H1 maximum persistence
+reaching up to ρ = 0.79.
+As label corruption increases, these correlations weaken and collapse under complete permutation.
+This is consistent with the model being in an intermediate generalization regime, where PH-aligned
+cyclic structure is emerging but has not yet fully stabilized.
+Table 1: Spearman Rank Correlation (ρ) between PH measures and test accuracy (mean ± SD).
+Bolded values indicate p < 0.05.
+Metric
+Layer
+0%
+1%
+5%
+10%
+20%
+H0 Max
+Embed
+-0.78 ± 0.04
+-0.72 ± 0.07
+-0.84 ± 0.07
+-0.86 ± 0.06
+-0.10 ± 0.32
+Layer 1
+-0.55 ± 0.08
+-0.70 ± 0.06
+-0.89 ± 0.03
+-0.85 ± 0.07
+-0.05 ± 0.20
+Layer 2
+-0.47 ± 0.10
+-0.52 ± 0.14
+-0.56 ± 0.16
+-0.67 ± 0.08
++0.00 ± 0.08
+H0 Total
+Embed
+-0.75 ± 0.03
+-0.71 ± 0.10
+-0.87 ± 0.06
+-0.91 ± 0.03
+-0.20 ± 0.36
+Layer 1
+-0.49 ± 0.08
+-0.67 ± 0.09
+-0.90 ± 0.03
+-0.88 ± 0.06
+-0.14 ± 0.29
+Layer 2
+-0.06 ± 0.27
+-0.47 ± 0.14
+-0.59 ± 0.17
+-0.82 ± 0.08
+-0.03 ± 0.10
+H1 Max
+Embed
++0.77 ± 0.03
++0.71 ± 0.06
++0.80 ± 0.06
++0.69 ± 0.10
++0.08 ± 0.10
+Layer 1
++0.49 ± 0.08
++0.70 ± 0.07
++0.81 ± 0.05
++0.68 ± 0.14
++0.09 ± 0.17
+Layer 2
+-0.23 ± 0.23
++0.53 ± 0.10
++0.59 ± 0.13
++0.65 ± 0.11
++0.05 ± 0.05
+H1 Total
+Embed
++0.60 ± 0.10
++0.42 ± 0.39
++0.24 ± 0.49
++0.14 ± 0.51
++0.10 ± 0.21
+Layer 1
++0.33 ± 0.16
++0.71 ± 0.13
++0.74 ± 0.12
++0.71 ± 0.18
++0.10 ± 0.18
+Layer 2
++0.80 ± 0.04
++0.66 ± 0.10
++0.62 ± 0.06
++0.40 ± 0.31
++0.05 ± 0.09
+Overall, this suggests that, unlike the Transformer where PH signatures are strongly localized in early
+representations, the MLP encodes topological structure more deeply in the network hierarchy, with
+generalization-related geometric organization emerging predominantly in later hidden layers.
+Table 2: Spearman Rank Correlation (ρ ± SD) between PH measures and test accuracy across all
+MLP layers. Bold values indicate statistical significance (p < 0.05). Note that while early layers
+show inconsistent signals (high SD), deeper layers maintain a robust structural link to generalization
+even at 50% noise.
+Metric
+Layer
+0%
+10%
+20%
+50%
+100%
+H0 Max
+Embed (L0)
+-0.49 ± 0.45
+-0.26 ± 0.37
++0.03 ± 0.26
+-0.12 ± 0.14
+-0.08 ± 0.26
+Hidden 1
+-0.55 ± 0.39
+-0.30 ± 0.38
++0.05 ± 0.27
+-0.17 ± 0.15
+-0.11 ± 0.16
+Hidden 2
+-0.69 ± 0.27
+-0.51 ± 0.23
+-0.39 ± 0.17
+-0.47 ± 0.25
++0.01 ± 0.22
+Hidden 3
+-0.81 ± 0.07
+-0.69 ± 0.16
+-0.57 ± 0.08
+-0.51 ± 0.11
++0.09 ± 0.16
+H0 Total
+Embed (L0)
+-0.54 ± 0.40
+-0.30 ± 0.34
+-0.00 ± 0.21
+-0.16 ± 0.15
+-0.05 ± 0.27
+Hidden 1
+-0.61 ± 0.36
+-0.42 ± 0.30
+-0.15 ± 0.23
+-0.29 ± 0.18
+-0.04 ± 0.23
+Hidden 2
+-0.84 ± 0.10
+-0.77 ± 0.08
+-0.64 ± 0.11
+-0.58 ± 0.24
++0.04 ± 0.22
+Hidden 3
+-0.86 ± 0.06
+-0.84 ± 0.08
+-0.80 ± 0.05
+-0.72 ± 0.13
++0.11 ± 0.20
+H1 Max
+Embed (L0)
++0.49 ± 0.41
++0.30 ± 0.33
++0.01 ± 0.20
++0.18 ± 0.17
++0.06 ± 0.27
+Hidden 1
++0.56 ± 0.39
++0.41 ± 0.30
++0.14 ± 0.21
++0.24 ± 0.20
++0.13 ± 0.12
+Hidden 2
++0.79 ± 0.09
++0.74 ± 0.06
++0.62 ± 0.05
++0.50 ± 0.25
+-0.01 ± 0.25
+Hidden 3
++0.76 ± 0.11
++0.73 ± 0.12
++0.62 ± 0.05
++0.56 ± 0.16
+-0.05 ± 0.23
+H1 Total
+Embed (L0)
+-0.36 ± 0.31
+-0.08 ± 0.27
+-0.30 ± 0.09
+-0.09 ± 0.20
++0.11 ± 0.11
+Hidden 1
+-0.68 ± 0.16
+-0.62 ± 0.18
+-0.58 ± 0.10
+-0.38 ± 0.27
++0.06 ± 0.27
+Hidden 2
+-0.69 ± 0.18
+-0.67 ± 0.11
+-0.58 ± 0.12
+-0.53 ± 0.23
++0.07 ± 0.35
+Hidden 3
+-0.72 ± 0.16
+-0.73 ± 0.14
+-0.65 ± 0.06
+-0.63 ± 0.19
+-0.01 ± 0.33
+In contrast to the Transformer model, where changes in predictive performance consistently preceded
+the associated topological transition, the MLP exhibits peak cross-correlation near zero lag across all
+PH statistics (Figure 14). This behavior is consistent across the other permutation levels exhibiting
+generalization. Overall, this suggests that, for the MLP, improvements in generalization and the
+corresponding geometric reorganization of the latent space occur approximately simultaneously.
+Figure 11: Training dynamics under label permutation for the Transformer model. The top panel
+shows test accuracy across training for different label permutation fractions Pfrac. The remaining
+panels show the corresponding Vietoris-Rips PH statistics computed from the learned representations,
+with the left and right columns corresponding to the embedding layer (layer 0) and first layer (layer 1),
+respectively. Rows 2 and 3 report H0 total persistence, and H1 total persistence respectively. For low
+permutation levels, successful grokking is accompanied by a pronounced decrease in H0 persistence
+and the emergence of a dominant H1 cycle, consistent with the formation of a structured periodic
+representation. As label corruption increases, both generalization and the associated topological
+transition progressively deteriorate.
+(a) Pfrac = 1%
+(b) Pfrac = 2%
+(c) Pfrac = 5%
+(d) Pfrac = 10%
+Figure 12: Cross-correlation functions (CCFs) between the first-order differences of test accuracy
+and total H0 persistence for the Transformer model under varying levels of label permutation. Across
+all grokking regimes (Pfrac ∈{1%, 2%, 5%, 10%}), the peak correlation consistently occurs at a
+negative lag, indicating that improvements in predictive performance precede the corresponding
+topological restructuring of the learned representation space.
+Figure 13: Training dynamics under label permutation for the MLP model. The top panel shows test
+accuracy across training for different label permutation fractions Pfrac. The remaining panels show
+the corresponding Vietoris-Rips PH statistics computed from the learned representations, with the
+left and right columns corresponding to the embedding layer (layer 0) and first hidden layer (layer
+1), respectively. Rows 2-4 report H0 maximum persistence, H0 total persistence, and H1 maximum
+persistence.
+(a) H0 maximum persistence
+(b) H0 total persistence
+(c) H1 maximum persistence
+(d) H1 total persistence
+Figure 14: Cross-correlation functions (CCFs) between the first-order differences of test accuracy
+and PH statistics for the MLP model at Pfrac = 0. Across all four topological statistics, the
+peak correlation occurs near zero lag, indicating that changes in predictive performance and the
+corresponding topological restructuring of the learned representation space occur approximately
+simultaneously

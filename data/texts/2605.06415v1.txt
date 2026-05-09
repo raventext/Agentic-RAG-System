@@ -1,0 +1,702 @@
+E = T·H/(O+B): A Dimensionless Control Parameter for
+Mixture-of-Experts Ecology
+Zhang Qingjun
+School of Integrated Circuits, Wuxi Taihu University
+Department of Communication Engineering
+3078896787@qq.com
+May 8, 2026
+Abstract
+We introduce E = T · H/(O + B), a dimensionless control parameter that predicts whether Mixture-of-
+Experts (MoE) models will develop a healthy expert ecology or collapse into dead experts.
+E combines four
+hyperparameters-routing temperature T, routing entropy weight H, oracle weight O, and balance weight B-into
+a single quantity. Through 12 controlled experiments (8 vision, 4 language) totaling over 11,000 training epochs, we
+establish that E ≥0.5 alone is sufficient to guarantee zero dead experts, removing the necessity for handcrafted load-
+balancing auxiliary losses. We validate this cross-modally on CIFAR-10, CIFAR-100, TinyImageNet-200, WikiText-
+2, and WikiText-103. Five additional findings emerge: (1) dead experts can resuscitate-contrary to traditional MoE
+theory where death is permanent, we observe recovery from 12 to 4 dead experts (E10→E80) on TinyImageNet-200;
+(2) ortho toxicity is dataset-dependent, not universal-CIFAR-10 and WikiText-2 show zero toxicity across all ortho
+values; (3) task complexity (number of classes) shifts the critical E threshold-TinyImageNet-200 at E = 0.545 pro-
+duces DEAD=7 while CIFAR-10 at the same E maintains DEAD=0; (4) three-tier hierarchical MoE spontaneously
+collapses into a two-tier functional structure under high task complexity, with the middle tier permanently starved of
+routing flow; (5) ecological structure (tier usage, active expert count, hard-sample gradient) is temperature-invariant
+across a 50× range, while task accuracy is not-establishing ecological diagnostics as a structurally stable property
+decoupled from performance evaluation. Model overfitting is further shown to be decoupled from expert ecological
+health. We propose that E serves as a compact diagnostic for MoE training, analogous to the Reynolds number in
+fluid dynamics-a single dimensionless quantity that predicts regime transitions.
+Introduction
+Mixture-of-Experts (MoE) architectures [1, 2, 3] have become foundational to modern large-scale deep learning, pow-
+ering systems from vision backbones [8] to GPT-4-scale language models. The core idea is elegant: route each input
+token to a subset of specialized expert sub-models, enabling conditional computation at scale without proportional
+increase in FLOPs.
+Yet MoE training has a well-known pathology: dead experts. When the router consistently ignores certain experts,
+those experts receive no gradient signal, their representations degrade, and the feedback loop locks them out perma-
+nently. The standard response is load balancing-auxiliary losses that penalize uneven routing distributions [2, 1],
+minimum-usage constraints [4], or expert dropout [5]. More recently, DeepSeek proposed loss-free balancing via
+per-expert bias terms [6]. All of these treat the symptom (uneven routing) rather than the cause.
+This paper proposes a different approach. Rather than fighting expert death with auxiliary constraints, we ask:
+what causes a healthy expert ecology in the first place?
+We identify four hyperparameters that together govern the router’s freedom to explore alternative expert assign-
+ments: routing temperature T, routing entropy weight H, oracle supervision weight O, and load balance weight B.
+We combine them into a single dimensionless quantity:
+E = T · H
+O + B
+(1)
+arXiv:2605.06415v1 [cs.LG] 7 May 2026
+
+E captures the net exploration budget available to the router. When E is high, the router has sufficient freedom to
+explore and discover which experts are competent at which inputs. When E is low, the router is constrained by strong
+oracle signals or aggressive load balancing, preventing the self-organization necessary for a healthy ecology.
+Our contributions are:
+1. E as a unified control parameter. We show that E ≥0.5 alone is sufficient to guarantee zero dead experts
+across four datasets and two modalities. No auxiliary load-balancing loss is needed.
+2. Cross-modal validation. We verify the E framework on both vision (CIFAR-10, CIFAR-100, TinyImageNet-
+200) and language (WikiText-2, WikiText-103) with a GPT-2 style MoE Transformer.
+3. Expert revival. We document that dead experts can resuscitate-DEAD count drops from 12 to 4 (E10→E80)
+on TinyImageNet-200-contradicting the traditional MoE view that dead experts are permanently lost.
+4. Task complexity shifts the critical threshold. 200-class TinyImageNet at E = 0.545 produces DEAD=7,
+while 10-class CIFAR-10 at the same E has DEAD=0. Task complexity is a missing variable in the E formula.
+5. Overfitting is decoupled from ecology. WikiText-103 shows severe perplexity overfitting with zero expert
+collapse, demonstrating that ecological health and model generalization are independent axes.
+6. Ortho toxicity is dataset-dependent. Three ortho sweeps across CIFAR-100, CIFAR-10, and WikiText-2
+reveal that ortho toxicity is not universal-it manifests only on certain datasets at certain E values.
+7. Three-tier hierarchy collapses to two-tier. Under high task complexity (TinyImageNet-200), the middle tier
+(T1) is permanently starved of routing flow, with usage dropping to 2.2%-the router spontaneously eliminates
+the redundant architectural tier.
+8. Ecological structure is temperature-invariant. A 50× temperature scan (0.1-5.0) shows zero change in tier
+usage or active expert count, establishing that ecological diagnostics are structural properties independent of
+evaluation temperature. The T0/T2 hard-sample gradient persists at 1.2-1.6× across all temperatures.
+9. Routing lockdown as collapse mechanism. The router enters a near-deterministic assignment state with 65.3%
+T0 self-loop rate, preventing cross-tier sample flow-this explains why raising E cannot fix task-complexity-
+induced collapse.
+Related Work
+Load balancing in MoE.
+The standard approach to dead experts is load balancing. [1] introduced auxiliary balance
+losses measuring the KL divergence between routing distribution and uniform distribution. [2] simplified to top-1
+routing with capacity constraints. [4] proposed minimum-usage penalties and expert choice routing. [5] explored
+expert dropout and regularization schedules. [6] proposed per-expert bias terms that dynamically adjust to maintain
+balance without auxiliary loss gradients.
+A common thread runs through all of these: they enforce uniform routing. Our findings suggest this may be
+counterproductive. Forcing uniform routing can homogenize experts-up to 99% output similarity has been observed
+in well-balanced MoE models. The alternative we present is to allow the ecosystem to self-organize, provided E is
+sufficient.
+Orthogonality in MoE.
+[7] (NeurIPS 2025 Oral) propose an orthogonality loss on per-token expert outputs to ad-
+vance expert specialization, reporting +23.79% relative improvement. Our work qualifies this finding: we show that
+orthogonality’s effect on expert health is mediated by E. At low E, ortho amplifies winner-take-all dynamics and
+increases dead expert count. At healthy E, ortho is tolerated and may be modestly beneficial. We recommend that
+future work incorporating orthogonality losses report both E and per-expert health metrics.
+Emergent specialization.
+[10] observed expert specialization along domain boundaries in language models. [11]
+found modality-specific experts in vision-language MoEs. [13] introduced the expert ecology taxonomy (PURE_CORE,
+BROAD_CORE, WEAK_CORE, EDGE, NOISE, DEAD) and proposed the E formula. Our work extends this by pro-
+viding cross-modal validation (language models), documenting expert revival, and establishing the task complexity
+effect.
+3
+Method
+3.1
+Architecture
+We use a Hierarchical Mixture-of-Experts with three architectural tiers:
+• Encoder: WideResNet-28-10 [12] for vision experiments, producing 256-dimensional features; GPT-2 style
+Transformer (8 layers, 512 hidden, 8 heads) with RoPE for language experiments.
+• 16 Expert Worlds organized into three tiers: 8 T0 (attribute-level), 4 T1 (logic-level), 4 T2 (top-level). For
+language, 4 of 8 Transformer layers contain 16-expert MoE FFN sub-layers.
+• Prototype vectors: Each expert w has a learnable prototype pw ∈R256 and a linear classifier head.
+• Router: A linear layer Wr ∈R256×N mapping encoded features to routing logits, with top-2 gating.
+The hierarchical structure compresses router competition: experts within the same tier compete for overlapping
+input regions, but the tiered architecture reduces the effective competition set size, serving as a secondary stability
+factor alongside E.
+3.2
+The E Formula
+The exploration budget E combines four hyperparameters:
+E = T · H
+O + B
+(2)
+where T is the routing softmax temperature (higher T →softer routing, more exploration), H is the routing entropy
+loss weight (encouraging the router to maintain uncertainty), O is the oracle supervision weight (pushing the router
+toward a teacher signal), and B is the load balance loss weight (KL divergence from uniform routing).
+E captures a fundamental tradeoff: exploration vs. exploitation in routing space. T and H promote exploration
+(trying different expert assignments). O and B promote exploitation (committing to known-good or uniform assign-
+ments). When E is too low, the router commits prematurely, locking in a winner-take-all dynamic from which some
+experts never recover.
+We propose Ecrit ≈0.5 as the approximate critical threshold based on empirical observations across datasets. This
+threshold likely shifts with task complexity (Section 4.6).
+3.3
+Expert Ecology Taxonomy
+Following [13], we classify each expert into one of six categories using its test-set usage (U) and accuracy (A):
+Category
+Usage
+Accuracy
+PURE_CORE
+≥3%
+≥50%
+BROAD_CORE
+≥3%
+30-50%
+WEAK_CORE
+≥3%
+< 30%
+EDGE
+1-3%
+≥25%
+NOISE
+1-3%
+< 25%
+DEAD
+< 1%
+any
+This taxonomy requires no hyperparameters-only usage and accuracy measured during a standard evaluation
+pass.
+3.4
+Training Protocol
+All experiments share a common protocol:
+• Random warmup: 15 epochs of random routing to initialize expert representations without bias.
+• Temperature annealing: T follows a cosine schedule from Tinit to Tend = 0.3 over 30 epochs.
+• Optimizer: AdamW with decoupled weight decay (5×10−4), learning rates 10−4 (encoder) and 10−3 (experts
++ router), cosine annealing to zero.
+• Batch size: 128 for vision, 64 for language.
+• Evaluation: Every 10 epochs, measuring Top-1/Top-2 accuracy (vision) or perplexity (language), plus per-
+expert usage and accuracy for ecology classification.
+3.5
+Experimental Design
+We conduct 12 controlled experiments across two modalities:
+Vision (8 experiments):
+• CIFAR-100 phase map: 4 E values × 100 epochs at ortho=0
+• CIFAR-100 ortho sweep: 5 ortho values × 100 epochs at E = 0.545
+• CIFAR-10 low-E test: E = 0.30 vs. E = 0.545, 100 epochs
+• CIFAR-10 ortho sweep: 5 ortho values × 100 epochs at E = 0.545
+• CIFAR-10 E×ortho interaction: E = 0.30 + ortho=0.10, 100 epochs
+• TinyImageNet-200: E = 0.545, 100 epochs (16 experts)
+• TinyImageNet-200: E = 1.0, 100 epochs (16 experts)
+• TinyImageNet-200: E = 0.545, 100 epochs (32 experts)
+Language (4 experiments):
+• WikiText-2 BPE: GPT-2 MoE, E = 0.545, 100 epochs
+• WikiText-2 ortho sweep: 5 ortho values × 100 epochs at E = 0.545
+• WikiText-103 random-block: GPT-2 MoE, E = 0.545, 100 epochs
+• No-warmup ablation: 4 conditions × 100 epochs on CIFAR-100
+All experiments use no external intervention (no Claude API, no manual tuning) during training. The Claude-
+in-the-loop methodology [13] was used only for initial diagnosis and hypothesis generation, not for the experiments
+reported here.
+Results
+4.1
+E Controls Ecosystem Quality, Not Survival (Phase Map)
+Table 1 shows the four-value phase boundary mapping on CIFAR-100 at λo = 0. All four E values spanning a
+4.6× range eventually achieve zero dead experts. E governs how many experts become high-quality, not whether the
+ecosystem survives.
+This is the E-PURE gradient: higher E produces more PURE_CORE experts independent of survival. Accuracy
+shows diminishing returns beyond E = 0.35, suggesting that ensemble accuracy and ecological richness are partially
+decoupled.
+Table 1: Phase boundary mapping at λo = 0, 100 epochs, CIFAR-100
+E
+T
+H
+Top-2
+PURE_CORE
+0.14
+1.0
+0.05
+67.87%
+0.35
+2.0
+0.07
+67.60%
+0.44
+2.5
+0.08
+66.72%
+0.65
+3.0
+0.12
+68.02%
+4.2
+E ≥0.5 Guarantees DEAD=0 (Ortho Sweeps)
+Table 2 consolidates ortho sweeps across three datasets at E = 0.545. The central finding: at sufficient E, ortho from
+0 to 0.20 produces DEAD=0 across all tested datasets.
+Table 2: Ortho sweeps at E = 0.545: DEAD=0 for all ortho values
+Dataset
+DEAD count at ortho=
+0.00
+0.02
+0.05
+0.10
+0.20
+CIFAR-100
+0
+0
+CIFAR-10
+0
+0
+WikiText-2
+0
+0
+The ortho toxicity effect (increased dead expert count) observed at low E = 0.09 [15] does not generalize to
+healthy E. Ortho toxicity is E-dependent and dataset-dependent, not universal.
+4.3
+Cross-Modal: E Framework Generalizes to Language
+Table 3 shows that E = 0.545 produces DEAD=0 across language modeling experiments using a GPT-2 style Trans-
+former with MoE FFN layers (16 experts, top-2 gating).
+Table 3: Language model results at E = 0.545
+Dataset
+ortho
+PPL
+DEAD
+Active
+WikiText-2 BPE
+0.00
+0
+16/16
+WikiText-2 BPE
+0.02
+0
+16/16
+WikiText-2 BPE
+0.05
+0
+16/16
+WikiText-2 BPE
+0.10
+0
+16/16
+WikiText-2 BPE
+0.20
+0
+16/16
+WikiText-103
+0.00
+0
+16/16
+The E framework transfers cleanly from vision to language: same E threshold, same ecology patterns, same ortho
+tolerance. This cross-modal consistency supports the generality of E as a control parameter.
+4.4
+Low-E Collapse and Phase Distinction
+Table 4 shows the effect of lowering E below the critical threshold on CIFAR-10.
+Crucially, the collapse at moderately low E is reversible-experts recover when E is restored. We distinguish
+three ecological phases:
+1. Healthy (E ≥0.5): DEAD=0 sustained throughout training.
+2. Reversible sub-health (0.2 < E < 0.5): DEAD > 0 but experts recover when E is restored. The balance-
+driven recovery mechanism (Section 4.7) remains functional.
+Table 4: CIFAR-10 low-E experiment: phase distinction
+E
+T
+H
+O
+B
+Top-1
+DEAD
+0.545
+3.0
+0.10
+0.15
+0.40
+87.47%
+0.300
+3.0
+0.10
+0.15
+0.85
+84.58%
+3. Irreversible collapse (E < 0.2, predicted): Large-scale permanent death. The rich-get-richer feedback loop
+overwhelms the revival mechanism.
+This phase distinction mirrors critical phenomena: near the critical point, the system is sub-healthy but self-
+repairing; far below it, the feedback loop becomes irreversible.
+4.5
+E×Ortho Interaction at Low E
+Adding ortho=0.10 at E = 0.30 does not amplify toxicity (DEAD=1 vs. DEAD=2 for ortho=0 baseline). This confirms
+that ortho is not a primary driver of expert death-E is. Ortho amplifies collapse only when E is already insufficient,
+consistent with the interaction model proposed in [15].
+4.6
+Task Complexity Shifts the Critical E Threshold
+Table 5 reveals that task complexity (number of fine-grained classes) shifts the effective E threshold.
+Table 5: Task complexity effect at E = 0.545
+Dataset
+Classes
+Top-1
+DEAD
+CIFAR-10
+89.59%
+CIFAR-100
+68.02%
+TinyImageNet
+38.15%
+7 (E50)
+CIFAR-10 (10 classes) and CIFAR-100 (100 classes) maintain DEAD=0 at E = 0.545. TinyImageNet-200 (200
+visually similar classes: dog breeds, vehicles, insects) produces DEAD=7 at E50, recovering to DEAD=4 by E80.
+This is not a failure of E but a revelation: task complexity is a missing variable in the E formula. The critical E
+threshold rises with the number of fine-grained categories.
+Two controlled experiments test whether the TinyImageNet collapse can be fixed by adjusting E or expert capacity:
+Table 6: Attempted fixes for TinyImageNet-200 collapse
+Configuration
+E
+Experts
+Top-1 (E40)
+DEAD (E40)
+Baseline
+0.545
+33.41%
+Raise E
+1.000
+27.19%
+More experts
+0.545
+26.99%
+Raising E to 1.0 fails. Doubling the exploration budget produces nearly identical ecology (DEAD=7 at E40) and
+slightly worse accuracy (27.19% vs. 33.41%), confirming that the TinyImageNet collapse is not caused by insufficient
+router exploration. The task complexity effect is orthogonal to E.
+Increasing experts to 32 backfires. Doubling expert count from 16 to 32 worsens collapse dramatically (DEAD=25/32
+vs. DEAD=7/16 at E40). The expanded capacity creates more competition, not less-without a mechanism to structure
+how 200 classes map to 32 experts, the additional capacity only deepens the rich-get-richer spiral.
+These negative results sharpen the central claim: for complex datasets, neither raising E nor increasing expert
+count is sufficient. The required intervention is likely structural-either a hierarchical decomposition that reduces the
+effective competition set per expert, or a curriculum that gradually introduces fine-grained distinctions.
+This implies that for complex datasets, increasing E alone is insufficient-either more experts or a different archi-
+tectural prior is needed.
+4.7
+Expert Revival: Dead Experts Can Resuscitate
+Traditional MoE theory (Switch Transformer, GShard) holds that dead experts are permanently dead-a rich-get-richer
+feedback loop: no tokens →no gradient →worse representations →even fewer tokens. Load balancing can prevent
+death but cannot reverse it.
+We observe the opposite on TinyImageNet-200 at E = 0.545:
+Table 7: Expert revival trajectory: TinyImageNet-200, E = 0.545
+Epoch
+DEAD
+Active
+E0
+14/16
+E10
+12/16
+E20
+10/16
+E30
+15/16
+E40
+15/16
+E50
+16/16
+E60
+16/16
+E70
+16/16
+E80
+16/16
+DEAD count peaks at 12 at E10, then gradually falls to 4 by E80-8 experts resuscitated. This reversal is
+possible because of the balance loss (B = 0.40), which combines a KL-divergence term on routing importance
+distribution with a variance penalty on expert assignment counts. Together, these terms create sustained pressure
+toward distributed routing: the router is penalized for concentrating flow on a subset of experts, forcing periodic
+re-exploration of inactive experts. Dead experts benefit when the balance loss forces the router to re-explore them;
+they receive task gradient, their predictions improve, and they attract organic routing flow. A systematic six-condition
+ablation study (reported separately in [14]) identifies balance loss as the sole essential mechanism for expert revival.
+Four other tested mechanisms-divergence loss, temperature annealing, routing entropy, and prototype vectors-are
+individually non-essential; revival proceeds in all conditions where balance loss is present.
+This is a meaningful departure from traditional MoE theory: dead experts are not permanently lost capacity. With
+adequate load-balancing pressure, the death spiral is reversible.
+4.8
+Overfitting Is Decoupled from Expert Ecology
+WikiText-103 training shows severe perplexity divergence (overfitting on the small relative dataset) while expert ecol-
+ogy remains fully intact: DEAD=0, 16/16 experts active throughout training. This demonstrates that model overfitting
+and expert ecological health are independent axes.
+Expert death is driven by routing dynamics (E and ortho), not by whether the model is overfitting or underfitting.
+A model can overfit severely while maintaining a perfectly healthy expert ecology. Conversely (as shown by the low-E
+experiments), a model can generalize well while experiencing ecological collapse. These are orthogonal diagnostic
+dimensions.
+4.9
+Warmup Is Optional
+A four-condition ablation on CIFAR-100 tests whether random routing warmup is required for ecological recovery:
+Table 8: No-warmup ablation: all conditions achieve DEAD=0
+Condition
+Top-2
+PURE
+DEAD=0 by
+Warmup + ortho=0
+67.55%
+E80
+Warmup + ortho=0.1
+66.65%
+E70
+No-warmup + ortho=0
+66.86%
+E60
+No-warmup + ortho=0.1
+65.82%
+E70
+All four conditions achieve DEAD=0. No-warmup conditions actually show milder collapse (peak DEAD=9 vs.
+13 with warmup) and faster recovery (E60 vs. E80). Random routing at the start may confuse the router when it
+transitions to real routing. The only necessary conditions for a healthy ecology are E ≥0.5 and λo ≤0.1. Warmup is
+optional.
+4.10
+Tier-Level Ecological Dynamics: Collapse, Self-Loop, and Hierarchy
+To understand which experts collapse and how routing flows between tiers, we instrument a per-tier analysis at the
+evaluation checkpoint. For each test sample, we record the top-1 expert choice and classify each expert into its
+architectural tier (T0: foundation, T1: logic, T2: fine-grained). We define easy samples as those with ensemble
+confidence p > 0.7 and hard samples as p < 0.4.
+Table 9 shows per-tier ecology at the most mature evaluation points for both TinyImageNet-200 experiments.
+Table 9: Per-tier ecological state at maturity (32e E50, 16e E30)
+32e E = 0.545 (E50)
+16e E = 1.0 (E30)
+T0(16)
+T1(8)
+T2(8)
+T0(8)
+T1(4)
+T2(4)
+Usage %
+43.5
+29.3
+27.2
+82.9
+2.2
+14.9
+Active
+2/16
+3/8
+2/8
+4/8
+1/4
+3/4
+Hard %
+7.2
+-
+5.4
+12.0
+-
+8.2
+Easy %
+66.1
+-
+69.0
+53.6
+-
+60.1
+The middle tier is permanently starved. In both configurations, T1 receives negligible routing flow-2.2% in the
+16e case, with only 1 of 4 experts above the activity threshold. This is not a transient effect; the T1 collapse is stable
+across all evaluation temperatures and persists from early to late training. Three-tier hierarchical MoE spontaneously
+collapses into a two-tier functional structure, with the middle tier squeezed out by competition from above and below.
+This suggests that for 200-class tasks, the effective hierarchy depth is 2, not 3-the additional tier is architectural
+redundancy that routing dynamics naturally eliminate.
+T0 self-loop blocks upward flow. Table 10 reports the routing transition matrix: for each sample, we record the
+tier of the top-1 expert (Tfirst) and the tier of the top-2 expert (Tsecond).
+Table 10: Routing flow matrix: Tfirst →Tsecond (% of total samples)
+32e E50
+16e E30
+Tfirst →
+T0
+T1
+T2
+T0
+T1
+T2
+T0→
+17.5
+12.7
+13.2
+65.3
+6.0
+11.6
+T1→
+15.2
+3.7
+10.5
+1.6
+0.0
+0.6
+T2→
+14.3
+7.9
+5.1
+9.7
+1.5
+3.7
+In the 16e case, 65.3% of samples whose top-1 choice is a T0 expert also have their top-2 choice in T0-the flow
+circulates within the bottom tier. Only 5.7% of T0-routed samples reach T2 as the second choice. This T0 self-loop
+indicates that the router cannot identify complementary high-tier experts for the samples assigned to T0, which is
+precisely the "difficulty gating failure" predicted when task complexity exceeds the architecture’s tier differentiation
+capacity.
+In the 32e case, the flow pattern is more distributed but the absolute number of active experts is even lower (7/32
+vs. 8/16). Doubling expert count while keeping the tier ratio fixed (16:8:8) dilutes per-expert usage without creating
+effective specialization pressure.
+Hard sample gradient: T0 consistently absorbs harder samples than T2. Across all evaluation temperatures
+(0.1-5.0), the T0 hard-sample ratio exceeds T2 by a factor of 1.2×-1.6×. This gradient is structurally stable: it
+appears in both the 32e and 16e configurations, at all temperature settings, and in both the healthy (DEAD=0) and
+collapsed regimes observed. Lower-tier experts inherently undertake harder, more ambiguous samples, forming a
+hierarchical difficulty division mechanism. The existence of this gradient even in heavily collapsed models (where
+accuracy is near zero) suggests it is a property of the routing geometry, not of task performance.
+4.11
+Ecological Structure Is Temperature-Invariant
+A methodological concern is whether off-line ecological analysis (at a fixed evaluation temperature) faithfully reflects
+in-training ecological states, since training uses a cosine-annealed temperature schedule. To test this, we run a tem-
+perature sensitivity scan on both models, evaluating at seven temperatures spanning T ∈[0.1, 5.0] while holding all
+model weights fixed.
+Table 11: Temperature sensitivity scan: 32e E50 and 16e E30
+32e E50
+16e E30
+T
+Acc%
+T0/T2 hard
+T0 act
+Acc%
+T0/T2 hard
+T0 act
+0.1
+0.11
+1.2×
+0.12
+1.3×
+0.3
+0.11
+1.3×
+0.11
+1.5×
+0.5
+0.11
+1.3×
+0.12
+1.5×
+0.7
+0.11
+1.3×
+0.13
+1.5×
+1.0
+0.10
+1.4×
+0.13
+1.5×
+2.0
+0.12
+1.3×
+0.13
+1.5×
+5.0
+0.12
+1.3×
+0.12
+1.6×
+Two findings emerge. First, expert allocation is temperature-invariant: tier usage percentages and active ex-
+pert counts are identical across the full 50× temperature range. The router’s softmax logits are so sharply peaked
+that temperature scaling does not alter the top-2 selection. This means the routing has entered a lockdown state-a
+deterministic, near-one-hot assignment pattern that persists regardless of the exploration budget.
+Second, the hard-sample gradient across tiers is temperature-invariant. While the absolute hard-ratio per-
+centage drifts upward with temperature (as higher temperature spreads confidence mass, pushing more samples below
+the 0.4 threshold), the T0/T2 ratio remains stable at 1.2×-1.6×. The hierarchical difficulty division is a structural
+property of the routing geometry, not an artifact of the evaluation temperature.
+Implication for ecological assessment. The temperature invariance of tier-level ecological metrics (usage, ac-
+tive count, hard-ratio gradient) means that off-line ecological diagnostics at a single temperature are valid. However,
+absolute accuracy measured at a fixed temperature is not representative of in-training accuracy, because the train-
+ing evaluation uses the current annealed temperature. Ecological structure and task performance must be assessed
+separately: the former is temperature-invariant; the latter is not.
+Discussion
+E as a control parameter.
+The quantity E = T · H/(O + B) serves a role analogous to the Reynolds number in
+fluid dynamics: a single dimensionless quantity that predicts regime transitions in a complex dynamical system. Just
+as Re predicts the laminar-to-turbulent transition, E predicts the healthy-to-collapsed transition in expert ecology. The
+critical value Ecrit ≈0.5 is approximate and task-dependent, but the concept of a unified exploration budget is general.
+Practical engineering implications.
+The finding that E ≥0.5 alone guarantees DEAD=0 removes the need for
+traditional load-balancing auxiliary losses. This is a significant simplification: rather than tuning multiple balancing
+hyperparameters (load balance weight, capacity factor, expert dropout rate, minimum usage), practitioners need only
+ensure E is sufficient. The recipe: (1) set λo = 0, (2) choose T and H such that E ≥0.5, (3) let experts self-organize.
+If expert specialization is insufficient, mild ortho (0.02-0.05) can be introduced after verifying ecological stability.
+Task complexity as a missing variable.
+The TinyImageNet-200 results reveal that the critical E threshold rises
+with the number of fine-grained classes. The current E formula treats all datasets as equivalent. A natural extension is:
+Eeff =
+T · H
+(O + B) · f(C)
+(3)
+where f(C) is a task complexity function that increases with the number of classes C. Candidates include f(C) =
+log C, f(C) =
+√
+C, or a learned function. This refinement is left to future work.
+Expert revival mechanism.
+The observation that dead experts can resuscitate is, to our knowledge, the first docu-
+mented case of reversal of the MoE death spiral. A systematic ablation study (reported separately in [14]) identifies
+balance loss (weight 0.40) as the sole essential mechanism: without balance loss, DEAD stalls permanently at 12
+with zero recovery over 80 consecutive epochs. With balance loss present, revival proceeds regardless of which other
+component (divergence loss, temperature annealing, routing entropy, prototype vectors) is removed. The key principle
+is routing diversity enforcement: any mechanism that prevents the router from permanent concentration on a subset
+of experts (balance loss, expert-choice routing, scheduled expert dropout) can potentially enable revival.
+Hierarchical structure as stability factor.
+The three-tier hierarchy reduces the effective size of the competition
+set at each level, acting as a secondary stability factor. Rather than all N experts competing globally, competition is
+structured: T0 experts compete primarily with other T0 experts, T1 with T1, etc. This reduces the winner-take-all
+pressure that drives collapse. Hierarchy and E are complementary: E provides the exploration budget; hierarchy
+reduces the need for it.
+Overfitting-ecology decoupling.
+The decoupling of overfitting from ecology is practically significant: it means
+that expert ecology can be diagnosed and treated independently of model generalization. A model suffering from dead
+experts is not necessarily overfitting; a model that is overfitting does not necessarily have ecological problems. These
+are orthogonal axes in model health.
+Tier collapse: three tiers degenerate to two.
+Across both TinyImageNet-200 experiments, the middle tier (T1) is
+permanently starved-receiving 2.2% usage in the 16e case and showing 5 of 8 experts dead in the 32e case. This is
+not a malfunction but a revealing structural phenomenon: three-tier hierarchical MoE spontaneously compresses
+into a two-tier functional structure under high task complexity. The router effectively decides that the middle tier
+is redundant, routing samples to either the foundation tier (T0) or the fine-grained tier (T2). This suggests that the
+effective hierarchy depth is determined not by the architectural design but by the interaction between task complexity
+and routing dynamics. For 200-class fine-grained classification, the optimal functional depth appears to be 2, not 3.
+This is, to our knowledge, the first empirical documentation of spontaneous tier collapse in hierarchical MoE.
+Routing lockdown and T0 self-loop.
+The temperature scan (Section 4.11) reveals that the router enters a lockdown
+state: expert allocation is completely invariant across a 50× temperature range (0.1-5.0). The softmax logits are so
+sharply peaked that temperature scaling cannot alter the top-2 selection. Combined with the 65.3% T0→T0 self-loop
+rate (Table 10), this paints a picture of complexity-induced routing obstruction: when the task is too fine-grained for
+the architecture’s tier differentiation capacity, the router cannot identify meaningful cross-tier expert complementarity.
+Samples assigned to T0 circulate within T0; the upward routing pathway is blocked. This routing lockdown is the
+dynamical mechanism underlying the task complexity effect identified in Section 4.6-it explains why raising E fails:
+the exploration budget cannot unlock routing pathways that the architecture cannot structurally differentiate.
+Ecological structure as a performance-decoupled invariant.
+The temperature scan establishes that tier-level eco-
+logical metrics-usage distribution, active expert count, and the hard-sample gradient across tiers-are invariant to
+evaluation temperature. However, absolute accuracy is not: off-line evaluation accuracy (∼0.1%) differs from in-
+training evaluation accuracy (23-35%) by two orders of magnitude in the collapsed models. This decoupling has
+a methodological implication: ecological diagnostics (DEAD count, tier usage, hard-ratio gradient) can be reliably
+assessed at any reasonable temperature, but performance diagnostics (accuracy, perplexity) must use the same tem-
+perature as the training evaluation. The two classes of metrics are orthogonal and must not be conflated in analysis.
+Limitations.
+We test two architecture families (WideResNet encoder + MoE heads; GPT-2 Transformer + MoE
+FFN) with 16-32 experts. The specific Ecrit threshold likely depends on model scale, number of experts, and data
+complexity. We do not test very large models (100+ experts, billion-parameter scale), where additional stability
+mechanisms may emerge. All training uses a random routing warmup of 15 epochs; while we show warmup is
+optional, its interaction with very low E regimes is not fully explored. The task complexity function f(C) remains
+unspecified.
+6
+Conclusion
+We have introduced E = T · H/(O + B), a dimensionless control parameter for Mixture-of-Experts ecology, and
+validated it across 12 controlled experiments spanning two modalities and four datasets. The core empirical finding
+is that E ≥0.5 alone is sufficient to guarantee zero dead experts, removing the need for handcrafted load-balancing
+auxiliary losses.
+Five additional findings enrich the theoretical picture: (1) dead experts can resuscitate, contrary to traditional MoE
+theory; (2) ortho toxicity is dataset-dependent, not universal; (3) task complexity shifts the critical E threshold; (4)
+model overfitting is decoupled from expert ecological health; (5) the hierarchical tier structure is a secondary stability
+factor.
+The broader implication is that expert ecology in MoE models is not a pathology to be suppressed but a dynamical
+system to be understood. The E parameter provides a compact diagnostic for navigating that system.
+References
+[1] N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean. Outrageously large neural
+networks: The sparsely-gated mixture-of-experts layer. In ICLR, 2017.
+[2] W. Fedus, B. Zoph, and N. Shazeer. Switch transformers: Scaling to trillion parameter models with simple and
+efficient sparsity. JMLR, 2022.
+[3] D. Lepikhin, H. Lee, Y. Xu, D. Chen, O. Firat, Y. Huang, M. Krikun, N. Shazeer, and Z. Chen. GShard: Scaling
+giant models with conditional computation and automatic sharding. In ICLR, 2021.
+[4] Y. Zhou, T. Lei, H. Liu, N. Du, Y. Huang, V. Zhao, A. Dai, Z. Chen, Q. Le, and J. Laudon. Mixture-of-experts
+with expert choice routing. In NeurIPS, 2022.
+[5] B. Zoph, I. Bello, S. Kumar, N. Du, Y. Huang, J. Dean, N. Shazeer, and W. Fedus. Designing effective sparse
+expert models. In ICLR, 2022.
+[6] L. Wang, H. Gao, C. Zhao, X. Sun, and D. Dai. Auxiliary-loss-free load balancing strategy for mixture-of-
+experts. arXiv:2408.15664, 2024.
+[7] H. Guo, H. Lu, G. Nan, et al. Advancing expert specialization for better MoE. In NeurIPS (Oral), 2025.
+[8] C. Riquelme, J. Puigcerver, B. Mustafa, M. Neumann, R. Jenatton, A. Pinto, D. Keysers, and N. Houlsby. Scaling
+vision with sparse mixture of experts. In NeurIPS, 2021.
+[9] J. Puigcerver, C. Riquelme, B. Mustafa, and N. Houlsby. From sparse to soft mixtures of experts. In ICLR, 2024.
+[10] M. Lewis, S. Bhose, T. Dettmers, N. Goyal, and L. Zettlemoyer. BASE layers: Simplifying training of large,
+sparse models. In ICML, 2021.
+[11] B. Mustafa, C. Riquelme, J. Puigcerver, R. Jenatton, and N. Houlsby. Multimodal contrastive learning with
+LIMoE. In NeurIPS, 2022.
+[12] S. Zagoruyko and N. Komodakis. Wide residual networks. In BMVC, 2016.
+[13] Q. Zhang. Expert ecology: Claude-in-the-Loop MoE training. GitHub repository, github.com/zqj323/expert-
+ecology, 2026.
+[14] Q. Zhang. Expert revival: Dead experts can resuscitate in hierarchical mixture-of-experts. arXiv preprint, 2026.
+[15] Q. Zhang. Prototype orthogonalization causes dead experts in hierarchical mixture-of-experts. arXiv preprint,
+2026.
+[16] S. He et al. Merge, then ensemble: Towards effective merging of mixture-of-experts. arXiv preprint, 2024.
+[17] D. Dai, C. Deng, C. Zhao, et al. DeepSeekMoE: Towards ultimate expert specialization in mixture-of-experts.
+arXiv:2401.06066, 2024.

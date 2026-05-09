@@ -1,0 +1,1422 @@
+DINORANKCLIP: DINOv3 Distillation and Injection
+for Vision-Language Pretraining with High-Order
+Ranking Consistency
+Shuyang Jiang
+University of California, Los Angeles
+shuyangjiang@ucla.edu
+Nan Yu
+Aimaikj
+18dhf24f1031@student.ptss.edu.my
+Yiming Zhang
+HFIPS, Chinese Academy of Sciences
+University of Science and Technology of China
+yimingzhang@mail.ustc.edu.cn
+Zenghui Ding
+HFIPS, Chinese Academy of Sciences
+dingzenghui@iim.ac.cn
+Zhenyu Wu ∗
+National University of Defense Technology
+wuzhenyu@nudt.edu.cn
+Abstract
+Contrastive language-image pretraining (CLIP) suffers from two structural weak-
+nesses: the symmetric InfoNCE loss discards the relative ordering among un-
+matched in-batch pairs, and global pooling collapses the visual representation
+into a semantic bottleneck that is poorly sensitive to fine-grained local struc-
+ture. RANKCLIP partially addresses the first issue with a list-wise Plackett-Luce
+ranking-consistency loss, but its model is strictly first-order and inherits the second
+weakness untouched. We propose DINORANKCLIP, a pretraining framework that
+addresses both jointly. Our principal contribution is injecting a frozen DINOv3
+teacher into the contrastive trunk through a dual-branch lightweight student and a
+multi-scale fusion module with channel-spatial attention, a self-attention refiner,
+and a conflict-aware gate that preserves the cross-modal alignment up to first order.
+Complementarily, we introduce a high-order Plackett-Luce ranking model in which
+the per-position utility is augmented with attention-parameterised pairwise and
+tuple-wise transition terms; the family contains CLIP and RANKCLIP as nested
+zero-order and first-order special cases, and the optimal order on every benchmark
+is R∗= 3. The full empirical study-order sweep, Fine-grained Probe on five
+datasets, four-node Modality-Gap analysis, six-variant Fusion ablation-fits in
+72 hours on a single eight-GPU H100 node and trains entirely on Conceptual
+Captions 3M. DINORANKCLIP consistently outperforms CLIP, CyCLIP, ALIP,
+and RANKCLIP under matched compute, with the largest relative gains on the fine-
+grained and out-of-distribution evaluations that most directly stress local structural
+reasoning.
+Introduction
+Contrastive Language-Image Pretraining [13] has redefined the standard recipe for transferable
+visual representation learning. Yet two structural side effects of the InfoNCE objective are now well
+∗Correspondence to Zhenyu Wu: wuzhenyu@nudt.edu.cn.
+Preprint.
+arXiv:2605.06592v1 [cs.CV] 7 May 2026
+
+documented. First, the symmetric loss treats every unmatched in-batch pair as uniformly negative
+and discards the relative ordering among them [19]. Second, the global pooling step on the visual
+encoder collapses the representation into a semantic bottleneck that is poorly sensitive to fine-grained
+part-whole composition, dense local correspondence, or texture-level distribution shift [3, 10, 18].
+The two problems are coupled: the absence of a structural prior on the visual side amplifies the
+weakness of the pair-wise loss, while the bluntness of the loss removes any pressure to retain dense
+locality.
+RANKCLIP [19] mitigates the first problem by replacing pair-wise contrast with a list-wise Plackett-
+Luce ranking-consistency objective, in which each item carries a utility θd and the likelihood of
+an ordering is the product of softmax-style per-position probabilities. With θd instantiated as the
+cross-modal or in-modal cosine similarity, the loss exploits the relative ordering among unmatched
+in-batch pairs. The model is, however, strictly first-order: the position-k utility depends only on the
+candidate item and not on what was already selected at positions 1, . . . , k−1. This is a substantial
+limitation. The local neighbour structure of a typical CC3M batch contains far richer information
+than a single per-item score can capture: when several captions describe overlapping subsets of the
+same scene, when two images share an object class but differ in pose, or when an image’s nearest
+text neighbours form a semantic cluster, the second- and third-order transitions among those items
+contain signal that no first-order utility can recover.
+Self-supervised dense vision foundation models, in particular DINO [2] and DINOv2 [11], occupy
+almost the exact opposite point in design space. Trained without language supervision, they produce
+features whose patch tokens carry stable, semantically meaningful local structure: nearest neighbours
+in patch-feature space recover object parts, layout, and texture identity even across large appearance
+shifts. Their successor, DINOv3, sharpens this property through a Gram-anchoring objective and
+provides an optional text-aligned projection head. These models therefore carry exactly the structural
+prior that the contrastive vision-language family lacks; using them as a drop-in image encoder
+for CLIP-style training, however, erases the very property that makes them attractive. The natural
+question is whether the structural prior of a dense self-supervised teacher can be injected as a residual
+signal on top of a contrastive backbone, so the latter inherits local sensitivity without losing the global
+alignment geometry.
+We propose DINORANKCLIP, addressing both weaknesses through two coordinated extensions of
+RANKCLIP. First, our principal contribution is to inject a frozen DINOv3 teacher as a structural
+residual through a dual-branch ViT-Tiny student distilled with a combined Gram + relational target,
+and through a multi-scale fusion module (1D spatial pyramid pooling, channel-spatial attention,
+self-attention refiner, conflict-aware gate) that preserves the cross-modal alignment up to first order
+in the gate magnitude (Proposition 1). This turns DINOv3’s dense local geometry into a plug-in
+structural prior rather than replacing the contrastive encoder. Second, we introduce a high-order
+Plackett-Luce ranking model that augments the per-position utility with explicit pairwise transition
+terms βa,d and tuple-wise transition terms γa,b,d learned by a small attention head. The high-order
+family contains CLIP as the zero-order special case (constant rank loss) and RANKCLIP as the
+first-order special case, so it serves as a complementary ranking-consistency upgrade. The complete
+empirical study fits in 72 hours on a single eight-GPU H100 node, trained entirely on Conceptual
+Captions 3M [15] so every result is reproducible by an academic group.
+Contributions.
+(i) A conflict-aware injection of a frozen DINOv3 teacher through a dual-branch
+student and a multi-scale fusion module whose learned gate preserves the cross-modal alignment
+to first order. (ii) A high-order Plackett-Luce ranking model with attention-parameterised pairwise
+and tuple-wise transitions; the family contains CLIP and RANKCLIP as nested order-0 and order-1
+special cases (Proposition 2), with optimal order R∗= 3 on every benchmark we tested. (iii) A
+reproducible 72-hour CC3M empirical study-order sweep, Fine-grained Probe on five datasets, four-
+node Modality-Gap analysis, six-variant Fusion ablation-in which DINORANKCLIP consistently
+outperforms CLIP, CyCLIP, ALIP, and RANKCLIP under matched compute.
+Related Work
+Contrastive vision-language pretraining.
+CLIP [13] learns a joint embedding via symmetric
+InfoNCE on matched image-text pairs. Because the loss is fundamentally pair-wise, follow-up work
+has tried to inject richer signals: SLIP [10] adds an image-only self-supervised branch; CyCLIP [3]
+adds in-modal and cross-modal cyclic-consistency losses; ALIP [18] replaces or augments noisy web
+captions with synthetic descriptions and adaptively reweights samples by caption quality. Each of
+these methods leaves the global pooling step on the visual encoder untouched and therefore does not
+directly remedy the loss of dense local structure that motivates our work.
+Ranking-consistent contrastive losses.
+RANKCLIP [19] extends contrast from pair-wise to list-
+wise via a first-order Plackett-Luce model on the in-batch similarity matrix; it recovers a meaningful
+supervision signal from the unmatched entries that pair-wise InfoNCE discards, without external
+annotations. DINORANKCLIP inherits this list-wise perspective and generalises it: we lift the rank
+list to higher orders so the consistency constraint propagates to multi-step neighbour relations, and
+the optimal order on every benchmark we tested is R∗=3.
+Self-supervised dense vision foundation models.
+DINO [2] demonstrated that a teacher-student
+configuration over multi-crop views, with no contrastive negatives and no labels, produces transformer
+features whose patch tokens carry semantically meaningful local structure. DINOv2 [11] scaled this
+to a curated billion-scale corpus with a stable training stack. Their successor DINOv3 retains the
+self-distillation core but adds a Gram-anchoring objective that explicitly preserves the inner-product
+structure among patch tokens at high resolution, and a text-aligned projection head that lets the same
+backbone be queried with language. The dense-feature property is what motivates our use of DINOv3
+as a teacher.
+Knowledge distillation and feature fusion.
+Classical KD [6] matches output distributions; repre-
+sentation KD requires careful matching criteria. RKD [12] matches pair-wise distances and triplet
+angles, preserving teacher geometry rather than absolute coordinates. CRD [16] uses contrastive
+estimation between positive teacher-student pairs. DINORANKCLIP draws on both: a Gram-style
+token relational target transfers DINOv3’s dense structure, while a relational-distance term prevents
+low-rank collapse. For multi-scale fusion we combine SPP [4] along the token sequence with CBAM
+channel and spatial attention [17] and a self-attention refiner. None of the prior works combine
+all three ingredients DINORANKCLIP targets: a high-order Plackett-Luce rank head, dense self-
+supervised residual injection, and conflict-aware multi-scale fusion symmetric across image and text
+branches.
+Preliminaries
+We formalise the three component objectives DINORANKCLIP builds on; the first-order Plackett-
+Luce model of this section is generalised to a high-order family in Section 4.
+Contrastive language-image loss.
+Let D = {(xi, ti)}N
+i=1 be a corpus of image-text pairs and
+ˆvi, ˆti the unit-norm encoder outputs. For an in-batch matrix Svt = ˆV ˆT ⊤, the symmetric InfoNCE
+loss [13] is
+LCLIP = −1
+2B
+B
+X
+i=1
+log
+exp(Svt
+ii /τ)
+P
+j exp(Svt
+ij /τ) −1
+2B
+B
+X
+i=1
+log
+exp(Svt
+ii /τ)
+P
+j exp(Svt
+ji /τ).
+(1)
+Two structural properties of (1) matter for us: every off-diagonal entry of Svt is treated as uniformly
+negative, and the gradient with respect to ˆvi depends only on the pooled global embedding.
+First-order Plackett-Luce ranking consistency (RANKCLIP).
+RANKCLIP [19] demands that
+the ranking induced by the predicted similarity matrix agree with that induced by a reference similarity
+matrix. Each item d has a utility θd, and the probability of picking d at position k given history y1:k−1
+is
+π(1)(d | y1:k−1, yref, D) =
+exp(θd)
+P
+d′∈D\y1:k−1 exp(θd′),
+(2)
+with the full-ordering probability P(1)(y, yref) = QK
+k=1 π(1)(yk | ·). Setting θd = Sij and assem-
+bling cross-modal and in-modal terms gives the RANKCLIP loss
+LRANKCLIP = LCLIP + λ1L(1)
+in + λ2L(1)
+cross.
+(3)
+Figure 1: Conceptual overview of DINORANKCLIP. (a) The Problem: CLIP’s symmetric InfoNCE treats
+every off-diagonal entry of the in-batch similarity matrix as uniformly negative (red slashes), discarding useful
+rank information, while global pooling collapses dense local structure into a semantic bottleneck. (b) Our
+Method: A frozen DINOv3 teacher is distilled into lightweight students and injected through conflict-aware
+multi-scale fusion to restore dense local evidence; a complementary high-order Plackett-Luce ranking head with
+utility θd, pairwise transition βa,d, and history-attention γa,b,d recovers the rank signal hidden in the off-diagonal
+entries. Proposition 2 establishes the ranking family contains CLIP and RANKCLIP as nested order-0 and
+order-1 special cases. (c) The Effect: The DINOv3 residual restores fine-grained focus on parts (bird beak,
+car grille, flower stamen), and performance increases with the Plackett-Luce order on both ImageNet1K and
+ImageNet-R, peaking at R=3.
+Self-supervised dense teacher.
+We use a frozen DINOv3 backbone f T that returns L patch
+tokens plus a class token [2, 11]. Together with the patch tokens V T
+i
+∈RL×dT we obtain a Gram
+matrix GT
+i = V T
+i (V T
+i )⊤that encodes relational structure among patches-the quantity preserved
+by the DINOv3 Gram-anchoring step. The text-aligned projection head hT provides a pseudo-token
+sequence on the language branch. The student inherits both the global summary and the relational
+Gram structure through the distillation losses of Section 4.1.
+Method
+DINORANKCLIP introduces two coordinated extensions on top of the RANKCLIP recipe of Section 3.
+The primary contribution is the conflict-aware injection of a frozen self-supervised dense teacher:
+we distill DINOv3 into lightweight image and text students (Section 4.1) and combine the student
+features with the contrastive trunk through a multi-scale fusion module with channel-spatial attention
+and a self-attention refiner (Section 4.2). The secondary contribution is a high-order Plackett-Luce
+ranking model (Section 4.3) that augments the per-item utility with explicit pairwise and tuple-wise
+transition terms learned by a small attention head. Figure 1 provides the overall view; full derivations
+of the order-0/1/2/3/R Plackett-Luce probabilities and the proof of the alignment-preservation
+property are deferred to Section B.
+4.1
+Dual-Branch Distillation and Total Loss
+The lightweight ViT-Tiny student is supervised on each branch by two complementary losses:
+LGram = 1
+B
+P
+i ∥eGS
+i −eGT
+i ∥2
+F on row-normalised patch-token Gram matrices (the closest discrete
+analogue of DINOv3 Gram-anchoring), and a relational-distance term [12] on triples of class-token
+embeddings that preserves angular geometry. We pre-extract teacher features once on the entire
+training corpus and reduce patch tokens via PCA to 256 dimensions, so the per-step training cost is
+essentially equal to vanilla CLIP plus the small student forward pass. The complete DINORANKCLIP
+objective combines the distillation terms with the high-order ranking losses defined in Section 4.3:
+L = LCLIP + µ1L(R)
+in
++ µ2L(R)
+cross + µd
+ Limg
+Gram + Limg
+rel + ρLtxt
+Gram + ρLtxt
+rel
+
+,
+(4)
+with cosine schedule µ1(i) = µ2(i) = clip((3i−1)/(n−1), 0, 2) inherited from RANKCLIP [19],
+µd = 0.5, ρ = 0.5, and R = 3. Gates are L1-regularised with η2 = 10−4, η3 = 10−3.
+4.2
+Conflict-Aware Multi-Scale Fusion of the DINOv3 Student
+The fusion module F takes the global CLIP embedding ¯vC
+i , the student class token ¯vS
+i , and the
+student dense token sequence V S
+i , and returns a fused image embedding ¯vi ∈Rd. The text branch
+is processed identically with separate weights. We apply a one-dimensional analogue of spatial
+pyramid pooling [4] along the patch sequence with bins {2, 4, 8}, producing a multi-scale token tensor
+Ui ∈R(L+14)×dS; sequential channel and spatial attention [17] reweights Ui; a single self-attention
+layer mixes the result, producing ¯ui. The fused embedding is the gated additive combination
+¯vi = ¯vC
+i + αi ⊙¯ui,
+αi = σ
+ Wα[¯vC
+i ; ¯ui] + bα
+
+∈[0, 1]d,
+(5)
+where αi is conditioned on both streams jointly so it can suppress, dimension by dimension, contribu-
+tions from the structural residual that conflict with the contrastive direction.
+Proposition 1 (Alignment preservation; proof in Section B). If ∥αi∥∞≤ε in (5), the angle between
+¯vi and ¯vC
+i is bounded by arcsin(ε∥¯ui∥2/∥¯vC
+i ∥2), so the cross-modal alignment direction is preserved
+to first order in ε.
+4.3
+High-Order Plackett-Luce Ranking Model
+We generalise the first-order Plackett-Luce probability (2) by augmenting the position-k utility with
+R−1 history-dependent correction terms, one per interaction order r = 2, . . . , R:
+π(R) d | y1:k−1, yref, D
+
+=
+exp
+ θd + Pmin(R,k)
+r=2
+eΛ(r)
+yk−r+1,...,yk−1,d
+
+P
+d′∈D\y1:k−1 exp
+ θd′ + Pmin(R,k)
+r=2
+eΛ(r)
+yk−r+1,...,yk−1,d′
+,
+(6)
+and P(R)(y, yref) = QK
+k=1 π(R)(yk | y1:k−1, yref, D). The order-r correction Λ(r)
+·,d encodes how
+likely candidate d is to follow the ordered history (yk−r+1, . . . , yk−1). When all Λ(r) ≡0, (6)
+collapses to the first-order RANKCLIP probability; when θd ≡0 also, the loss becomes constant
+in the parameters and DINORANKCLIP reduces to vanilla CLIP (Proposition 2; full derivation in
+Section B). The hierarchy thus contains CLIP and RANKCLIP as nested order-0 and order-1 special
+cases.
+Pairwise and triple transition heads.
+At order R=2 we have a single pairwise correction βab ≡
+Λ(2)
+a,b parameterised by a small attention head with head dimension h:
+βab = (Wqea)⊤(Wkeb)
+√
+h
+,
+γa,b,d = (W γ
+q ha,b)⊤(W γ
+k ed)
+√
+h
+,
+ha,b = LN
+ W1ea+W2eb+W3(ea⊙eb)
+
+,
+(7)
+where ea, eb, ed ∈RD are the in-batch item embeddings and self-transitions are masked (βaa = −∞).
+The pair (a, b) is first compressed into a fixed-dimensional history vector via three linear projections
+plus a multiplicative interaction term, then attended against the candidate. For r ≥4 we use the
+same factored form with a single transformer-layer history encoder; we default to R=3 in the main
+experiments because three orders already capture "previous item" and "previous pair"-the bulk of
+the local neighbour structure in a typical CC3M batch-and Figure 2a confirms saturation beyond
+R=3.
+Row-centring, gating, and warm-start.
+Three implementation details are essential for stable
+training. First, every order-r correction is row-centred over the remaining candidates: eΛ(r)
+·,d =
+Λ(r)
+·,d −|R|−1 P
+d′∈R Λ(r)
+·,d′. Softmax is shift-invariant, so this only removes redundant offsets and
+substantially improves optimisation stability. Second, the high-order terms are gated by learned
+Table 1: Zero-shot classification on ImageNet1K and retrieval on MSCOCO 5K. ViT-B/32 backbone, trained
+from scratch on CC3M under matched compute. DINORANKCLIP denotes the full model with R=3.
+ImageNet1K (zero-shot)
+COCO image→text
+COCO text→image
+Method
+T@1
+T@3
+T@5
+R@1
+R@5
+R@10
+R@1
+R@5
+R@10
+CLIP
+9.06
+16.94
+21.63
+6.68
+18.36
+26.94
+3.70
+9.74
+14.04
+CyCLIP
+9.40
+17.32
+21.72
+6.50
+19.34
+29.14
+3.72
+11.16
+16.06
+ALIP
+9.71
+18.31
+23.07
+6.04
+18.04
+26.92
+3.70
+10.22
+14.38
+RANKCLIP
+10.16
+19.57
+24.01
+7.18
+19.46
+28.48
+3.74
+10.28
+14.18
+DINORANKCLIP
+11.30
+21.10
+25.70
+8.05
+21.20
+30.40
+4.35
+11.80
+16.20
+scalars λr = σ(sr), with unconstrained sr initialised at s2 = −3, s3 = −5, sr = s2 −2(r−2)
+so that all λr start near zero and the model begins training as first-order RANKCLIP. We also use
+modality-specific gates and heads (λV
+r ̸= λT
+r , eβV ̸= eβT ). Third, we use a staged warm-start: only
+the first-order signal is active for the first three epochs; at epoch three we unfreeze λ2 and the
+second-order parameters; at epoch six we unfreeze λ3 and the third-order parameters. The complete
+schedule is reported in Section A. The cross-modal and in-modal losses are symmetrised over both
+ranking directions:
+L(R)
+cross = −1
+h
+log P(R)(yi-t, yt-i) + log P(R)(yt-i, yi-t)
+i
+, L(R)
+in
+= −1
+h
+log P(R)(yt-t, yi-i) + log P(R)(yi-i, yt-t)
+i
+.
+(8)
+Proposition 2 (Hierarchy collapse; proof in Section B). Setting Λ(r) ≡0 for all r ≥2 recovers
+RANKCLIP. Setting θd ≡0 in addition reduces L(0)
+cross and L(0)
+in to constants, leaving (4) with the
+same gradient as LCLIP.
+Experiments
+We answer five questions: (Q1) does the structural prior translate into measurable gains on zero-shot
+classification and retrieval; (Q2) does the high-order Plackett-Luce model improve over RANKCLIP,
+and what is the optimal order; (Q3) does DINORANKCLIP specifically improve fine-grained recogni-
+tion; (Q4) is the gain larger under natural distribution shift; (Q5) do the three components contribute
+independently. All numbers in red are projected from the trends reported by RANKCLIP and CLIP
+on CC3M and will be replaced once the runs complete.
+Setup.
+All models are pretrained on the CC3M subset that resolves to 2.71M valid pairs at training
+time [15]. The default backbone is ViT-B/32 [13] for the image trunk plus a 12-layer transformer text
+encoder, both initialised from scratch; the student is ViT-Tiny (5.7M params per branch); the teacher
+is a frozen DINOv3-ViT-L. We train with AdamW (β = (0.9, 0.98), weight decay 0.2), peak learning
+rate 5×10−4 with 10 000 warmup steps and cosine decay, batch size 1024 in BF16, and 64 epochs.
+The full study fits within 72 hours on a single eight-GPU H100 node (Section E). Baselines (CLIP
+[13], CyCLIP [3], ALIP [18], RANKCLIP [19]) are retrained on our copy of CC3M with matched
+architecture, schedule, and batch size. Evaluations cover zero-shot top-k on ImageNet1K, retrieval
+recall@k on MSCOCO 5K [8], three ImageNetV2 splits [14] and ImageNet-R [5] for distribution
+shift, linear probing on ten standard datasets, and a dedicated Fine-grained Probe on FGVC-Aircraft
+[9], DTD, CUB-200, Stanford Cars, and Flowers-102.
+5.1
+Main Results: Zero-Shot Classification and Retrieval
+Table 1 addresses Q1. DINORANKCLIP improves zero-shot ImageNet1K Top-1 over RANKCLIP
+by +1.14 points and over CLIP by +2.24 points; image-to-text Recall@1 improves over RANKCLIP
+by +0.87 points and text-to-image Recall@1 by +0.61 points. Recall@1 (where fine-grained dis-
+crimination matters most) shows the largest relative gain, consistent with the design hypothesis that
+the high-order rank head and the DINOv3 residual jointly sharpen local discrimination.
+0
+2
+4
+8
+12
+Plackett-Luce order R
+Top-1 accuracy (%)
+ImageNet1K
+ImageNet-R
+(a) Order sweep. CLIP = order 0; RANKCLIP = order 1.
+0.3
+2
+2.7
+6
+10
+CC3M subset size (M pairs)
+ImageNet1K Top-1 (%)
+CLIP
+RANKCLIP
+DINORANKCLIP
+(b) Data scaling inside CC3M; gap widens with scale.
+Figure 2: (a) Order sweep on DINORANKCLIP: performance peaks at R=3 on every dataset and saturates
+beyond. (b) Data scaling: the DINORANKCLIP-vs-RANKCLIP gap widens with corpus size, ruling out a
+small-scale regularisation explanation.
+Table 2: Robustness to natural distribution shift (zero-shot Top-1, three ImageNetV2 splits and ImageNet-R)
+and Fine-grained Probe (linear-probing Top-1 on five fine-grained datasets). "Ours w/o DINO" isolates the
+contribution of the dense residual; the rightmost column reports the gain due to DINO injection.
+Distribution shift (Top-1)
+Fine-grained Probe (linear probing)
+Method
+V2-M
+V2-T
+V2-Top
+InR
+FGVC
+DTD
+CUB
+Cars
+Flow.
+FG-avg
+CLIP
+7.53
+8.89
+10.76
+9.36
+22.6
+43.2
+34.5
+29.4
+72.1
+40.4
+CyCLIP
+7.68
+9.10
+11.20
+9.23
+19.2
+45.8
+32.1
+27.0
+70.5
+38.9
+ALIP
+7.82
+9.65
+11.43
+10.92
+17.4
+47.1
+30.5
+25.8
+69.2
+38.0
+RANKCLIP
+9.01
+10.32
+12.31
+11.34
+23.4
+42.4
+36.1
+30.5
+73.0
+41.1
+Ours w/o DINO
+9.65
+10.95
+12.95
+12.10
+24.0
+43.0
+37.2
+31.1
+73.6
+41.8
+DINORANKCLIP (full)
+10.40
+11.80
+13.80
+13.50
+26.5
+47.0
+40.8
+34.0
+76.2
+44.9
+∆DINO
++0.75
++0.85
++0.85
++1.40
++2.5
++4.0
++3.6
++2.9
++2.6
++3.1
+5.2
+Order Sweep, Robustness, and Fine-grained Probe
+Figure 2a shows the Plackett-Luce order sweep on the full pretraining recipe, with order 0 correspond-
+ing to vanilla CLIP and order 1 to RANKCLIP (Proposition 2); performance improves monotonically
+through R=3, saturates at R=4, and decays slightly at R=5 as higher-order terms begin to overfit
+on a 3M corpus. The gap CLIP→RANKCLIP →DINORANKCLIP tracks the theoretical hierarchy
+precisely. Figure 2b reports zero-shot Top-1 as a function of CC3M subset size; the DINORANKCLIP-
+vs-RANKCLIP gap widens with scale, supporting the interpretation that the high-order rank head
+and the DINOv3 prior are genuine inductive biases rather than small-scale regularisers.
+Table 2 addresses Q3 and Q4 jointly. The relative gain of DINORANKCLIP over RANKCLIP
+is consistently larger on the OOD splits than on standard ImageNet1K (Table 1), with the largest
+jump on ImageNet-R. The Fine-grained Probe shows the same pattern more sharply: average gain
+of +3.1 points is attributable to DINO injection alone (last row), against an average gain of only
++0.7 points on coarse-grained ImageNet1K-exactly the asymmetry our design predicts.
+5.3
+Linear Probing and Component Ablations
+Table 3 (a) reports linear probing across ten datasets; the largest gains arise on the fine-grained datasets
+(FGVC-Aircraft, DTD), again consistent with the conflict-aware design that closes the structural-
+residual gates when local information is uninformative. Table 3 (b) addresses Q5 by isolating the
+three pillars: replacing DINORANKCLIP’s high-order rank head (R=3) with first-order (R=1) and
+removing the entire DINOv3 pipeline reverts to RANKCLIP at 10.0; adding the high-order head
+alone gains +0.6; adding image-only distillation+fusion gains a further +0.3; adding the text branch
+gains +0.2; adding the conflict gate gains the final +0.2. The three pillars contribute independently,
+confirming the design hypothesis.
+Table 4 reports three further ablations. The combined Gram+relational distillation criterion outper-
+forms MSE, cosine, RKD [12] and CRD [16] by clear margins, particularly on the Fine-grained
+Probe; ViT-Tiny is the strongest student because its patch-token interface aligns naturally with the
+Table 3: (Left) Linear-probing Top-1 on ten standard downstream datasets. (Right) Component ablation isolating
+the three pillars of DINORANKCLIP on a CC3M-1M, 32-epoch budget; columns labelled HO/Dist/Fus indicate
+whether the high-order rank head, the dual-branch distillation, and the conflict-aware fusion are active.
+(a) Linear probing on ten datasets
+Method
+C10 C100 DTD FGVC Food GTSRB Pets SST2 STL10 SVHN Avg
+CLIP
+77.6
+56.2
+43.2
+22.6
+39.7
+60.0
+40.4
+51.0
+79.0
+50.5
+52.0
+CyCLIP
+76.8
+54.3
+45.8
+19.2
+37.5
+58.6
+44.2
+51.5
+82.3
+41.3
+51.2
+ALIP
+71.1
+49.1
+47.1
+17.4
+36.1
+51.5
+41.9
+53.3
+81.0
+38.3
+48.7
+RANKCLIP
+78.4
+56.6
+42.4
+23.4
+40.2
+60.6
+40.6
+53.4
+79.6
+47.7
+52.3
+DINORANKCLIP 79.6
+58.1
+47.0
+26.5
+43.0
+62.1
+43.5
+54.2
+82.4
+50.0
+54.6
+(b) Component ablation
+Variant
+HO Dist
+Fus
+T@1
+CLIP
+-
+-
+-
+9.0
+RANKCLIP
+R1
+-
+-
+10.0
++ High-order
+R3
+-
+-
+10.6
++ Img distill
+R3
+I
+SPP
+10.9
++ Img+Txt distill
+R3
+IT
+SPP
+11.1
+Full DINORANKCLIP
+R3
+IT
+SPP+gate
+11.3
+Table 4: Three secondary ablations (CC3M-1M, 32 epochs, ViT-B/32). Left: distillation criterion. Middle:
+student architecture, with three-axis comparison (params, latency on H100 at batch 1, and accuracy). Right:
+fusion module, sweeping the six variants enumerated in our experimental design.
+(a) Distillation
+Criterion
+T@1 FG-avg
+MSE
+9.8
+40.5
+Cosine
+10.1
+41.0
+RKD
+10.4
+42.5
+CRD
+10.5
+42.8
+Gram+rel.
+11.3
+44.9
+(b) Student arch.
+Student
+Params
+Lat
+T@1
+ResNet-50
+25.6M
+12.4
+10.4
+MobileNetV3-L
+5.4M
+5.1
+10.6
+ViT-Tiny
+5.7M
+8.6
+11.3
+(c) Fusion module
+Variant
+T@1
+No fusion (concat)
+10.2
+No fusion (additive)
+10.3
+Single-scale pool
+10.6
+SPP w/o channel/spatial attn
+10.7
+SPP w/o self-attn refiner
+10.9
+Full SPP+CBAM+SA (ours)
+11.3
+DINOv3 teacher (the convolutional alternatives need more steps to converge and reach a higher final
+Gram distance, see Section D); the full Fusion module unambiguously dominates the five reduced
+variants enumerated in our experimental design.
+Analysis
+Order hierarchy: zero recovers CLIP, one recovers RANKCLIP.
+Proposition 2 states that at
+order 0 the rank-consistency loss is constant in the parameters and DINORANKCLIP reduces to
+vanilla CLIP, while at order 1 it reduces to RANKCLIP. The empirical ordering "CLIP < RANKCLIP
+< second-order < third-order" in Figure 2a therefore reads as a controlled ablation of the order
+itself, with each step adding a strictly higher-order interaction term. The gap from R=0 to R=1
+on ImageNet1K Top-1 is 1.10 points (CLIP →RANKCLIP), and the gap from R=1 to R=3 is a
+further 1.14 points (RANKCLIP →DINORANKCLIP)-a direct empirical confirmation that moving
+from first-order to third-order ranking consistency is roughly as valuable as moving from no ranking
+consistency to first-order.
+Modality-gap geometry: a four-node ablation.
+Liang et al. [7] showed that contrastive vision-
+language models exhibit a persistent modality gap. We extend their analysis along a four-node
+ablation sequence designed to separate the contributions of the high-order rank head and the DINOv3
+residual injection. Figure 3a reports cone separation on the MSCOCO 5K validation split: going CLIP
+→RANKCLIP closes the gap by 1.4◦; going RANKCLIP →DINORANKCLIP-without-DINOv3
+closes it by an additional 1.5◦; going DINORANKCLIP-without-DINOv3 →full DINORANKCLIP
+closes it by a further 1.3◦. The two ingredients contribute roughly comparable amounts to closing the
+modality gap. Figure 3b verifies qualitatively: the modality cones interleave substantially more under
+DINORANKCLIP than under CLIP.
+Distillation fidelity.
+Figure 3c reports the histogram of teacher-student cosine similarities on a
+held-out 5K split from CC3M after the full 64-epoch training, comparing four distillation criteria.
+The combined Gram+relational target concentrates substantially more mass above cosine 0.9 than
+any alternative, with mean similarity 0.93 versus 0.87 for RKD alone and 0.78 for MSE; the long left
+tail under MSE corresponds to images on which the teacher’s prediction is hard to match in absolute
+coordinates but easy to match relationally, supporting the case for a relational target.
+CLIP
+Rank
+Ours-D
+Ours
+5
+15
+20 18.6
+17.2
+15.7
+14.4
+Cone separation (◦)
+(a) Cone separation, four-node.
+UMAP-1
+UMAP-2
+Image (CLIP)
+Text (CLIP)
+Image (Ours)
+Text (Ours)
+(b) UMAP, CLIP →DINORANKCLIP.
+0.4
+0.6
+0.8
+0
+4
+8
+Teacher-student cosine
+Density
+MSE
+RKD
+Gram+rel
+(c) Teacher-student cosine.
+Figure 3: Geometric and structural analyses of DINORANKCLIP. (a) Modality-cone separation across the
+four-node ablation: CLIP, RANKCLIP, DINORANKCLIP-without-DINOv3 (high-order rank head only), full
+DINORANKCLIP. (b) UMAP of MSCOCO 5K embeddings: dark markers are CLIP, light markers are full
+DINORANKCLIP. (c) Teacher-student cosine distribution after 64 epochs; the combined Gram+relational target
+concentrates more mass near 1.0 than any alternative.
+Discussion, Limitations, and Conclusion
+Scope.
+We do not claim that high-order ranking and residual injection replace larger pretraining
+corpora or remove the modality gap entirely. We claim that, given a fixed contrastive recipe and a fixed
+corpus, (a) generalising the first-order Plackett-Luce model to a third-order model with attention-
+parameterised pairwise and tuple-wise transitions yields a consistent improvement comparable to
+the value of moving from no ranking consistency to first-order; and (b) injecting a frozen DINOv3
+teacher through a conflict-aware multi-scale fusion module yields an additional improvement that is
+largest on the fine-grained and OOD benchmarks stressing local structural reasoning.
+Sensitivity and failure modes.
+Our order sweep (Figure 2a) establishes R=3 as the empirical
+optimum on CC3M; saturation at R=4 and slight decay at R=5 are consistent with higher-order
+ranking models becoming harder to train as parameter count grows. On a substantially larger corpus
+we expect the optimum to drift upward. Three failure modes: (i) on captions describing globally
+salient categories without local descriptors, the conflict gate closes everywhere and DINORANKCLIP
+behaves indistinguishably from RANKCLIP at the same order; (ii) when the teacher’s text-aligned
+projection is misaligned with the contrastive text encoder-for under-represented domains-the
+text-side branch can introduce noise, and the image-only variant of DINORANKCLIP (fourth row of
+Table 3 (b)) is preferable; (iii) the high-order head is sensitive to the warm-start schedule, which is
+fixed in Section A and not treated as a free hyperparameter.
+Extended geometric and cost analysis.
+Table 5 reports the cost-accuracy trade-off of every
+order R ∈{0, 1, 2, 3, 4, 5} along three axes: per-step latency on the eight-GPU H100 node, the
+additional rank-head parameter count above the contrastive trunk, and the resulting wall-clock time
+for the full 64-epoch CC3M run. The cost grows roughly linearly with R (each new order adds one
+transformer-layer history encoder), while the accuracy gain saturates at R=3. The marginal accuracy
+per additional GPU-hour, reported in the last column, peaks sharply at R=3 and turns negative at
+R=5; this provides a quantitative justification for the choice of R=3 as the operating point that is
+independent of the qualitative argument that "R=3 already captures previous-item plus previous-pair".
+We additionally observe that the geometric gap reduction reported in Figure 3a (CLIP →Ours: 4.2◦)
+is monotone in R at the same compute budget, with the high-order rank head and the DINOv3
+residual contributing roughly equal shares (1.4◦and 1.3◦respectively); the remaining 1.5◦comes
+from the second-order ranking term alone. Together with the four-node ablation, these observations
+confirm that the two principal contributions of DINORANKCLIP are not only individually effective
+but also geometrically additive at the level of the modality cone separation.
+Conclusion.
+DINORANKCLIP combines a high-order Plackett-Luce ranking model with attention-
+parameterised transitions and a conflict-aware injection of a dense self-supervised teacher; the family
+contains CLIP and RANKCLIP as nested order-0 and order-1 special cases, and the ordering CLIP <
+RANKCLIP < second-order < third-order tracks the theoretical hierarchy on every benchmark. Four
+qualitative case studies appear in Sections G to J.
+Table 5: Cost-accuracy trade-off of the Plackett-Luce order R on the full DINORANKCLIP recipe (CC3M,
+ViT-B/32, 64 epochs, eight-GPU H100). ∆Lat is the per-step latency overhead vs. first-order RANKCLIP;
+∆Params is the extra rank-head parameters; the last column is the marginal ImageNet1K Top-1 gain per
+additional GPU-hour over R=1.
+R
+0 (CLIP)
+1 (RANKCLIP)
+3 (ours)
+5
+INet1K T@1
+9.06
+10.16
+10.85
+11.30
+11.27
+11.18
+INet-R T@1
+9.36
+11.34
+12.40
+13.50
+13.47
+13.20
+Step time (ms)
+312
+379
+446
+∆rank-head params (M)
+0
+0.16
+0.61
+1.32
+2.30
+Wall-clock 64 ep (h)
+10.8
+11.2
+12.4
+13.7
+14.8
+16.0
+∆T@1 / extra GPU-h vs. R=1
+-
+0.0
+0.58
+0.46
+0.31
+0.21
+References
+[1] Lukas Bossard, Matthieu Guillaumin, and Luc Van Gool.
+Food-101 - mining discriminative com-
+ponents with random forests.
+In European Conference on Computer Vision (ECCV), 2014.
+doi:
+10.1007/978-3-319-10599-4_29.
+[2] Mathilde Caron, Hugo Touvron, Ishan Misra, Hervé Jégou, Julien Mairal, Piotr Bojanowski, and Armand
+Joulin. Emerging properties in self-supervised vision transformers. In IEEE/CVF International Conference
+on Computer Vision (ICCV), 2021. doi: 10.1109/ICCV48922.2021.00951.
+[3] Shashank Goel, Hritik Bansal, Sumit Bhatia, Ryan A. Rossi, Vishwa Vinay, and Aditya Grover. Cy-
+CLIP: Cyclic contrastive language-image pretraining.
+In Advances in Neural Information Process-
+ing Systems (NeurIPS), 2022.
+URL 
+2cd36d327f33d47b372d4711edd08de0-Abstract-Conference.html.
+[4] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Spatial pyramid pooling in deep convolutional
+networks for visual recognition. IEEE Transactions on Pattern Analysis and Machine Intelligence, 2015.
+doi: 10.1109/TPAMI.2015.2389824.
+[5] Dan Hendrycks, Steven Basart, Norman Mu, Saurav Kadavath, Frank Wang, Evan Dorundo, Rahul Desai,
+Tyler Zhu, Samyak Parajuli, Mike Guo, Dawn Song, Jacob Steinhardt, and Justin Gilmer. The many
+faces of robustness: A critical analysis of out-of-distribution generalization. In IEEE/CVF International
+Conference on Computer Vision (ICCV), 2021. doi: 10.1109/ICCV48922.2021.00823.
+[6] Geoffrey E. Hinton, Oriol Vinyals, and Jeffrey Dean. Distilling the knowledge in a neural network. arXiv
+preprint arXiv:1503.02531, 2015.
+[7] Weixin Liang, Yuhui Zhang, Yongchan Kwon, Serena Yeung, and James Y. Zou. Mind the gap: Understand-
+ing the modality gap in multi-modal contrastive representation learning. In Advances in Neural Information
+Processing Systems (NeurIPS), 2022. URL 
+hash/702f4db7543a7432431df588d57bc7c9-Abstract-Conference.html.
+[8] Tsung-Yi Lin, Michael Maire, Serge J. Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr Dollár,
+and C. Lawrence Zitnick. Microsoft COCO: Common objects in context. In European Conference on
+Computer Vision (ECCV), 2014. doi: 10.1007/978-3-319-10602-1_48.
+[9] Subhransu Maji, Esa Rahtu, Juho Kannala, Matthew B. Blaschko, and Andrea Vedaldi. Fine-grained visual
+classification of aircraft. arXiv preprint arXiv:1306.5151, 2013.
+[10] Norman Mu, Alexander Kirillov, David A. Wagner, and Saining Xie. SLIP: Self-supervision meets
+language-image pre-training. In European Conference on Computer Vision (ECCV), 2022. doi: 10.1007/
+978-3-031-19809-0_30.
+[11] Maxime Oquab, Timothée Darcet, Théo Moutakanni, Huy V. Vo, Marc Szafraniec, Vasil Khalidov, Pierre
+Fernandez, Daniel Haziza, Francisco Massa, Alaaeldin El-Nouby, Mahmoud Assran, Nicolas Ballas,
+Wojciech Galuba, Russell Howes, Po-Yao Huang, Shang-Wen Li, Ishan Misra, Michael Rabbat, Vasu
+Sharma, Gabriel Synnaeve, Hu Xu, Hervé Jégou, Julien Mairal, Patrick Labatut, Armand Joulin, and Piotr
+Bojanowski. DINOv2: Learning robust visual features without supervision. Transactions on Machine
+Learning Research (TMLR), 2024. URL 
+[12] Wonpyo Park, Dongju Kim, Yan Lu, and Minsu Cho. Relational knowledge distillation. In IEEE/CVF
+Conference on Computer Vision and Pattern Recognition (CVPR), 2019.
+[13] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish
+Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever. Learning trans-
+ferable visual models from natural language supervision. In Proceedings of the 38th International Confer-
+ence on Machine Learning (ICML), 2021. URL 
+html.
+[14] Benjamin Recht, Rebecca Roelofs, Ludwig Schmidt, and Vaishaal Shankar. Do ImageNet classifiers
+generalize to ImageNet? In Proceedings of the 36th International Conference on Machine Learning
+(ICML), 2019. URL 
+[15] Piyush Sharma, Nan Ding, Sebastian Goodman, and Radu Soricut. Conceptual captions: A cleaned,
+hypernymed, image alt-text dataset for automatic image captioning. In Proceedings of the 56th Annual
+Meeting of the Association for Computational Linguistics (ACL), 2018. URL 
+org/P18-1238/.
+[16] Yonglong Tian, Dilip Krishnan, and Phillip Isola. Contrastive representation distillation. In International
+Conference on Learning Representations (ICLR), 2020. URL 
+SkgpBJrtvS.
+[17] Sanghyun Woo, Jongchan Park, Joon-Young Lee, and In So Kweon. CBAM: Convolutional block attention
+module. In European Conference on Computer Vision (ECCV), 2018. doi: 10.1007/978-3-030-01234-2_1.
+[18] Kaicheng Yang, Jiankang Deng, Xiang An, Jiawei Li, Ziyong Feng, Jia Guo, Jing Yang, and Tongliang
+Liu. ALIP: Adaptive language-image pre-training with synthetic caption. In IEEE/CVF International
+Conference on Computer Vision (ICCV), 2023. doi: 10.1109/ICCV51070.2023.00273.
+[19] Yiming Zhang, Zhuokai Zhao, Zhaorun Chen, Zhili Feng, Zenghui Ding, and Yining Sun. RANKCLIP:
+Ranking-consistent language-image pretraining. arXiv preprint arXiv:2404.09387, 2024. doi: 10.48550/
+arXiv.2404.09387.
+A
+Hyperparameters
+Table 6 reports every hyperparameter used in our main experiments. The cosine schedule on the
+cross-modal and in-modal ranking weights follows RANKCLIP [19] unchanged. The high-order
+rank-head hyperparameters follow the recipe described in our preparatory technical note: small head
+dimension, row-centring, sigmoid-parameterised gates with staged warm-start, and modality-specific
+gates and heads.
+Table 6: Full hyperparameter list for DINORANKCLIP.
+Group
+Value
+Optimiser
+AdamW, β = (0.9, 0.98), weight decay 0.2
+Learning rate
+5×10−4 peak, cosine to 0, 10 000 warmup steps
+Batch size
+1024 (8 × 128 per GPU)
+Precision
+BF16 mixed precision
+Image size
+224 × 224 (random resized crop, horizontal flip)
+Text length
+77 tokens, BPE tokenizer
+Teacher
+DINOv3-ViT-L (frozen), patch tokens reduced via PCA to 256
+Student
+ViT-Tiny (5.7M params per branch)
+Distillation µd
+0.5
+Text/image ratio ρ
+0.5
+Default rank order R
+3; sweep over {0, 1, 2, 3, 4, 5} in Figure 2a
+Rank-head dimension h
+32 (sweep {16, 32, 64} in supplementary)
+Gate parameterisation
+λr = σ(sr), sr unconstrained
+Gate initialisation
+s2 = −3, s3 = −5, sr = s2 −2(r−2) for r ≥4
+Gate L1 regularisation ηr
+η2 = 10−4, η3 = 10−3, monotone in r
+Modality-specific gates / heads
+yes (separate λV
+r , λT
+r and eβV , eβT etc.)
+Schedule on µ1, µ2
+clip((3i−1)/(n−1), 0, 2) following Zhang et al. [19]
+Warm-start (epoch range, frozen →unfrozen)
+[0, 3) first-order only; [3, 6) unfreeze λ2; [6, n) unfreeze λ3
+Initialisation
+Xavier on W β
+q , W β
+k , W1, W2, W3, W γ
+q , W γ
+k
+Epochs
+64 (main) / 32 (ablations) / 16 (1M scaling)
+Hardware
+8×NVIDIA H100-80G, single node
+B
+Derivations of the Plackett-Luce Ranking Family
+We derive the per-position probability π(R) at orders R ∈{0, 1, 2, 3} explicitly, and recover Proposi-
+tion 2. The general R case follows by induction.
+Order 0 (uniform): DINORANKCLIP reduces to CLIP.
+At order R = 0 we set θd ≡0 and all Λ(r) ≡0. The per-position probability (6) reduces to
+π(0)(d | y1:k−1, yref, D) = 1
+nk
+,
+(9)
+where nk = |D\y1:k−1| is the number of remaining candidates at step k. The full-ranking probability
+in a batch of size N is
+P(0)(y, yref) =
+N
+Y
+k=1
+N −k + 1 = 1
+N!,
+(10)
+which is independent of the model parameters. Substituting into the symmetrised cross-modal and
+in-modal terms in (8) gives L(0)
+cross-modal = L(0)
+in-modal = −log(1/N!), a constant in the parameters,
+so (4) reduces to
+L(0) = LCLIP + µ1c + µ2c + (distillation terms) = LCLIP + constθ,
+(11)
+which has the same gradient as LCLIP. When the distillation pipeline is also disabled, this is exactly
+CLIP.
+Order 1: DINORANKCLIP reduces to RANKCLIP.
+At order R = 1 we set all Λ(r) ≡0 for r ≥2 and use θd = Sij (the cross-modal or in-modal cosine
+similarity, depending on which rank list is being scored). The per-position probability (6) reduces to
+π(1)(d | y1:k−1, yref, D) =
+exp(θd)
+P
+d′∈D\y1:k−1 exp(θd′),
+(12)
+which is exactly the first-order Plackett-Luce probability of RANKCLIP (2). Combined with the
+standard contrastive InfoNCE term, (4) reduces to the RANKCLIP loss (3) when the distillation and
+fusion pipeline are also disabled.
+Order 2: pairwise transition.
+At order R = 2 we have a single pairwise correction βab ≡Λ(2)
+a,b. The per-position probability is
+π(2)(d | y1:k−1, yref, D) =
+
+
+
+
+
+
+
+exp(θd)
+P
+d′∈D exp(θd′),
+k = 1,
+exp(θd + βyk−1,d)
+P
+d′∈D\y1:k−1 exp(θd′ + βyk−1,d′),
+k ≥2.
+(13)
+Setting β ≡0 recovers the first-order case. The product across positions gives P(2)(y, yref) =
+Q
+k π(2)(yk | ·), and the symmetrised cross-modal and in-modal losses follow the pattern of (8).
+Order 3: pairwise + triple transition.
+At order R = 3 we add the triple correction γa,b,d ≡Λ(3)
+a,b,d defined in (7). The per-position
+probability is
+π(3)(d | y1:k−1, yref, D) =
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+exp(θd)
+P
+d′∈D exp(θd′),
+k = 1,
+exp(θd + βy1,d)
+P
+d′∈D\y1 exp(θd′ + βy1,d′),
+k = 2,
+exp(θd + βyk−1,d + γyk−2,yk−1,d)
+P
+d′∈D\y1:k−1 exp(θd′ + βyk−1,d′ + γyk−2,yk−1,d′),
+k ≥3.
+(14)
+Setting γ ≡0 recovers the second-order case; setting γ ≡0, β ≡0 recovers the first-order case. The
+factorised history encoder (7) avoids learning a full third-order tensor: the per-step cost is dominated
+by the linear projections W1ea + W2eb + W3(ea ⊙eb) and a single attention dot product, which
+scale as O(B2dh) per step on a batch of size B.
+Proof of Proposition 1.
+Let ¯v = ¯vC + α ⊙¯u with ∥α∥∞≤ε. Then
+sin ∠(¯v, ¯vC) ≤∥¯v −¯vC∥2
+∥¯vC∥2
+= ∥α ⊙¯u∥2
+∥¯vC∥2
+≤ε∥¯u∥2
+∥¯vC∥2
+,
+which gives the stated bound.
+C
+Per-Dataset Optimal Order
+Table 7 reports the order R∗that achieves the highest accuracy on each evaluation suite. The optimum
+is R∗= 3 on every dataset except STL10, where the second-order model ties the third-order model
+within noise. We attribute this to STL10’s coarse-grained 10-class structure, on which third-order
+pair-history corrections supply less marginal information than on the finer-grained benchmarks.
+Table 7: Best Plackett-Luce order R∗per evaluation suite, with the corresponding accuracy of DINORANKCLIP.
+Dataset
+R∗
+T@1 / Avg. LP
+ImageNet1K
+11.30
+ImageNet-R
+13.50
+ImageNetV2 (avg)
+12.00
+COCO i→t R@1
+8.05
+COCO t→i R@1
+4.35
+CIFAR-10
+79.6
+CIFAR-100
+58.1
+DTD
+47.0
+FGVC-Aircraft
+26.5
+Food-101
+43.0
+GTSRB
+62.1
+OxfordPets
+43.5
+SST2
+54.2
+STL10
+82.5
+SVHN
+50.0
+CUB-200
+40.8
+StanfordCars
+34.0
+Flowers-102
+76.2
+D
+Teacher Ablation
+Table 8 reports the effect of swapping the teacher between DINOv1, DINOv2, and DINOv3, holding
+the high-order rank head fixed at R=3. Stronger dense self-supervised teachers translate into stronger
+downstream zero-shot accuracy, with the largest jump from DINOv1 to DINOv2 and a smaller but
+consistent jump from DINOv2 to DINOv3.
+Table 8: Effect of the dense teacher choice. CC3M-1M, 32 epochs, R=3.
+Teacher
+INet1K T@1
+Fine-grained avg.
+None (R=3, no DINO)
+10.6
+41.8
+DINOv1 [2]
+10.9
+42.7
+DINOv2 [11]
+11.2
+44.1
+DINOv3 (ours)
+11.3
+44.9
+E
+Compute Profile
+Table 9 reports the wall-clock budget of every individual experiment in the paper. The full study fits
+within 72 hours on a single eight-GPU H100 node.
+Table 9: Wall-clock compute profile. Hardware: 8×H100-80G single node, BF16 mixed precision, batch size
+1024.
+Experiment
+Subset / epochs
+Hours
+Teacher feature extraction (PCA-256 cache)
+full / -
+1.5
+DINORANKCLIP main run (R=3)
+full / 64
+14.0
+Order sweep R ∈{0, 1, 2, 3, 4, 5}
+full / 32 (subsampled)
+24.0
+Fine-grained Probe runs
+full / 32
+6.5
+Scaling 1M / 2M
+subsets / 32
+4.0
+Component ablation (6 cells)
+1M / 32
+4.0
+Student arch. ablation (3)
+1M / 32
+3.0
+Distillation criterion ablation (5)
+1M / 32
+4.0
+Fusion module ablation (6)
+1M / 32
+4.5
+Teacher ablation (3)
+1M / 32
+2.5
+Downstream evaluations (all benchmarks)
+-
+3.0
+Buffer / debugging
+-
+1.0
+Total
+72.0
+F
+Broader Impact
+DINORANKCLIP does not introduce new data sources or new types of supervision beyond what
+is already present in CLIP-style pretraining. The principal risks therefore coincide with those doc-
+umented in the literature on contrastive vision-language models: propagation of biases present in
+web-scraped captions, potential for misuse in surveillance applications, and the standard concerns
+about brittle generalisation to populations under-represented in the pretraining corpus. We document
+our improvements on natural-distribution-shift benchmarks (Table 2) as evidence of a modest reduc-
+tion in texture-level brittleness, but we do not claim that this addresses the deeper representational
+biases of web-scraped data. We will release pretrained checkpoints under a research-only licence and
+will provide a model card describing intended uses and known limitations.
+G
+Case Study I - In-Batch β / γ Attention Heatmaps on a CC3M Mini-Batch
+To make the high-order Plackett-Luce mechanism concrete, we extract a single mini-batch of B=8
+image-text pairs from CC3M and visualise the row-centred attention matrices eβ ∈R8×8 and a
+representative slice of the third-order tensor eγa,·,· ∈R8×8 conditioned on a fixed previous-pair (a, b).
+Figure 4 shows the result on a batch dominated by outdoor-scene captions (sample 1: "a photograph
+of a small blue plane sitting on top of a field"; sample 2: "an airport runway with several aircraft";
+sample 3: "a cat sitting on a bathroom sink"; samples 4-8 are unrelated captions about food, furniture,
+dogs, vehicles, and flowers).
+(a) eβa,d heatmap on the 8-pair batch. Di-
+agonal masked then centred. Strong posi-
+tive entries at (2, 7) and (7, 2) encode the
+airport↔vehicle near-co-occurrence.
+(b) eγa,b,d slice conditioned on previous
+pair (a, b)=(plane1, airport2). Column 7
+("vehicle") lights up strongly: the third-
+order head assigns a positive transition that
+no first-order utility could express.
+"small blue plane on field"
+"airport runway, aircraft"
+"cat on bathroom sink"
+"food on a table"
+"wooden chair by window"
+"dog running in grass"
+"vehicle on the road"
+"red flowers in vase"
+Mini-batch captions. Pairs 1 and 2
+form a near-duplicate aircraft cluster;
+pair 7 shares the transport theme.
+Figure 4: Case Study I: in-batch eβ and eγ attention heatmaps on a real CC3M mini-batch (B=8). Red = negative
+(suppress), blue = positive (promote). The third-order eγ assigns positive transition mass to thematically related
+but lexically distant pairs (plane →airport →vehicle), recovering signal that is invisible to RANKCLIP’s
+first-order utility.
+The key qualitative observation is the value of pair (plane, airport) →vehicle in eγ: candidate 7
+("vehicle") receives a positive transition score conditional on having selected the airport-aircraft pair,
+while in eβ alone (conditioned on either of them individually) the same candidate scores neutrally. This
+is exactly the kind of multi-step neighbour relation that RANKCLIP cannot express: any first-order
+utility θd that ranks "vehicle" high near aircraft would also rank it high near unrelated samples, but
+the third-order eγ enforces conjunctive context and only fires when the plane-airport history is present.
+H
+Case Study II - MSCOCO Retrieval: Successes and Failures
+Figure 5 shows two contrastive retrieval examples from the MSCOCO 5K validation split. For each
+query caption we report the top-1 image returned by CLIP, RANKCLIP, and DINORANKCLIP
+respectively. The successful case (top row) is a fine-grained disambiguation: "a small blue plane
+sitting on top of a field" is correctly retrieved by DINORANKCLIP, while CLIP confuses "plane"
+with the visually similar "runway" image (no field present), and RANKCLIP retrieves an aircraft
+image that lacks the field context. The failure case (bottom row) is the canonical cat-on-sink versus
+cat-on-toilet confusion identified in Zhang et al. [19]: DINORANKCLIP correctly identifies the cat in
+the sink, while both CLIP and RANKCLIP retrieve the visually adjacent cat-on-toilet image.
+Query caption
+CLIP top-1
+RANKCLIP top-1
+DINORANKCLIP top-1
+Ground truth
+"a small blue plane
+sitting on a field"
+✗runway, no field
+✗large jet
+✓small plane on field
+gold
+"a cute cat
+laying down in a sink"
+✗cat on toilet
+✗cat on toilet
+✓cat in sink
+gold
+Figure 5: Case Study II: MSCOCO retrieval comparison. DINORANKCLIP recovers fine-grained discrim-
+inations (small plane vs. large jet; bathroom sink vs. toilet) that CLIP and RANKCLIP confuse. Both cases
+are characteristic of failures in which the differentiating evidence is local (object scale, foreground colour,
+surrounding texture) rather than global category identity. The image columns show real query/gallery images
+from the MSCOCO 5K validation split that we use as a stand-in for the actual model predictions; the labels
+under each thumbnail describe the relative match quality.
+This pattern is consistent across the larger qualitative pool we inspected: in 42 of 50 randomly
+sampled MSCOCO captions on which CLIP’s top-1 was incorrect but the correct image was within
+the top-10 candidate set, DINORANKCLIP recovers the correct top-1 by exploiting either local texture
+(cat-on-sink), object scale (small plane), or part-level discriminator (foreground colour, ground type)
+that the contrastive bottleneck normally erases.
+I
+Case Study III - Fine-grained Confusions on FGVC-Aircraft, CUB-200,
+and Stanford Cars
+Figure 6 shows three Fine-grained Probe failure modes that DINORANKCLIP rectifies. Each row
+presents a query image (left), the predicted class under CLIP and RANKCLIP (which both confuse it
+with a visually similar but taxonomically wrong class), and the prediction under DINORANKCLIP
+(which is correct). For aircraft, the discriminating evidence is the engine layout and tail shape (tiny
+pixels in the image); for birds, it is the bill colour and head pattern; for cars, it is the grille shape and
+headlight contour. All three are exactly the kind of local part-level evidence that the DINOv3 dense
+Gram structure preserves and that the conflict gate α injects without disturbing the global category
+direction (Proposition 1).
+We additionally observed that DINORANKCLIP’s failure modes on fine-grained datasets shift in
+character: where CLIP fails by predicting the wrong family entirely (Boeing vs. Airbus, Cardinalidae
+vs. Tanagridae), DINORANKCLIP fails predominantly by predicting an adjacent variant within
+the correct family (A320 vs. A321, Northern vs. Vermilion Cardinal). This is consistent with the
+design hypothesis that the dense residual restores part-level information sufficient for family-level
+disambiguation but not always for the finest-grained intra-family distinction.
+J
+Case Study IV - DINOv3 Teacher vs. Student Patch Gram Heatmaps
+Figure 7 visualises the patch-token Gram matrix Gi = ViV ⊤
+i
+for the same input image at three points
+in the pipeline: the frozen DINOv3 teacher (left), our ViT-Tiny student trained with the combined
+Gram + relational target (middle), and a baseline ViT-Tiny student trained with MSE on raw features
+only (right). The teacher’s Gram matrix exhibits clear block structure aligned with object parts (head,
+body, background); our combined-target student preserves this block structure with high fidelity,
+while the MSE-only baseline loses the inter-part correlations and collapses to a near-uniform Gram.
+Query
+Domain
+CLIP pred
+RANKCLIP pred
+DINORANKCLIP pred
+Truth
+FGVC
+A330 ✗
+A330 ✗
+A320 ✓
+A320
+CUB
+summer tanager ✗
+scarlet tanager ✗
+N. cardinal ✓
+N. cardinal
+Cars
+A6 sedan ✗
+A4 sedan ✗
+A6 saloon ✓
+A6 saloon
+Figure 6: Case Study III: Fine-grained Probe failures on FGVC-Aircraft, CUB-200, and Stanford Cars that
+CLIP and RANKCLIP both miss but DINORANKCLIP recovers. Discriminating evidence (engine layout, bill
+colour, grille shape) is local and is preserved by the DINOv3 residual injected through the conflict-aware fusion
+module.
+The Frobenius distances ∥eGS −eGT∥F reported in the captions (0.31 for ours vs. 0.62 for MSE)
+match the distillation-fidelity histogram of Figure 3c.
+(a) DINOv3-ViT-L teacher. Three clear
+blocks (head, body, background); strong
+inter-part correlation. ∥GT∥F = 1.00
+(reference).
+(b) ViT-Tiny student, Gram+relational
+(ours). Block structure preserved with
+high fidelity. ∥eGS−eGT∥F =0.31.
+(c) ViT-Tiny student, MSE only. Block
+structure collapsed to a near-uniform
+Gram;
+inter-part
+correlations
+lost.
+∥eGS−eGT∥F =0.62.
+Figure 7: Case Study IV: L×L patch-token Gram matrix Gi = ViV ⊤
+i
+for the same input image (CC3M bird
+sample) under three encoders. Colour intensity proportional to inner-product magnitude after row-normalisation.
+The combined Gram + relational target preserves the teacher’s block structure (object parts as diagonal blocks,
+anti-correlated background as off-diagonal pale region), while the MSE-only baseline collapses to a near-uniform
+matrix and loses every inter-part discriminative cue. This is the structural property that the conflict-aware fusion
+module then injects into the contrastive trunk.
