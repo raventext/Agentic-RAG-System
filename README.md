@@ -1,7 +1,7 @@
 # Agentic RAG System
 
 A conversational agent that answers questions over a corpus of recent AI research
-papers from arXiv (cs.AI category, last 90 days) — with autonomous decision-making,
+papers from arXiv (cs.AI category, last 90 days) with autonomous decision-making,
 hybrid retrieval, three-layer memory, and full observability.
 
 This is not a naive RAG pipeline. The agent decides for itself when to retrieve,
@@ -29,7 +29,7 @@ pip install -r requirements.txt
 cp .env.example .env
 # open .env and add your keys (see Environment Variables below)
 
-# 5. run the ingestion pipeline (once — builds the vector store)
+# 5. run the ingestion pipeline (once -- builds the vector store)
 python ingest/fetch_papers.py
 python ingest/parse_pdfs.py
 python ingest/chunk_texts.py
@@ -39,10 +39,10 @@ python ingest/embed_chunks.py
 python -m interface.api
 ```
 
-Open `http://localhost:8000` in your browser. That's it.
+Open http://localhost:8000 in your browser.
 
-> **Note:** Step 5 takes 10–15 minutes on first run. The embedding model
-> (~80MB) downloads automatically and runs fully locally — no API call needed.
+> Note: Step 5 takes 10-15 minutes on first run. The embedding model (~80MB)
+> downloads automatically and runs fully locally -- no API call needed.
 > Steps 5 onwards only need to run once. After that, just run step 6.
 
 ---
@@ -56,7 +56,7 @@ OPENROUTER_API_KEY=your-openrouter-api-key
 OPENROUTER_MODEL=openai/gpt-4o-mini
 ```
 
-Get an OpenRouter API key at [openrouter.ai](https://openrouter.ai).
+Get an OpenRouter API key at https://openrouter.ai.
 The free tier is sufficient for development and testing.
 
 ---
@@ -64,54 +64,47 @@ The free tier is sufficient for development and testing.
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   INGESTION PIPELINE                    │
-│  (run once offline — builds the searchable corpus)      │
-│                                                         │
-│  arXiv API → fetch_papers.py → ~50 cs.AI PDFs           │
-│           → parse_pdfs.py   → cleaned text              │
-│           → chunk_texts.py  → 512-token chunks          │
-│           → embed_chunks.py → vectors in ChromaDB       │
-└─────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│                    AGENT LOOP                           │
-│                                                         │
-│  User message                                           │
-│       │                                                 │
-│       ▼                                                 │
-│  AgentMemory (3 layers)                                 │
-│  ├── ConversationMemory  (sliding window + summary)     │
-│  ├── SemanticMemory      (entity facts extracted)       │
-│  └── EpisodicMemory      (past Q&A outcomes)            │
-│       │                                                 │
-│       ▼                                                 │
-│  Planner (LLM decides action)                           │
-│  ├── retrieve  → HybridRetriever                        │
-│  │              ├── BM25 keyword search                 │
-│  │              ├── Semantic search (embeddings)        │
-│  │              ├── RRF merge                           │
-│  │              └── Cross-encoder reranker              │
-│  ├── clarify   → returns clarifying question            │
-│  ├── tool      → ToolExecutor (arXiv API / web search)  │
-│  ├── refuse    → returns scoped refusal message         │
-│  └── answer    → answers from memory directly           │
-│       │                                                 │
-│       ▼                                                 │
-│  Answer generation (OpenRouter / gpt-4o-mini)           │
-│       │                                                 │
-│       ▼                                                 │
-│  Response + citations + decision trace                  │
-└─────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│              OBSERVABILITY + EVALUATION                 │
-│                                                         │
-│  logs/api_session.jsonl  — every decision logged        │
-│  eval/harness.py         — 12 test cases + ablation     │
-└─────────────────────────────────────────────────────────┘
+INGESTION PIPELINE (run once offline)
+--------------------------------------
+arXiv API --> fetch_papers.py --> ~50 cs.AI PDFs
+          --> parse_pdfs.py   --> cleaned text
+          --> chunk_texts.py  --> 512-token chunks
+          --> embed_chunks.py --> vectors in ChromaDB
+
+
+AGENT LOOP (runs on every user message)
+-----------------------------------------
+User message
+     |
+     v
+AgentMemory (3 layers)
+  |-- ConversationMemory  (sliding window + summary)
+  |-- SemanticMemory      (entity facts extracted)
+  +-- EpisodicMemory      (past Q&A outcomes)
+     |
+     v
+Planner (LLM decides action)
+  |-- retrieve --> HybridRetriever
+  |                |-- BM25 keyword search
+  |                |-- Semantic search (embeddings)
+  |                |-- RRF merge
+  |                +-- Cross-encoder reranker
+  |-- clarify  --> returns clarifying question
+  |-- tool     --> ToolExecutor (arXiv API / web search)
+  |-- refuse   --> returns scoped refusal message
+  +-- answer   --> answers from memory directly
+     |
+     v
+Answer generation (OpenRouter / gpt-4o-mini)
+     |
+     v
+Response + citations + decision trace
+
+
+OBSERVABILITY + EVALUATION
+---------------------------
+logs/api_session.jsonl  -- every decision logged
+eval/harness.py         -- 12 test cases + ablation
 ```
 
 ---
@@ -120,34 +113,34 @@ The free tier is sufficient for development and testing.
 
 ```
 agentic-rag/
-├── ingest/
-│   ├── fetch_papers.py     download arXiv PDFs + metadata
-│   ├── parse_pdfs.py       extract and clean text (PyMuPDF)
-│   ├── chunk_texts.py      512-token overlapping chunks
-│   └── embed_chunks.py     local embeddings → ChromaDB
-├── agent/
-│   ├── planner.py          LLM decision maker (5 actions)
-│   ├── retriever.py        BM25 + semantic + RRF + reranker
-│   ├── memory.py           conversation + semantic + episodic
-│   └── tools.py            arXiv live search + web search
-├── interface/
-│   ├── api.py              FastAPI backend
-│   ├── cli.py              command-line interface
-│   └── static/
-│       └── index.html      single-file frontend
-├── eval/
-│   └── harness.py          12 test cases + ablation study
-├── logs/                   per-session JSONL decision traces
-├── data/
-│   ├── pdfs/               downloaded PDFs
-│   ├── texts/              extracted text files
-│   ├── chunks/             chunked JSON files
-│   ├── chroma/             ChromaDB vector store
-│   └── metadata.json       paper metadata index
-├── check_setup.py          verify all dependencies + API keys
-├── requirements.txt
-├── .env.example
-└── README.md
+|-- ingest/
+|   |-- fetch_papers.py     download arXiv PDFs + metadata
+|   |-- parse_pdfs.py       extract and clean text
+|   |-- chunk_texts.py      512-token overlapping chunks
+|   +-- embed_chunks.py     local embeddings -> ChromaDB
+|-- agent/
+|   |-- planner.py          LLM decision maker (5 actions)
+|   |-- retriever.py        BM25 + semantic + RRF + reranker
+|   |-- memory.py           conversation + semantic + episodic
+|   +-- tools.py            arXiv live search + web search
+|-- interface/
+|   |-- api.py              FastAPI backend
+|   |-- cli.py              command-line interface
+|   +-- static/
+|       +-- index.html      single-file frontend
+|-- eval/
+|   +-- harness.py          12 test cases + ablation study
+|-- logs/                   per-session JSONL decision traces
+|-- data/
+|   |-- pdfs/               downloaded PDFs
+|   |-- texts/              extracted text files
+|   |-- chunks/             chunked JSON files
+|   |-- chroma/             ChromaDB vector store
+|   +-- metadata.json       paper metadata index
+|-- check_setup.py          verify dependencies and API keys
+|-- requirements.txt
+|-- .env.example
++-- README.md
 ```
 
 ---
@@ -155,7 +148,7 @@ agentic-rag/
 ## Running the Evaluation
 
 ```bash
-# full evaluation — 12 test cases
+# full evaluation -- 12 test cases
 python eval/harness.py
 
 # planner-only mode (fast, no retriever needed)
@@ -173,11 +166,11 @@ Action accuracy    : 92%
 Avg content score  : 88%
 
 By category:
-  retrieve     ████████░░  7/8
-  clarify      ██████████  2/2
-  refuse       ██████████  2/2
+  retrieve     [========..]  7/8
+  clarify      [==========]  2/2
+  refuse       [==========]  2/2
 
-ABLATION — Reranking ON vs OFF
+ABLATION -- Reranking ON vs OFF
   Average WITH reranking    : 83%
   Average WITHOUT reranking : 68%
   Delta                     : +15%
@@ -187,316 +180,210 @@ ABLATION — Reranking ON vs OFF
 
 ## Decisions Log
 
-Every major design choice is documented here with what was considered
-and why the chosen approach was selected.
+The short version of every major design choice -- what was considered,
+what was picked, and the one reason that mattered most.
 
 ---
 
-### 1. Corpus — arXiv cs.AI, last 90 days, ~50 papers
+### 1. Corpus -- arXiv cs.AI, last 90 days
 
-**Considered:** Common Crawl snapshots, Wikipedia dumps, textbooks,
-full arXiv history.
-
-**Chose** arXiv cs.AI last 90 days because it creates a topically
-coherent, temporally bounded corpus. The 90-day cutoff creates a clear
-in/out-of-corpus boundary which forces the agent to make real
-refuse/tool decisions rather than always finding something. Papers are
-recent enough that the LLM has limited training knowledge about specific
-results — retrieval actually matters. ~50 papers gives ~4,000 chunks,
-large enough to stress retrieval but small enough to run on a laptop.
-
-**Trade-off:** 90 days may miss foundational papers users reference.
-Mitigated by the arXiv live search tool which handles queries for papers
-outside the corpus window.
+Picked arXiv cs.AI because it is topically focused (every document is
+AI research) and the 90-day window creates a clear boundary -- questions
+outside it force the agent to use a tool or refuse, which exercises the
+agent loop properly. Other options like Wikipedia or textbooks lack this
+natural in/out-of-scope boundary.
 
 ---
 
-### 2. PDF Parser — PyMuPDF over pdfplumber or pypdf
+### 2. PDF Parser -- PyMuPDF
 
-**Considered:** pdfplumber, pypdf, PyMuPDF (fitz), unstructured.io.
-
-**Chose** PyMuPDF because it is the fastest of the three for batch
-processing, its `get_text("text")` mode preserves reading order better
-than pypdf on multi-column academic papers, it handles embedded fonts
-and unicode correctly, and requires no external dependencies.
-
-**Trade-off:** PyMuPDF struggles with scanned PDFs (images of text).
-These are detected and skipped with a word-count threshold of 500 words.
+Three parsers were tested: pypdf, pdfplumber, and PyMuPDF. PyMuPDF was
+the fastest and handled multi-column academic paper layouts the best.
+Scanned PDFs (image-only) are detected by a word count check and skipped.
 
 ---
 
-### 3. Chunking — 512 tokens with 50-token overlap
+### 3. Chunking -- 512 tokens with 50-token overlap
 
-**Considered:** 256, 512, 1024 token chunks; sentence-based splitting;
-paragraph-based splitting.
-
-**Chose** 512 tokens with 50-token (10%) overlap. Below 256 tokens,
-chunks lose enough context that retrieved text is hard to interpret.
-Above 1024, too much irrelevant text gets stuffed into the LLM prompt.
-512 tokens approximates one coherent idea in an academic paper — a
-methods paragraph, a results description, an abstract claim. The 50-token
-overlap ensures ideas that span a chunk boundary appear in both chunks.
-
-**Trade-off:** Overlap increases storage by ~10%. Acceptable at this
-corpus size.
+512 tokens is roughly one idea in an academic paper -- a paragraph, a
+results description. Smaller chunks lose context; larger chunks stuff
+too much irrelevant text into the LLM prompt. The 50-token overlap
+(about 10%) ensures nothing important gets cut at a boundary.
 
 ---
 
-### 4. Embedding Model — sentence-transformers/all-MiniLM-L6-v2
+### 4. Embeddings -- all-MiniLM-L6-v2 (local)
 
-**Considered:** OpenAI text-embedding-3-small, Gemini text-embedding-004,
-all-MiniLM-L6-v2, all-mpnet-base-v2.
-
-**Chose** all-MiniLM-L6-v2 because it runs fully locally with no API
-calls, no rate limits, and no cost. For a corpus of ~50 papers (~4,000
-chunks), the quality difference versus API-based embeddings is not
-meaningful. Local inference also makes the ingestion pipeline fully
-reproducible without API dependency.
-
-**Trade-off:** 384 dimensions vs 768 for Gemini or 1536 for OpenAI large.
-Lower dimensionality slightly reduces retrieval ceiling but the difference
-is not observable at this corpus scale.
+Runs fully on your machine -- no API calls, no rate limits, no cost.
+For a 50-paper corpus the quality difference versus API-based embeddings
+is not meaningful enough to justify the dependency. The model downloads
+once (~80MB) and then runs offline.
 
 ---
 
-### 5. Vector Store — ChromaDB over Pinecone or Weaviate
+### 5. Vector Store -- ChromaDB
 
-**Considered:** Pinecone, Weaviate, Qdrant, FAISS, ChromaDB.
-
-**Chose** ChromaDB because it runs fully locally with no cloud account,
-API key, or network dependency at query time. PersistentClient saves the
-index to disk so it survives process restarts. Zero-configuration setup,
-native Python, and sub-100ms queries for ~4,000 chunks.
-
-**Trade-off:** Does not scale to millions of documents. Acceptable —
-the corpus is ~4,000 chunks.
+Runs locally, saves to disk, zero configuration, and queries ~4,000
+chunks in under 100ms. Cloud options like Pinecone add setup complexity
+and a network dependency at query time without meaningful benefit at
+this corpus size.
 
 ---
 
-### 6. Retrieval — Hybrid Search + Reranking (3 techniques beyond naive top-k)
+### 6. Retrieval -- Hybrid Search + Reranking + Query Rewriting
 
-The assignment requires one technique beyond naive top-k cosine similarity.
-Three are implemented here.
+Three techniques are implemented (one was required).
 
-**Hybrid Search (BM25 + Semantic):**
-Pure semantic search fails on exact keyword queries — author names,
-acronyms like "LoRA" and "RLHF", exact paper titles. These score low
-semantically despite being precisely what the user wants. BM25 catches
-them. The two result lists are merged using Reciprocal Rank Fusion (RRF)
-rather than weighted score combination because BM25 and cosine similarity
-scores are not on the same scale. RRF is parameter-free and empirically
-robust — the score for each result is `1 / (k + rank)` summed across
-both lists, where k=60 is the standard constant from the original RRF
-paper.
+Hybrid search combines BM25 (keyword matching) with semantic search
+(vector similarity). BM25 catches exact terms like author names and
+acronyms (LoRA, RLHF) that score poorly on semantic similarity alone.
+The two result lists are merged with Reciprocal Rank Fusion -- a
+parameter-free method that works across different score scales.
 
-**Reranking (Cross-Encoder):**
-After RRF, ~40 candidates remain. A cross-encoder
-(ms-marco-MiniLM-L-6-v2) re-scores them by reading the query and each
-document together — unlike bi-encoders which embed query and document
-separately. Cross-encoders are more accurate but too slow to run over
-the full corpus. Running over 40 candidates takes under one second.
-Ablation shows +15% keyword hit rate improvement over RRF alone.
+Reranking uses a cross-encoder to re-score the top 40 merged candidates.
+A cross-encoder reads the query and document together and is more
+accurate than the bi-encoder used for retrieval, but too slow to run
+over the full corpus. Running over 40 candidates takes under a second.
+Ablation shows +15% improvement over skipping reranking.
 
-**Query Rewriting:**
-The planner rewrites conversational queries into search-optimized
-keyword queries before retrieval. This solves the most common failure
-mode: users write natural language with vague pronouns.
-
-```
-User:      "how do they stop it from forgetting things?"
-Rewritten: "continual learning catastrophic forgetting prevention"
-```
+Query rewriting rewrites vague user questions into keyword-rich search
+queries before retrieval hits the vector store. Example:
+  User asks:  "how do they stop it from forgetting things?"
+  Rewritten:  "continual learning catastrophic forgetting prevention"
 
 ---
 
-### 7. Agent Framework — custom loop over LangChain/LlamaIndex
+### 7. Agent Framework -- custom, no LangChain
 
-**Considered:** LangChain, LlamaIndex, LangGraph, custom implementation.
-
-**Chose** a custom implementation because the assignment grades
-observability — every decision must be inspectable. LangChain abstracts
-away the planner prompt, making it impossible to show the grader exactly
-what the agent decided and why. The agent loop has exactly 5 actions and
-3 nodes (plan → execute → respond), which does not justify LangGraph's
-complexity. Custom code is readable: a grader reading `planner.py` sees
-the exact prompt, the exact JSON schema, and the exact fallback logic.
-
-**Trade-off:** No built-in streaming, async, or tool registry. Acceptable
-for this scope.
+LangChain hides the planner prompt inside its abstractions, which makes
+it hard to show what the agent decided and why -- a core requirement of
+this project. A custom implementation means every decision is logged
+explicitly, the prompt is readable in one file, and there is no
+framework magic to debug.
 
 ---
 
-### 8. Memory — three layers over a sliding window
+### 8. Memory -- three layers
 
-**Conversation memory** maintains a sliding window of recent turns plus
-a compressed LLM summary of older turns. Summarizing rather than
-truncating preserves context — a user who mentioned "LoRA" in turn 2
-still has that context available in turn 20, just compressed.
+Conversation memory keeps recent turns as raw text and compresses older
+turns into a summary via the LLM. This is better than a sliding window
+which simply deletes old turns -- context from early in the conversation
+is preserved in compressed form.
 
-**Semantic memory** extracts entity-fact pairs from every assistant
-response. If the agent explains what LoRA is in turn 3, that fact
-persists in memory and gets injected into the planner prompt on every
-subsequent turn. This prevents redundant retrieval and ensures the query
-rewriter can expand vague references correctly.
+Semantic memory extracts key facts from every assistant response and
+stores them as an entity-to-fact dictionary. If the agent explains
+what LoRA is in turn 3, that fact is still available in turn 20 without
+re-retrieval.
 
-**Episodic memory** records what action was taken for each question and
-whether it succeeded. If retrieval returned nothing for a question, the
-agent routes similar future questions directly to the tool or refuse
-action rather than wasting another retrieve attempt.
-
-**Which matters most:** Conversation memory matters most — research
-questions are naturally multi-turn. Semantic memory matters significantly
-for a technical corpus where acronyms introduced early recur throughout
-the session. Episodic memory provides the smallest but still meaningful
-benefit by short-circuiting failed retrieval patterns.
+Episodic memory records what action was taken for each question and
+whether it worked. If a retrieval attempt returned nothing, the agent
+knows not to try the same approach for a similar question later.
 
 ---
 
-### 9. LLM — OpenRouter with gpt-4o-mini
+### 9. LLM -- OpenRouter with gpt-4o-mini
 
-**Considered:** Gemini 2.0 Flash (hit free-tier daily quota limits),
-Anthropic Claude Haiku, local models via Ollama.
-
-**Chose** OpenRouter with gpt-4o-mini because OpenRouter provides a
-unified API compatible with the OpenAI Python client, gpt-4o-mini
-produces reliable structured JSON output for the planner (critical for
-the agent loop), and the per-token cost is low enough for development
-and demo use. The OpenAI client library handles retries, timeouts, and
-error formatting correctly out of the box.
-
-**Trade-off:** Requires an internet connection and API credits. A future
-version could support local models via Ollama as a fallback.
+Gemini's free tier daily quota was exhausted during development.
+OpenRouter provides an OpenAI-compatible API, so the standard OpenAI
+Python client works without modification. gpt-4o-mini produces reliable
+structured JSON output for the planner, which is the most critical
+property for keeping the agent loop stable.
 
 ---
 
-### 10. Frontend — FastAPI + single HTML file
+### 10. Frontend -- FastAPI + single HTML file
 
-**Considered:** Streamlit, Gradio, React + FastAPI, plain HTML + FastAPI.
-
-**Chose** FastAPI with a single self-contained HTML file because it
-requires no build step, no Node.js, and no additional dependencies.
-The file serves directly from FastAPI's StaticFiles. The decision trace
-sidebar satisfies the observability requirement visually — every action
-the agent takes is shown with its reasoning and confidence score in
-real time.
+No build step, no Node.js, no extra dependencies. The HTML file serves
+directly from FastAPI's static file handler. The decision trace sidebar
+shows the agent's action, reasoning, and confidence for every message --
+satisfying the observability requirement visually without any additional
+tooling.
 
 ---
 
 ## Known Limitations and Failure Modes
 
-These were observed during development and testing, not hypothesized.
+These were observed during testing, not hypothesized.
 
-**Rate limits during ingestion.** The arXiv API enforces a 429 rate
-limit when fetching more than 50 results in one request. The fetch
+**Rate limits during paper fetching.** The arXiv API returns a 429
+error if more than 50 results are requested in one call. The fetch
 script is capped at 50 papers with delays between downloads. Running
-the script twice quickly will trigger another 429. Fix: wait 60 seconds
-between runs.
+it twice quickly will hit the limit again -- wait 60 seconds between
+runs.
 
-**Planner misroutes "latest" queries.** Questions containing words like
-"latest", "today", or "recent" sometimes route to the tool action instead
-of retrieve, even when the corpus likely contains the answer. This is a
-prompt sensitivity issue — the planner over-interprets temporal language.
-Observed in eval case R05.
+**Planner misroutes "latest" queries.** Questions with words like
+"latest" or "today" sometimes route to the tool action instead of
+retrieve, even when the corpus has a relevant paper. The planner
+over-interprets temporal language. Observed in eval case R05.
 
-**Scanned PDFs produce no text.** Approximately 2–5% of downloaded
-arXiv PDFs are image-based scans. PyMuPDF extracts no meaningful text
-from these. They are skipped with a word-count check but their absence
-creates gaps in corpus coverage. Fix: add OCR via Tesseract as a
-fallback parser.
+**Scanned PDFs produce no text.** About 2-5% of arXiv PDFs are
+image-based scans. PyMuPDF cannot extract text from these. They are
+skipped, creating small gaps in corpus coverage.
 
-**Contradicting chunks are not flagged reliably.** The answer generator
-prompt instructs the model to acknowledge contradictions, but in practice
-the LLM often picks the more confident-sounding chunk rather than
-surfacing the disagreement. This is a known limitation of
-prompt-based contradiction detection.
+**Memory resets on server restart.** All three memory layers live in
+RAM. Restarting the FastAPI server wipes the conversation history.
 
-**Memory does not persist across server restarts.** All three memory
-layers live in RAM and are lost when the FastAPI server stops. Restarting
-the server starts a fresh conversation with no history. Fix: serialize
-memory state to disk on shutdown and reload on startup.
+**BM25 index takes 15-20 seconds to build on first request.** The
+index is built in memory from the chunk files on startup, causing
+a noticeable delay before the first answer.
 
-**BM25 index rebuilds on every server start.** Loading ~4,000 chunks
-and building the BM25 index takes 15–20 seconds on first request. This
-creates a noticeable delay on the first question after starting the
-server. Fix: pickle the BM25 index to disk after first build.
-
-**No authentication.** The web interface is unauthenticated and shares
-one memory instance across all browser sessions. Multiple simultaneous
-users would corrupt each other's conversation history. Fix: session
-tokens with per-session memory instances.
+**No multi-user support.** All browser sessions share one memory
+instance. Two users talking simultaneously would mix each other's
+conversation history.
 
 ---
 
 ## What I'd Do With Another Week
 
-This section is weighted in the rubric and deserves an honest answer.
+**Streaming responses.** The interface blocks for 3-8 seconds while the
+answer generates. FastAPI supports streaming and the OpenAI client
+supports stream=True. This is a one-day change with the biggest
+visible impact on usability.
 
-**1. Streaming responses (highest user impact)**
-The current implementation blocks until the full answer is generated —
-typically 3–8 seconds. FastAPI supports streaming via `StreamingResponse`
-and the OpenAI client supports `stream=True`. This is a one-day change
-that would make the interface feel dramatically faster.
+**Persistent memory across sessions.** Serialize all three memory layers
+to SQLite on shutdown and reload on startup. The agent would remember
+what a user was researching across multiple sessions. Episodic memory
+becomes far more useful when it spans days rather than minutes.
 
-**2. Persistent memory across sessions**
-Serialize all three memory layers to SQLite on shutdown, reload on
-startup. This would let the agent remember what a user was researching
-across multiple sessions — the closest thing to a genuine research
-assistant relationship. Episodic memory becomes far more valuable when
-it spans days rather than minutes.
+**Parent-document retrieval.** Retrieve at the chunk level for precision
+but return the surrounding full section to the LLM for answer generation.
+This fixes the "answer cut off mid-sentence" failure mode without
+hurting retrieval accuracy.
 
-**3. Parent-document retrieval**
-Currently each 512-token chunk is retrieved and returned independently.
-A better approach: retrieve at the chunk level for precision, but return
-the surrounding parent context (the full section or page) to the LLM
-for answer generation. This reduces the "answer is cut off mid-sentence"
-failure mode without sacrificing retrieval precision.
+**Automatic corpus refresh.** A daily job using the arXiv API to fetch
+new papers and add them to ChromaDB. The agent would always answer from
+a rolling 90-day window without manual re-ingestion.
 
-**4. Automatic corpus refresh**
-The corpus is static — downloaded once and never updated. A daily cron
-job using the arXiv API could fetch new papers, embed them, and add
-them to ChromaDB without a full rebuild. The agent would always answer
-from the last 90 days without manual intervention.
+**Pickle the BM25 index.** Save the built index to disk so it loads in
+milliseconds on startup instead of rebuilding from scratch every time.
+One-hour fix that eliminates the first-request delay.
 
-**5. Better contradiction detection**
-When retrieved chunks disagree with each other (common in a fast-moving
-field like AI), the current system silently picks one. A dedicated
-contradiction detection pass — comparing chunk claims before generating
-the answer — would surface disagreements explicitly and give the user
-a more honest picture of the literature.
+**Expand the evaluation set.** Generate synthetic Q&A pairs from paper
+abstracts to test retrieval accuracy at scale, and add human preference
+scoring for answer quality. The current 12 questions test behaviour but
+not answer quality.
 
-**6. Structured metadata filtering**
-Currently all retrieved chunks are ranked purely by relevance. Adding
-self-query filtering (e.g. "only papers from November 2024" or "only
-papers with more than 3 authors") would let users narrow retrieval
-without changing their natural language question. ChromaDB supports
-metadata filtering natively — the missing piece is extracting filter
-intent from the user query via the planner.
-
-**7. Evaluation expansion**
-The current eval harness has 12 hand-written questions. A more rigorous
-evaluation would include: synthetic question generation from the corpus
-(generate Q&A pairs from paper abstracts, then test retrieval accuracy),
-human preference scoring for answer quality, and a held-out test set to
-measure generalization rather than in-distribution performance.
+**Local LLM fallback via Ollama.** Add an option to run a local model
+(Mistral 7B or Llama 3) when no API key is available. This makes the
+system fully self-contained and removes the OpenRouter dependency for
+offline use.
 
 ---
 
 ## Dependencies
 
-| Package | Version | Purpose |
-|---|---|---|
-| openai | ≥1.0.0 | OpenRouter API client |
-| sentence-transformers | ≥2.6.0 | Local embeddings + reranking |
-| chromadb | ≥0.4.0 | Vector store |
-| pymupdf | ≥1.23.0 | PDF text extraction |
-| rank-bm25 | ≥0.2.2 | BM25 keyword search |
-| arxiv | ≥2.1.0 | Paper fetching |
-| fastapi | ≥0.110.0 | Web API |
-| uvicorn | ≥0.27.0 | ASGI server |
-| tiktoken | ≥0.6.0 | Token counting for chunking |
-| rich | ≥13.0.0 | CLI formatting |
-| python-dotenv | ≥1.0.0 | Environment variable loading |
-| tqdm | ≥4.66.0 | Progress bars |
-| requests | ≥2.31.0 | HTTP calls |
- 
- 
+| Package               | Version   | Purpose                        |
+|-----------------------|-----------|--------------------------------|
+| openai                | >=1.0.0   | OpenRouter API client          |
+| sentence-transformers | >=2.6.0   | Local embeddings and reranking |
+| chromadb              | >=0.4.0   | Vector store                   |
+| pymupdf               | >=1.23.0  | PDF text extraction            |
+| rank-bm25             | >=0.2.2   | BM25 keyword search            |
+| arxiv                 | >=2.1.0   | Paper fetching                 |
+| fastapi               | >=0.110.0 | Web API                        |
+| uvicorn               | >=0.27.0  | ASGI server                    |
+| tiktoken              | >=0.6.0   | Token counting for chunking    |
+| rich                  | >=13.0.0  | CLI formatting                 |
+| python-dotenv         | >=1.0.0   | Environment variable loading   |
+| tqdm                  | >=4.66.0  | Progress bars                  |
+| requests              | >=2.31.0  | HTTP calls                     |
