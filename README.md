@@ -11,7 +11,7 @@ when to ask a clarifying question, when to call an external tool, and when to re
 
 ## Quick Start
 
-Clone and run in under 10 minutes.
+
 
 ```bash
 # 1. clone the repo
@@ -156,24 +156,6 @@ python eval/harness.py --fast
 
 # full eval + ablation study (reranking ON vs OFF)
 python eval/harness.py --ablation
-```
-
-Sample results:
-
-```
-Overall pass rate  : 11/12  (92%)
-Action accuracy    : 92%
-Avg content score  : 88%
-
-By category:
-  retrieve     [========..]  7/8
-  clarify      [==========]  2/2
-  refuse       [==========]  2/2
-
-ABLATION -- Reranking ON vs OFF
-  Average WITH reranking    : 83%
-  Average WITHOUT reranking : 68%
-  Delta                     : +15%
 ```
 
 ---
@@ -370,20 +352,4 @@ offline use.
 
 ---
 
-## Dependencies
 
-| Package               | Version   | Purpose                        |
-|-----------------------|-----------|--------------------------------|
-| openai                | >=1.0.0   | OpenRouter API client          |
-| sentence-transformers | >=2.6.0   | Local embeddings and reranking |
-| chromadb              | >=0.4.0   | Vector store                   |
-| pymupdf               | >=1.23.0  | PDF text extraction            |
-| rank-bm25             | >=0.2.2   | BM25 keyword search            |
-| arxiv                 | >=2.1.0   | Paper fetching                 |
-| fastapi               | >=0.110.0 | Web API                        |
-| uvicorn               | >=0.27.0  | ASGI server                    |
-| tiktoken              | >=0.6.0   | Token counting for chunking    |
-| rich                  | >=13.0.0  | CLI formatting                 |
-| python-dotenv         | >=1.0.0   | Environment variable loading   |
-| tqdm                  | >=4.66.0  | Progress bars                  |
-| requests              | >=2.31.0  | HTTP calls                     |
