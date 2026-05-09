@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Agentic RAG — AI Research Assistant</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f5f5;
+      color: #1a1a1a;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #fff;
+      border-bottom: 1px solid #e5e5e5;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #111;
+    }
+    header p {
+      font-size: 12px;
+      color: #888;
+      margin-top: 2px;
+    }
+    #status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #ccc;
+      display: inline-block;
+      margin-right: 6px;
+    }
+    #status-dot.online  { background: #22c55e; }
+    #status-dot.loading { background: #f59e0b; }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    #reset-btn {
+      font-size: 12px;
+      color: #888;
+      background: none;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      padding: 5px 10px;
+      cursor: pointer;
+    }
+    #reset-btn:hover { background: #f0f0f0; }
+
+    /* ── Main layout ── */
+    main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      gap: 0;
+    }
+
+    /* ── Chat panel ── */
+    #chat-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* ── Message bubbles ── */
+    .msg {
+      display: flex;
+      flex-direction: column;
+      max-width: 75%;
+    }
+    .msg.user   { align-self: flex-end; align-items: flex-end; }
+    .msg.agent  { align-self: flex-start; align-items: flex-start; }
+
+    .bubble {
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.user  .bubble { background: #111; color: #fff; border-radius: 12px 12px 4px 12px; }
+    .msg.agent .bubble { background: #fff; border: 1px solid #e5e5e5; border-radius: 12px 12px 12px 4px; }
+
+    /* ── Action badge ── */
+    .action-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 20px;
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+    .badge-retrieve { background: #eff6ff; color: #3b82f6; }
+    .badge-clarify  { background: #fefce8; color: #ca8a04; }
+    .badge-refuse   { background: #fef2f2; color: #ef4444; }
+    .badge-answer   { background: #f0fdf4; color: #22c55e; }
+    .badge-tool     { background: #faf5ff; color: #a855f7; }
+
+    /* ── Sources ── */
+    .sources {
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-width: 100%;
+    }
+    .source-chip {
+      font-size: 11px;
+      background: #f9f9f9;
+      border: 1px solid #e8e8e8;
+      border-radius: 6px;
+      padding: 6px 10px;
+      color: #555;
+      cursor: default;
+    }
+    .source-chip strong { color: #222; display: block; margin-bottom: 2px; }
+    .source-chip .score { color: #aaa; float: right; }
+
+    /* ── Trace panel ── */
+    .trace {
+      font-size: 11px;
+      color: #aaa;
+      margin-top: 6px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .trace span { color: #999; }
+
+    /* ── Typing indicator ── */
+    .typing .bubble {
+      display: flex;
+      gap: 5px;
+      align-items: center;
+      padding: 14px 18px;
+    }
+    .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #ccc;
+      animation: bounce 1.2s infinite;
+    }
+    .dot:nth-child(2) { animation-delay: 0.2s; }
+    .dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce {
+      0%, 80%, 100% { transform: scale(1);   opacity: 0.4; }
+      40%           { transform: scale(1.3); opacity: 1;   }
+    }
+
+    /* ── Input area ── */
+    #input-area {
+      padding: 16px 24px;
+      background: #fff;
+      border-top: 1px solid #e5e5e5;
+      display: flex;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    #user-input {
+      flex: 1;
+      border: 1px solid #e0e0e0;
+      border-radius: 10px;
+      padding: 11px 14px;
+      font-size: 14px;
+      outline: none;
+      resize: none;
+      font-family: inherit;
+      line-height: 1.5;
+      max-height: 120px;
+      overflow-y: auto;
+      background: #fafafa;
+      transition: border-color 0.15s;
+    }
+    #user-input:focus { border-color: #111; background: #fff; }
+
+    #send-btn {
+      background: #111;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 0 18px;
+      font-size: 14px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: background 0.15s;
+      flex-shrink: 0;
+    }
+    #send-btn:hover    { background: #333; }
+    #send-btn:disabled { background: #ccc; cursor: not-allowed; }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 260px;
+      background: #fff;
+      border-left: 1px solid #e5e5e5;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    #sidebar h2 {
+      font-size: 12px;
+      font-weight: 600;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 16px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    #trace-log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 12px;
+    }
+    .trace-entry {
+      background: #fafafa;
+      border: 1px solid #eee;
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .trace-entry .te-action {
+      font-weight: 600;
+      margin-bottom: 4px;
+      font-size: 12px;
+    }
+    .trace-entry .te-query {
+      color: #555;
+      font-style: italic;
+      margin-bottom: 4px;
+      word-break: break-word;
+    }
+    .trace-entry .te-reason {
+      color: #888;
+      line-height: 1.4;
+    }
+    .trace-entry .te-meta {
+      color: #bbb;
+      margin-top: 4px;
+    }
+
+    /* ── Empty state ── */
+    #empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #bbb;
+      gap: 8px;
+      padding: 40px;
+      text-align: center;
+    }
+    #empty-state h2 { font-size: 16px; color: #999; font-weight: 500; }
+    #empty-state p  { font-size: 13px; }
+
+    .suggestion-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 16px;
+    }
+    .chip {
+      font-size: 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 20px;
+      padding: 6px 14px;
+      cursor: pointer;
+      color: #555;
+      background: #fff;
+      transition: all 0.15s;
+    }
+    .chip:hover { background: #111; color: #fff; border-color: #111; }
+
+    /* scrollbar */
+    ::-webkit-scrollbar       { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #ddd; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div>
+    <h1>Agentic RAG &mdash; AI Research Assistant</h1>
+    <p>Corpus: recent cs.AI papers from arXiv</p>
+  </div>
+  <div class="header-right">
+    <span id="status-text" style="font-size:12px;color:#888">
+      <span id="status-dot"></span>connecting...
+    </span>
+    <button id="reset-btn" onclick="resetMemory()">Clear chat</button>
+  </div>
+</header>
+
+<!-- Main -->
+<main>
+
+  <!-- Chat panel -->
+  <div id="chat-panel">
+    <div id="messages">
+      <!-- empty state -->
+      <div id="empty-state">
+        <h2>Ask anything about recent AI research</h2>
+        <p>The agent searches ~100 arXiv cs.AI papers and decides how to best answer.</p>
+        <div class="suggestion-chips">
+          <div class="chip" onclick="sendSuggestion(this)">How do LLMs reduce hallucinations?</div>
+          <div class="chip" onclick="sendSuggestion(this)">What is mixture of experts?</div>
+          <div class="chip" onclick="sendSuggestion(this)">Recent advances in RLHF</div>
+          <div class="chip" onclick="sendSuggestion(this)">How does chain of thought work?</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Input -->
+    <div id="input-area">
+      <textarea
+        id="user-input"
+        placeholder="Ask about AI research papers..."
+        rows="1"
+        onkeydown="handleKey(event)"
+        oninput="autoResize(this)"
+      ></textarea>
+      <button id="send-btn" onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+
+  <!-- Sidebar: decision trace -->
+  <div id="sidebar">
+    <h2>Decision Trace</h2>
+    <div id="trace-log">
+      <div style="color:#ccc;font-size:12px;padding:8px;text-align:center">
+        Decisions will appear here
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+  // ── State ─────────────────────────────────────────────
+  let isWaiting = false;
+
+  const ACTION_META = {
+    retrieve: { icon: "🔍", label: "Retrieved",  cls: "badge-retrieve" },
+    clarify:  { icon: "❓", label: "Clarifying", cls: "badge-clarify"  },
+    refuse:   { icon: "🚫", label: "Refused",    cls: "badge-refuse"   },
+    answer:   { icon: "✅", label: "Answered",   cls: "badge-answer"   },
+    tool:     { icon: "🛠️", label: "Tool used",  cls: "badge-tool"     },
+  };
+
+  // ── Health check ──────────────────────────────────────
+  async function checkHealth() {
+    try {
+      const r   = await fetch("/health");
+      const dot = document.getElementById("status-dot");
+      const txt = document.getElementById("status-text");
+      if (r.ok) {
+        dot.className = "online";
+        txt.innerHTML = '<span id="status-dot" class="online"></span>Ready';
+      }
+    } catch {
+      document.getElementById("status-text").textContent = "Offline";
+    }
+  }
+  checkHealth();
+
+  // ── Auto resize textarea ──────────────────────────────
+  function autoResize(el) {
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+  }
+
+  // ── Handle Enter key ──────────────────────────────────
+  function handleKey(e) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  }
+
+  // ── Suggestion chips ──────────────────────────────────
+  function sendSuggestion(el) {
+    document.getElementById("user-input").value = el.textContent;
+    sendMessage();
+  }
+
+  // ── Remove empty state ────────────────────────────────
+  function removeEmptyState() {
+    const es = document.getElementById("empty-state");
+    if (es) es.remove();
+  }
+
+  // ── Append a message bubble ───────────────────────────
+  function appendMessage(role, text, meta = null) {
+    removeEmptyState();
+    const msgs = document.getElementById("messages");
+    const div  = document.createElement("div");
+    div.className = `msg ${role}`;
+
+    if (role === "agent" && meta) {
+      const am = ACTION_META[meta.action] || { icon: "•", label: meta.action, cls: "" };
+
+      // action badge
+      const badge = document.createElement("div");
+      badge.className = `action-badge ${am.cls}`;
+      badge.textContent = `${am.icon} ${am.label}`;
+      div.appendChild(badge);
+
+      // bubble
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = text;
+      div.appendChild(bubble);
+
+      // sources
+      if (meta.sources && meta.sources.length > 0) {
+        const srcs = document.createElement("div");
+        srcs.className = "sources";
+        meta.sources.forEach(s => {
+          const chip = document.createElement("div");
+          chip.className = "source-chip";
+          chip.innerHTML = `
+            <strong>${escHtml(s.title)}</strong>
+            <span class="score">score: ${s.score}</span>
+            ${escHtml(s.authors)} &bull; ${escHtml(s.published)}<br>
+            <span style="color:#aaa">${escHtml(s.excerpt)}...</span>
+          `;
+          srcs.appendChild(chip);
+        });
+        div.appendChild(srcs);
+      }
+
+      // trace
+      const trace = document.createElement("div");
+      trace.className = "trace";
+      trace.innerHTML = `
+        <span>⏱ ${meta.latency_ms}ms</span>
+        <span>confidence: ${Math.round(meta.confidence * 100)}%</span>
+        ${meta.rewritten_query ? `<span>query: <em>${escHtml(meta.rewritten_query)}</em></span>` : ""}
+      `;
+      div.appendChild(trace);
+
+    } else {
+      // user bubble
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = text;
+      div.appendChild(bubble);
+    }
+
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+    return div;
+  }
+
+  // ── Typing indicator ──────────────────────────────────
+  function showTyping() {
+    removeEmptyState();
+    const msgs = document.getElementById("messages");
+    const div  = document.createElement("div");
+    div.className = "msg agent typing";
+    div.id = "typing-indicator";
+    div.innerHTML = `<div class="bubble">
+      <div class="dot"></div>
+      <div class="dot"></div>
+      <div class="dot"></div>
+    </div>`;
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  function hideTyping() {
+    const t = document.getElementById("typing-indicator");
+    if (t) t.remove();
+  }
+
+  // ── Add trace entry to sidebar ────────────────────────
+  function addTraceEntry(query, data) {
+    const log = document.getElementById("trace-log");
+
+    // remove placeholder
+    const placeholder = log.querySelector("div[style]");
+    if (placeholder) placeholder.remove();
+
+    const am  = ACTION_META[data.action] || { icon: "•", label: data.action };
+    const entry = document.createElement("div");
+    entry.className = "trace-entry";
+    entry.innerHTML = `
+      <div class="te-action">${am.icon} ${am.label.toUpperCase()}</div>
+      <div class="te-query">"${escHtml(query.slice(0, 60))}${query.length > 60 ? "…" : ""}"</div>
+      <div class="te-reason">${escHtml(data.reasoning)}</div>
+      <div class="te-meta">
+        ${data.rewritten_query ? `→ ${escHtml(data.rewritten_query.slice(0,50))}` : ""}
+        &bull; ${data.latency_ms}ms
+      </div>
+    `;
+
+    // newest first
+    log.insertBefore(entry, log.firstChild);
+  }
+
+  // ── Send message ──────────────────────────────────────
+  async function sendMessage() {
+    if (isWaiting) return;
+
+    const input = document.getElementById("user-input");
+    const msg   = input.value.trim();
+    if (!msg) return;
+
+    input.value = "";
+    input.style.height = "auto";
+    isWaiting = true;
+    document.getElementById("send-btn").disabled = true;
+
+    // show user bubble
+    appendMessage("user", msg);
+    showTyping();
+
+    try {
+      const resp = await fetch("/chat", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ message: msg })
+      });
+
+      const data = await resp.json();
+      hideTyping();
+      appendMessage("agent", data.reply, data);
+      addTraceEntry(msg, data);
+
+    } catch (err) {
+      hideTyping();
+      appendMessage("agent", "Sorry — something went wrong. Check the server logs.", null);
+    }
+
+    isWaiting = false;
+    document.getElementById("send-btn").disabled = false;
+    input.focus();
+  }
+
+  // ── Reset memory ──────────────────────────────────────
+  async function resetMemory() {
+    await fetch("/reset", { method: "POST" });
+    document.getElementById("messages").innerHTML = `
+      <div id="empty-state">
+        <h2>Ask anything about recent AI research</h2>
+        <p>The agent searches ~100 arXiv cs.AI papers and decides how to best answer.</p>
+        <div class="suggestion-chips">
+          <div class="chip" onclick="sendSuggestion(this)">How do LLMs reduce hallucinations?</div>
+          <div class="chip" onclick="sendSuggestion(this)">What is mixture of experts?</div>
+          <div class="chip" onclick="sendSuggestion(this)">Recent advances in RLHF</div>
+          <div class="chip" onclick="sendSuggestion(this)">How does chain of thought work?</div>
+        </div>
+      </div>`;
+    document.getElementById("trace-log").innerHTML =
+      `<div style="color:#ccc;font-size:12px;padding:8px;text-align:center">Decisions will appear here</div>`;
+  }
+
+  // ── Escape HTML ───────────────────────────────────────
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
+</script>
+</body>
+</html>

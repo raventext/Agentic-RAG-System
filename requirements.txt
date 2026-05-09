@@ -1,0 +1,36 @@
+# LLM via OpenRouter (uses openai-compatible API)
+openai>=1.0.0
+
+# Embeddings (local, no API needed)
+sentence-transformers>=2.6.0
+
+# PDF parsing
+pymupdf>=1.23.0
+
+# Vector store
+chromadb>=0.4.0
+
+# BM25 for hybrid search
+rank-bm25>=0.2.2
+
+# arXiv paper fetching
+arxiv>=2.1.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Utilities
+tqdm>=4.66.0
+rich>=13.0.0
+tiktoken>=0.6.0
+
+# FastAPI frontend
+fastapi>=0.110.0
+uvicorn>=0.27.0
+python-multipart>=0.0.9
+
+# HTTP requests (for OpenRouter calls)
+requests>=2.31.0
+
+pydantic>=2.0.0
+torch
