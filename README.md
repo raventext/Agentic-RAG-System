@@ -283,39 +283,7 @@ tooling.
 
 ---
 
-## Known Limitations and Failure Modes
-
-These were observed during testing, not hypothesized.
-
-**Rate limits during paper fetching.** The arXiv API returns a 429
-error if more than 50 results are requested in one call. The fetch
-script is capped at 50 papers with delays between downloads. Running
-it twice quickly will hit the limit again -- wait 60 seconds between
-runs.
-
-**Planner misroutes "latest" queries.** Questions with words like
-"latest" or "today" sometimes route to the tool action instead of
-retrieve, even when the corpus has a relevant paper. The planner
-over-interprets temporal language. Observed in eval case R05.
-
-**Scanned PDFs produce no text.** About 2-5% of arXiv PDFs are
-image-based scans. PyMuPDF cannot extract text from these. They are
-skipped, creating small gaps in corpus coverage.
-
-**Memory resets on server restart.** All three memory layers live in
-RAM. Restarting the FastAPI server wipes the conversation history.
-
-**BM25 index takes 15-20 seconds to build on first request.** The
-index is built in memory from the chunk files on startup, causing
-a noticeable delay before the first answer.
-
-**No multi-user support.** All browser sessions share one memory
-instance. Two users talking simultaneously would mix each other's
-conversation history.
-
----
-
-## What I'd Do With Another Week
+## Future implementation
 
 **Streaming responses.** The interface blocks for 3-8 seconds while the
 answer generates. FastAPI supports streaming and the OpenAI client
